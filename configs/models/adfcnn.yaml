@@ -1,0 +1,7 @@
+# ADFCNN small specialist (B,1,C,T internally). Env: mirepnet.
+env: mirepnet
+size: small
+epochs: 100
+lr: 0.001
+batch_size: 32
+weight_decay: 0.0001

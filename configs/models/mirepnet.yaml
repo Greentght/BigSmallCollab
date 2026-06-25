@@ -1,0 +1,10 @@
+# MIRepNet foundation model; EA + 45ch pad. Env: mirepnet.
+env: mirepnet
+size: big
+epochs: 10
+lr: 0.001
+batch_size: 8
+weight_decay: 0.000001
+emb_size: 256
+depth: 6
+# pretrain: defaults to <MIRepNet>/weight/MIRepNet.pth

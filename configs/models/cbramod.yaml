@@ -1,0 +1,9 @@
+# CBraMod foundation model; 250->200Hz, (ch,4,200) patches. Env: cbramod.
+env: cbramod
+size: big
+epochs: 50
+lr: 0.0005
+batch_size: 32
+weight_decay: 0.05
+scale: 100.0
+# pretrain: defaults to <CBraMod>/pretrained_weights/pretrained_weights.pth

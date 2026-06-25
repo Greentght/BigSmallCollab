@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+results/artifacts/
+results/metrics/
+*.pth
+*.npz
+.DS_Store

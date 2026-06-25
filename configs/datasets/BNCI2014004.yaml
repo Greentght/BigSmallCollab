@@ -1,0 +1,7 @@
+# BNCI2014004 (BCI IV 2b) — 3 ch (C3/CZ/C4), 2-class, 9 subjects, 250 Hz.
+num_classes: 2
+channels: 3
+num_subjects: 9
+sample_rate: 250
+val_split: 0.3        # TEST fraction (MIRepNet convention): 70% calib / 30% test
+seeds: [666, 667, 668]
