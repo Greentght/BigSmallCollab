@@ -31,8 +31,9 @@ weights/   预训练权重 symlink(*.pth, git忽略), 由 core/paths.weight_path
 adapters/  base(契约) · small(ifnet/eegnet/adfcnn) · mirepnet · cbramod · labram
 collab/    ensemble(gate/加权/投票) · distill(离线KD+特征对齐)
 eval/      subject级配对统计: 固定种子 Wilcoxon + Holm + bootstrap CI(acc%优先)
+experiments/ config驱动 runner: protocols(within/loso) · methods(collab registry) · run
 scripts/   finetune_export · run_ensemble · run_distill · smoke_test · verify_{foundation,backbones}
-configs/   datasets/*.yaml · models/*.yaml
+configs/   datasets/*.yaml · models/*.yaml · exp/*.yaml(实验配方)
 results/   artifacts/<ds>/<model>/<subj>_<seed>_<split>.npz · metrics/*.csv
 envs/      各模型 conda 环境说明
 ```

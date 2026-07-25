@@ -1946,3 +1946,24 @@ Swap 230/457,StrictRouted 470/337——非对称如设计。CSV `*_loso_bdeeg_f*
 
 **意义:** 新实验统计从"每次重写 analyze 脚本"变成一次 `report_contrasts(df, baseline, methods)`;acc%+CI+Holm 默认强制,防"小样本探针骗人"([[mirepnet-alexmi-low]])。
 **下一步(待用户定):** `experiments/`(config 驱动 runner,收敛 scripts/*.sh 堆积)。
+
+---
+
+## 2026-07-25 (框架·experiments runner) — config 驱动实验编排,收敛 scripts/*.sh 堆积
+
+**用户目标:** 建最后一块——config 驱动 runner,一个 yaml=一个实验,取代 40+ 个 `run_*.sh`/`run_*.py` 近重复 driver。
+
+**做了什么(完成+端到端 smoke):**
+- **`experiments/protocols.py`**:cell 生成器(`Cell(unit,seed,X_tr,y_tr,X_te,y_te,subj_ids)`),`within`(subject_split)/`loso`(loso_split),
+  全走 `core.data` 规范切分保证跨模型对齐;teacher artifact 按同一 `unit` 键对齐。
+- **`experiments/methods.py`**:collab 方法 registry(baseline/kd/feat/combo/proto/dkd → distill_student kwargs 模板);
+  `resolve(cond, defaults)` 合并优先级 **defaults < method模板 < condition覆盖**(修正过:defaults 的 lam_kd 不能盖掉 baseline 的 0);
+  `masked` 语法糖→runner 填 teacher-correct `sample_weight`。
+- **`experiments/run.py` + `__main__`**:读 yaml→遍历 (dataset×unit×seed×condition)→消费缓存 teacher→`distill_student`→写
+  长表 CSV(`results/metrics/<name>.csv`,eval 可直接吃)→`--report` 调 `eval.report_contrasts`。teacher 从不在此 build(跨env设计);
+  无 teacher 时各 condition 退化 lam=0 仍可跑 baseline。
+- **示例 `configs/exp/distill_kd_within.yaml`**(MIRepNet→IFNet,base/KD/KD_masked/Combo)。
+- **smoke(mirepnet env,004,2subj/1seed/3ep,消费真实缓存 mirepnet 教师 artifact)**:config→cells→教师→蒸馏→CSV→eval 报告全链路跑通。
+
+**框架完成度:** 数据 · 小模型 · 大模型backbone+微调 · 协同(collab) · 统计(eval) · 编排(experiments)**六层全部自包含**。
+新实验 = 写一个 `configs/exp/*.yaml` + `python -m experiments.run <yaml> --report`,不再新写脚本。旧 `scripts/run_*` 保留(承载已固化的复杂消融配置)。
