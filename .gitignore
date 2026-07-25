@@ -3,6 +3,8 @@ __pycache__/
 results/
 logs/
 weights/
+IFNet/
+FBCNet/
 *.pth
 *.npz
 .DS_Store
