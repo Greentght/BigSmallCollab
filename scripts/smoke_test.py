@@ -16,7 +16,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import torch
 
-from core import data
+from core import config, data
 from core.registry import get_adapter
 
 
@@ -31,7 +31,7 @@ def main():
 
     device = (f'cuda:{a.gpu}' if a.gpu is not None and torch.cuda.is_available()
               else 'cpu')
-    info = data.DATASET_INFO[a.dataset]
+    info = config.load_dataset_config(a.dataset)
     nc = info['num_classes']
 
     X_tr, y_tr, X_te, y_te = data.subject_split(a.dataset, a.subject, seed=a.seed)

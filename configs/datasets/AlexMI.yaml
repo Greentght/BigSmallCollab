@@ -1,0 +1,8 @@
+# AlexMI 2-class (right_hand / feet; 'rest' dropped) — 16 ch, 8 subjects.
+# Native 512 Hz, resampled to 250 Hz by the loader (core.eeg_dataset).
+num_classes: 2
+channels: 16
+num_subjects: 8
+sample_rate: 250
+val_split: 0.3        # TEST fraction: 70% calib / 30% test
+seeds: [666, 667, 668]

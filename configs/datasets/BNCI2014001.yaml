@@ -1,0 +1,7 @@
+# BNCI2014001 (BCI IV 2a) 2-class subset (left_hand / right_hand) — 22 ch, 9 subjects, 250 Hz.
+num_classes: 2
+channels: 22
+num_subjects: 9
+sample_rate: 250
+val_split: 0.3        # TEST fraction: 70% calib / 30% test
+seeds: [666, 667, 668]

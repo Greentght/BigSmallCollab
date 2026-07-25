@@ -21,12 +21,7 @@ from types import SimpleNamespace
 import numpy as np
 from sklearn.model_selection import train_test_split
 
-# Native channel count / class count per wired-up dataset.
-DATASET_INFO = {
-    'BNCI2014004': dict(num_classes=2, channels=3, sample_rate=250),
-    'BNCI2014001-4': dict(num_classes=4, channels=22, sample_rate=250),
-    'BNCI2014001': dict(num_classes=2, channels=22, sample_rate=250),
-}
+from . import config
 
 _imported = False
 
@@ -86,8 +81,7 @@ def loso_split(dataset_name, test_subject, num_subjects=None):
     """
     _ensure_imports()
     if num_subjects is None:
-        num_subjects = {'BNCI2014004': 9, 'BNCI2014001-4': 9,
-                        'BNCI2014001': 9}[dataset_name]
+        num_subjects = config.load_dataset_config(dataset_name)['num_subjects']
     Xtr, ytr, subj = [], [], []
     for s in range(num_subjects):
         X, y = load_subject_raw(dataset_name, s)
