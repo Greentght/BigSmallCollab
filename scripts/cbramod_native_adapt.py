@@ -19,7 +19,7 @@ import pandas as pd
 import torch
 import torch.nn as nn
 from einops.layers.torch import Rearrange
-from scipy.signal import butter, filtfilt, iirnotch, resample
+from scipy.signal import resample
 from sklearn.metrics import accuracy_score, balanced_accuracy_score, cohen_kappa_score
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
@@ -30,6 +30,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__)))) 
 
 from backbones.cbramod.cbramod import CBraMod  # noqa: E402
 from core import paths  # noqa: E402
+from core.preproc import bandpass as _bandpass, notch as _notch  # noqa: E402
 
 PRETRAIN = paths.weight_path("cbramod")
 
@@ -180,25 +181,6 @@ def load_dataset(cfg):
         meta = meta[session_mask].reset_index(drop=True)
     y = LabelEncoder().fit_transform(y_raw)
     return x, y, meta
-
-
-def _bandpass(x, fs, l_freq, h_freq):
-    nyq = fs / 2.0
-    high = min(h_freq, nyq - 1e-3)
-    if l_freq <= 0 and high >= nyq:
-        return x
-    if l_freq <= 0:
-        b, a = butter(4, high / nyq, btype="low")
-    else:
-        b, a = butter(4, [l_freq / nyq, high / nyq], btype="band")
-    return filtfilt(b, a, x, axis=-1)
-
-
-def _notch(x, fs, notch_freq):
-    if notch_freq is None or notch_freq <= 0 or notch_freq >= fs / 2.0:
-        return x
-    b, a = iirnotch(w0=notch_freq, Q=30, fs=fs)
-    return filtfilt(b, a, x, axis=-1)
 
 
 def _pad_or_trim_repeat(x, target):

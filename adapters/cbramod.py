@@ -19,9 +19,10 @@ import torch.nn as nn
 from scipy.signal import resample as scipy_resample
 
 from core import paths
+from core.preproc import SRC_FS, DST_FS
 from .base import ModelAdapter
 
-SRC_FS, DST_FS, PATCH = 250, 200, 200
+PATCH = 200        # samples per 1-s patch at DST_FS (model input format)
 
 
 class _CBraModClassifier(nn.Module):

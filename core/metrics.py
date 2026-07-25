@@ -19,3 +19,15 @@ def evaluate(y_true, y_pred):
 
 def preds_from_logits(logits):
     return np.asarray(logits).argmax(axis=1)
+
+
+def per_class(y, pred, num_classes):
+    """Per-class breakdown: ``{'macro_f1', 'acc_c0', ...}`` (acc in percent; NaN
+    for a class absent from ``y``). Used as extra columns in the metrics CSVs."""
+    from sklearn.metrics import f1_score
+    d = {'macro_f1': round(float(f1_score(y, pred, average='macro')), 4)}
+    for c in range(num_classes):
+        m = y == c
+        d[f'acc_c{c}'] = (round(float((pred[m] == c).mean() * 100), 2)
+                          if m.any() else np.nan)
+    return d

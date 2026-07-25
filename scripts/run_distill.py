@@ -107,14 +107,7 @@ def _proto_margins(feats, M, y):
     return (own - other.max(1)).astype(np.float32)
 
 
-def _per_class(y, pred, nc):
-    from sklearn.metrics import f1_score
-    d = {'macro_f1': round(float(f1_score(y, pred, average='macro')), 4)}
-    for c in range(nc):
-        m = y == c
-        d[f'acc_c{c}'] = (round(float((pred[m] == c).mean() * 100), 2)
-                          if m.any() else np.nan)
-    return d
+_per_class = metrics.per_class   # per-class breakdown (shared, core.metrics)
 
 
 def run_proto_ablation(a, scfg, subjects, seeds, val_split, nc, device, out_csv):

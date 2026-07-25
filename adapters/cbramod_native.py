@@ -23,13 +23,12 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from scipy.signal import butter, filtfilt, iirnotch, resample
+from scipy.signal import resample
 from torch.utils.data import DataLoader, TensorDataset
 
 from core import paths
+from core.preproc import bandpass as _bandpass, notch as _notch, SRC_FS, DST_FS
 from .base import ModelAdapter
-
-SRC_FS, DST_FS = 250, 200
 
 # band tag -> (l_freq, h_freq, notch_freq)
 _BANDS = {
@@ -48,25 +47,6 @@ _CARONLY = {
     'BNCI2014001':   dict(lr=5e-4, epochs=50, dropout=0.5, weight_decay=0.05,
                           band='b75n60'),  # 14001_2c
 }
-
-
-def _bandpass(x, fs, l_freq, h_freq):
-    nyq = fs / 2.0
-    high = min(h_freq, nyq - 1e-3)
-    if l_freq <= 0 and high >= nyq:
-        return x
-    if l_freq <= 0:
-        b, a = butter(4, high / nyq, btype='low')
-    else:
-        b, a = butter(4, [l_freq / nyq, high / nyq], btype='band')
-    return filtfilt(b, a, x, axis=-1)
-
-
-def _notch(x, fs, notch_freq):
-    if notch_freq is None or notch_freq <= 0 or notch_freq >= fs / 2.0:
-        return x
-    b, a = iirnotch(w0=notch_freq, Q=30, fs=fs)
-    return filtfilt(b, a, x, axis=-1)
 
 
 class _CBraModNative(nn.Module):

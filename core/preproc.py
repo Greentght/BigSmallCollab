@@ -8,14 +8,23 @@ layer. These operate on raw numpy epochs ``(N, C, T)``:
     MIRepNet-signature transductive alignment.
   - ``pad_missing_channels_diff`` — inverse-distance channel remap onto a target
     montage (used to pad a dataset's native channels up to the 45-ch template).
+  - ``bandpass`` / ``notch`` — zero-phase (filtfilt) Butterworth band-pass and
+    IIR notch, shared by the foundation-model adapters/scripts (CBraMod / LaBraM).
 
 Channel names / scalp positions live in :mod:`core.channels`.
 """
 import numpy as np
 from scipy.linalg import fractional_matrix_power
+from scipy.signal import butter, filtfilt, iirnotch
 from scipy.spatial.distance import cdist
 
 from core.channels import channel_positions
+
+# Canonical raw-epoch sample rate, and the resample target the transformer
+# foundation models (CBraMod / LaBraM) expect. Shared so the adapters don't each
+# re-declare them.
+SRC_FS = 250
+DST_FS = 200
 
 
 def EA(x):
@@ -61,3 +70,26 @@ def pad_missing_channels_diff(x, target_channels, actual_channels):
     for b in range(B):
         padded[b] = W @ x[b]
     return padded
+
+
+def bandpass(x, fs, l_freq, h_freq):
+    """Zero-phase order-4 Butterworth band-pass along the last axis. ``l_freq<=0``
+    with ``h_freq>=Nyquist`` is a no-op; ``l_freq<=0`` alone gives a low-pass."""
+    nyq = fs / 2.0
+    high = min(h_freq, nyq - 1e-3)
+    if l_freq <= 0 and high >= nyq:
+        return x
+    if l_freq <= 0:
+        b, a = butter(4, high / nyq, btype='low')
+    else:
+        b, a = butter(4, [l_freq / nyq, high / nyq], btype='band')
+    return filtfilt(b, a, x, axis=-1)
+
+
+def notch(x, fs, notch_freq):
+    """Zero-phase IIR notch (Q=30) at ``notch_freq`` along the last axis. No-op if
+    the frequency is unset or outside (0, Nyquist)."""
+    if notch_freq is None or notch_freq <= 0 or notch_freq >= fs / 2.0:
+        return x
+    b, a = iirnotch(w0=notch_freq, Q=30, fs=fs)
+    return filtfilt(b, a, x, axis=-1)
