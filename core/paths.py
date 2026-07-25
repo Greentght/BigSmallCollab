@@ -1,44 +1,42 @@
-"""Resolve and inject the three upstream model repos onto sys.path.
+"""Framework-internal path resolution.
 
-The framework treats MIRepNet / CBraMod / LaBraM as *read-only model sources*:
-their code is imported, never copied. Default locations are ``~/<Repo>`` but can
-be overridden per-repo with environment variables (useful when an adapter runs
-inside that repo's own conda env on a different layout):
+The framework is self-contained: model *code* lives under ``backbones/`` (vendored)
+and ``models/``, and pretrained *weights* live under ``weights/`` (symlinks into the
+upstream checkpoints by default, so 200+ MB of binaries stay out of git). This
+module resolves those weight files; nothing here reaches into external repos.
 
-    MIREPNET_REPO=/path/to/MIRepNet
-    CBRAMOD_REPO=/path/to/CBraMod
-    LABRAM_REPO=/path/to/LaBraM
+Per-model weight files can be overridden with an environment variable, e.g. when
+running against a freshly fine-tuned checkpoint:
 
-``add_repo(name)`` is idempotent and prepends the repo to ``sys.path`` so the
-upstream package layout (e.g. ``from model.IFNet import IFNet``) resolves.
+    MIREPNET_WEIGHT=/path/to/MIRepNet.pth
+    CBRAMOD_WEIGHT=/path/to/pretrained_weights.pth
+    LABRAM_WEIGHT=/path/to/labram-base.pth
 """
 import os
-import sys
 
-_HOME = os.path.expanduser('~')
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+WEIGHTS_DIR = os.path.join(_ROOT, 'weights')
 
-REPOS = {
-    'mirepnet': os.environ.get('MIREPNET_REPO', os.path.join(_HOME, 'MIRepNet')),
-    'cbramod': os.environ.get('CBRAMOD_REPO', os.path.join(_HOME, 'CBraMod')),
-    'labram': os.environ.get('LABRAM_REPO', os.path.join(_HOME, 'LaBraM')),
+# model name -> (default filename under weights/, override env var)
+_WEIGHTS = {
+    'mirepnet': ('mirepnet.pth', 'MIREPNET_WEIGHT'),
+    'cbramod': ('cbramod.pth', 'CBRAMOD_WEIGHT'),
+    'labram': ('labram-base.pth', 'LABRAM_WEIGHT'),
 }
 
 
-def repo_path(name):
-    """Absolute path of an upstream repo; raises if it is missing on disk."""
+def weight_path(name):
+    """Absolute path to a model's pretrained weights; raises if missing.
+
+    Honors the per-model override env var, else falls back to ``weights/<file>``.
+    """
     key = name.lower()
-    if key not in REPOS:
-        raise KeyError(f'unknown repo {name!r}; known: {list(REPOS)}')
-    path = REPOS[key]
-    if not os.path.isdir(path):
+    if key not in _WEIGHTS:
+        raise KeyError(f'unknown model {name!r}; known: {list(_WEIGHTS)}')
+    fname, env = _WEIGHTS[key]
+    path = os.environ.get(env, os.path.join(WEIGHTS_DIR, fname))
+    if not os.path.exists(path):
         raise FileNotFoundError(
-            f'{name} repo not found at {path}. Set {key.upper()}_REPO to override.')
-    return path
-
-
-def add_repo(name):
-    """Prepend an upstream repo to sys.path (idempotent). Returns its path."""
-    path = repo_path(name)
-    if path not in sys.path:
-        sys.path.insert(0, path)
+            f'{name} weights not found at {path}. Set {env} to override, or add '
+            f'the file/symlink under {WEIGHTS_DIR}/.')
     return path

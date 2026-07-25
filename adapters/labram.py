@@ -16,9 +16,6 @@ head don't apply to a fresh fine-tune head).
 ``cfg``: ``dataset_name`` (selects channel names), ``pretrain`` (labram-base.pth),
 ``scale`` (µV divisor, default 100), ``patch_num`` (default 4).
 """
-import importlib.util
-import os
-
 import numpy as np
 import torch
 from scipy.signal import resample as scipy_resample
@@ -29,19 +26,6 @@ from .base import ModelAdapter
 SRC_FS, DST_FS, PATCH = 250, 200, 200
 
 
-def _load_module(name, file_path):
-    """Load a module from an explicit file path under a unique name.
-
-    MIRepNet ships a ``utils/`` *package* and LaBraM a ``utils.py`` *module*; both
-    are on sys.path here, so a bare ``import utils`` is ambiguous. Loading each by
-    path under a distinct name sidesteps the collision entirely.
-    """
-    spec = importlib.util.spec_from_file_location(name, file_path)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
-
-
 class LaBraMAdapter(ModelAdapter):
     name = 'labram'
 
@@ -50,8 +34,7 @@ class LaBraMAdapter(ModelAdapter):
         self.input_chans = None  # set in build() once ch_names are known
 
     def _ch_names(self):
-        cl = _load_module('mirepnet_channel_list', os.path.join(
-            paths.repo_path('mirepnet'), 'utils', 'channel_list.py'))
+        from core import channels as cl
         table = {
             'BNCI2014001': cl.BNCI2014001_chn_names,
             'BNCI2014001-4': cl.BNCI2014001_chn_names,
@@ -71,8 +54,7 @@ class LaBraMAdapter(ModelAdapter):
                                dtype=torch.float32)
 
     def build(self, num_classes):
-        labram_repo = paths.add_repo('labram')
-        from modeling_finetune import labram_base_patch200_200
+        from backbones.labram.modeling_finetune import labram_base_patch200_200
         from ._labram_montage import get_input_chans
 
         self.input_chans = get_input_chans(self._ch_names())
@@ -84,8 +66,7 @@ class LaBraMAdapter(ModelAdapter):
             init_values=0.1, qkv_bias=True, use_abs_pos_emb=True,
             use_rel_pos_bias=False)
 
-        pretrain = self.cfg.get('pretrain') or os.path.join(
-            labram_repo, 'checkpoints', 'labram-base.pth')
+        pretrain = self.cfg.get('pretrain') or paths.weight_path('labram')
         ckpt = torch.load(pretrain, map_location='cpu')
         sd = ckpt.get('model', ckpt)
         sd = {k[len('student.'):]: v for k, v in sd.items()

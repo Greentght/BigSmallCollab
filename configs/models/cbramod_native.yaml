@@ -1,0 +1,8 @@
+# Native tuned CBraMod teacher (CAR-only 高分版, PROGRESS.md 2026-07-13).
+# Official all_patch_reps 3-layer head + CAR-only norm + filtfilt order-4.
+# Per-dataset lr/epochs/dropout/weight_decay/band are auto-filled by the adapter
+# from its embedded |0.7 CAR-only table; batch_size is shared.
+env: cbramod
+size: big
+batch_size: 16
+# lr / epochs / dropout / weight_decay / band: set per-dataset in adapter (_CARONLY)

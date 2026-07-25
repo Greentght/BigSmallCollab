@@ -12,7 +12,6 @@ a channel-agnostic head: average-pool the patch representations to a 200-d vecto
 ``cfg``: ``pretrain`` (path to pretrained_weights.pth), ``scale`` (divisor for µV,
 default 100, matching CBraMod's convention), ``patch_num`` (default 4).
 """
-import os
 
 import numpy as np
 import torch
@@ -57,14 +56,10 @@ class CBraModAdapter(ModelAdapter):
         return torch.as_tensor(x, dtype=torch.float32)
 
     def build(self, num_classes):
-        paths.add_repo('cbramod')
-        from models.cbramod import CBraMod
+        from backbones.cbramod.cbramod import CBraMod
         backbone = CBraMod(in_dim=200, out_dim=200, d_model=200,
                            dim_feedforward=800, seq_len=30, n_layer=12, nhead=8)
-        pretrain = self.cfg.get('pretrain')
-        if pretrain is None:
-            pretrain = os.path.join(paths.repo_path('cbramod'),
-                                    'pretrained_weights', 'pretrained_weights.pth')
+        pretrain = self.cfg.get('pretrain') or paths.weight_path('cbramod')
         backbone.load_state_dict(torch.load(pretrain, map_location='cpu'))
         model = _CBraModClassifier(backbone, num_classes, d_model=200)
         return model.to(self.device)

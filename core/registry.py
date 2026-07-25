@@ -7,9 +7,10 @@ in its own conda env; the registry only constructs the adapter you ask for.
 """
 
 # Declared so callers / configs can validate names without importing anything.
-KNOWN = ('ifnet', 'eegnet', 'adfcnn', 'mirepnet', 'cbramod', 'labram')
+KNOWN = ('ifnet', 'eegnet', 'adfcnn', 'mirepnet', 'cbramod', 'cbramod_native',
+         'labram')
 
-BIG_MODELS = ('mirepnet', 'cbramod', 'labram')
+BIG_MODELS = ('mirepnet', 'cbramod', 'cbramod_native', 'labram')
 SMALL_MODELS = ('ifnet', 'eegnet', 'adfcnn')
 
 
@@ -31,6 +32,9 @@ def get_adapter(name, device='cpu', **cfg):
     if n == 'cbramod':
         from adapters.cbramod import CBraModAdapter
         return CBraModAdapter(device=device, **cfg)
+    if n == 'cbramod_native':
+        from adapters.cbramod_native import CBraModNativeAdapter
+        return CBraModNativeAdapter(device=device, **cfg)
     if n == 'labram':
         from adapters.labram import LaBraMAdapter
         return LaBraMAdapter(device=device, **cfg)

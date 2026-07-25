@@ -1,6 +1,6 @@
 """Adapters for the lightweight specialists: IFNet, ResidualEEGNet, ADFCNN.
 
-All three share one contract in the MIRepNet repo:
+All three share one contract (defined in the framework-owned ``models`` package):
     model(x, return_features=True) -> (feat[B,D], logits[B,C])   with x = (B, C, T)
 and they consume the canonical raw epoch as-is (no EA / no channel padding — those
 are MIRepNet-specific and verified to hurt the baselines). So a single base class
@@ -8,7 +8,6 @@ covers them; each concrete adapter only names its constructor.
 """
 import torch
 
-from core import paths
 from .base import ModelAdapter
 
 
@@ -27,8 +26,7 @@ class IFNetAdapter(_SmallAdapter):
     name = 'ifnet'
 
     def build(self, num_classes):
-        paths.add_repo('mirepnet')
-        from model.IFNet import IFNet
+        from models import IFNet
         in_ch = self.cfg.get('in_channels')
         samples = self.cfg.get('samples', 1000)
         model = IFNet(in_channels=in_ch, samples=samples, num_classes=num_classes)
@@ -39,8 +37,7 @@ class EEGNetAdapter(_SmallAdapter):
     name = 'eegnet'
 
     def build(self, num_classes):
-        paths.add_repo('mirepnet')
-        from model.ResidualEEGNet import ResidualEEGNet
+        from models import ResidualEEGNet
         in_ch = self.cfg.get('in_channels')
         samples = self.cfg.get('samples', 1000)
         model = ResidualEEGNet(in_channels=in_ch, samples=samples,
@@ -52,8 +49,7 @@ class ADFCNNAdapter(_SmallAdapter):
     name = 'adfcnn'
 
     def build(self, num_classes):
-        paths.add_repo('mirepnet')
-        from model.ADFCNN import ADFCNN_Net
+        from models import ADFCNN_Net
         in_ch = self.cfg.get('in_channels')
         samples = self.cfg.get('samples', 1000)
         model = ADFCNN_Net(in_channels=in_ch, samples=samples,

@@ -90,3 +90,35 @@ class ModelAdapter(ABC):
         feats, logits = self.infer(model, X)
         return artifacts.save(dataset, self.name, subject, seed, split,
                               logits=logits, feats=feats, y=y)
+
+    @torch.no_grad()
+    def mc_uncertainty(self, model, X, K=20):
+        """MC-dropout uncertainty on X: K stochastic forward passes with dropout
+        ON (rest of the net in eval). Returns per-sample ``(pred_entropy, bald)``
+        as numpy (N,). ``pred_entropy`` = entropy of the MC-averaged predictive
+        distribution (total uncertainty); ``bald`` = pred_entropy − E_k[entropy]
+        (mutual information = epistemic uncertainty, nonzero only where dropout
+        actually perturbs the prediction). For overconfident EEG teachers that
+        memorize the train split, BALD is the信号 that still flags "not sure"."""
+        bs = self.cfg.get('batch_size', 32)
+        Xp = self.preprocess(X)
+        model.eval()
+        for m in model.modules():                # re-enable dropout only
+            if isinstance(m, nn.Dropout):
+                m.train()
+        N = len(Xp)
+        p_sum = None                             # sum_k softmax  (N, C)
+        ent_sum = np.zeros(N, dtype=np.float64)  # sum_k H(p_k)
+        for _ in range(K):
+            probs = []
+            for i in range(0, N, bs):
+                _, lg = self.forward(model, Xp[i:i + bs].to(self.device))
+                probs.append(torch.softmax(lg, dim=1).cpu().numpy())
+            p = np.concatenate(probs, 0)         # (N, C)
+            p_sum = p if p_sum is None else p_sum + p
+            ent_sum += -(p * np.log(p + 1e-12)).sum(1)
+        p_bar = p_sum / K
+        pred_entropy = -(p_bar * np.log(p_bar + 1e-12)).sum(1)
+        expected_entropy = ent_sum / K
+        bald = pred_entropy - expected_entropy
+        return pred_entropy.astype(np.float32), bald.astype(np.float32)
