@@ -2098,3 +2098,34 @@ Swap 230/457,StrictRouted 470/337——非对称如设计。CSV `*_loso_bdeeg_f*
 
 **下一步(待用户圈)**:A 微调大/小模型 on K 的真基线(决定可发表框架);B 融合机制消融+特征级 B 验证;
 C 扩数据集(2015001/AlexMI)+LaBraM 教师;D CD 图+leaderboard 收口。leaderboard 已追加 F+T 行。
+
+---
+
+## 2026-07-26 (F+T 重要更正 + 细化) — 融合非无条件胜;条件正结果(均衡对)+ 选池增益
+
+**更正。** 上一条 F+T 主结果用错基线:fusion 只比了 head_big。用诚实基线 **max(head_big,head_small)**(同 K 下最强单模型自适应)复核后:
+K=20 fusion>best_single 仅 4/12(均值 −2.95, p=0.93),K=30 3/12(−2.42)。弱教师 cbramod cell fusion −8~−13(p=0.004),
+因最强单模型是 head_small,fusion 被弱 cbramod 特征**稀释**。之前"+13/12全胜"是 fusion-vs-head_big 假象。已更正记忆 ft-fusion-positive。
+
+**现实可部署基线(cv_select = 用 K 支撑集内部 CV 选 big/small 头),fusion vs cv_select:**
+| cell 类型 | fusion − cv_select | 显著 |
+|---|---|---|
+| MIRep×小 / 2014001-4(4类,均衡对) | +3.7~+4.5 | 6/6 p≤0.02 |
+| MIRep×小 / 2014004(2类,均衡对) | +0.9~+2.4 | 4/6 p<0.05 |
+| CBraMod×小 / 2014001-4(悬殊对) | −6.3~−11.0 | 显著更差(稀释) |
+| CBraMod×小 / 2014004(悬殊对) | ≈0 | ns |
+- 全体均值 fusion−cv_select: K20 −0.59 / K30 −0.45(被 cbramod-4类悬殊对拖负)。
+- **cv_select3(CV 在 {大,小,融合} 三选一)− cv_select = +1.08(K20)/+0.65(K30),稳健、从不更差。**
+
+**细化结论(非"全负")。**
+1. 纯特征融合**不能无条件**超单模型少样本;弱强悬殊时稀释崩盘。
+2. **两模型实力相当时(MIRepNet×小),少样本融合显著超现实 CV-选头基线 +2~+4.5**——有条件真正正结果。
+3. **把融合作为一个选项、用支撑集 CV 选(cv_select3),稳健 +0.65~+1.08 且从不更差**——可部署诚实增益。
+4. **获益条件可由 D0 预判**:获益 cell = 两模型准确率接近(MIRep 48/41、77/75);稀释 cell = 悬殊(cbramod 64/75)。
+   → 提出"均衡度门控":仅当大小实力相当才融合,否则退回强模型。这把稀释下界补掉,理论上使组合稳超单模型。
+
+**消融(旗舰)**:concat-lr 最优;mlp/gated 少样本过拟合;mutual(特征级 B)54.6<concat 56.1,悬殊时崩 67.9(同 logit-bidir 稀释病)。
+
+**下一步(待用户圈)**:① 验证"均衡度门控"(D0 解耦/Δacc 预测 fusion 是否获益)能否把 cv_select3 的 +1 变成稳健显著主结果;
+② A 真微调基线(cv_select/融合是否随端到端微调改变);③ C 扩 2015001(12被试,提功效)/AlexMI/LaBraM;④ F2 架构。
+leaderboard 已含 F+T 行。产物 results/metrics/ft_generality.csv。
