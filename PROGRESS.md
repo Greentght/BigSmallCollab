@@ -2180,3 +2180,33 @@ leaderboard 已含 F+T 行。产物 results/metrics/ft_generality.csv。
 **跨 24 cell / 4 集稳健 +0.5~0.6%(sign-test p≤1e-3)、从不更差、获益条件可由模型均衡度解释(p=1e-19)。** 少样本(K≈20)区价值最大。
 
 **仍在跑**:A 端到端微调基线(判 +0.5~0.6 是否在真微调大/小模型下存活)。leaderboard 待 A 后统一更新。
+
+---
+
+## 2026-07-27 (A 微调基线·收口) — 端到端微调单模型 > 冻结融合;均衡门控增益限于冻结特征场景
+
+**为什么做。** 均衡门控主结果建立在**冻结特征**上(head/fusion 都是冻结主干+线性头)。最强 reviewer 基线 =
+真端到端微调 MIRepNet/IFNet on K trials。A 测:融合增益是否在真微调下存活。代码 `scripts/run_finetune_baseline.py`
+(按折重训 LOSO 基座→深拷贝续训 on K→评同一 split;修了 conda-run 缓冲需 `-u`、按折缓存数据、`--base_epochs`)。
+
+**旗舰 mirepnet×ifnet / 2014001-4 / LOSO(9被试×2seed,base_epochs=40,ft_epochs=30):**
+| K | ft_big | ft_small | fusion | head_big | head_small |
+|---|---|---|---|---|---|
+| 20 | 51.4 | 52.9 | 50.0 | 43.3 | 45.7 |
+| 30 | 53.7 | 54.2 | 51.9 | 44.7 | 47.7 |
+- **ft_big > head_big:9/9 被试,p=0.0039(两 K)** —— 端到端微调稳健碾压冻结线性探针。
+- **best_ft(max ft_big,ft_small) > fusion:K30 8/9,p=0.008(+4.8);K20 5/9,ns(+3.9)** —— 微调单模型击败冻结融合。
+- (caveat:base_epochs=40 对 MIRepNet[config 10]略过训,head_big 绝对值低于均衡门控用的缓存特征;但 ft/fusion 同用 40ep 基座,ft-vs-fusion 比较公平,结论稳健;诊断在 base=10 时亦同向。)
+
+**收口结论(诚实、范围明确)。**
+- 均衡门控融合选池的 +0.5~0.6% 增益**只在冻结特征/缓存预测约束下成立** —— 即真实"大小协同 hub"场景(基础大模型不可/不愿端到端回传,只有缓存 logits/feats)。
+- **一旦允许端到端微调单模型,后者以 ~+4 胜出(但成本高得多:需 backprop 整个大模型)。** 故本方法定位 = **冻结/低成本场景下 never-hurts 的选池增益**,非普适 SOTA。
+
+**最终叙事(全链条,honest):**
+1. **D0 诊断**:大小协同 oracle +9~17% 真实但**跨被试静态不可达**(被试特异,信息在特征非 logit)。
+2. **logit 空间全负**:KD/路由(R1)/双向(历史 CR-AMD/BD-EEG)机制性失败。
+3. **冻结特征 + 少样本自适应**:纯融合被弱教师稀释;**均衡门控选池**(按支撑集 CV/均衡度选 大/小/融合)在 4 集 24 cell 稳健 +0.5~0.6%、never-hurts、可解释。
+4. **范围界定(A)**:该增益限于冻结特征;端到端微调单模型更强(+4)但更贵。
+→ 贡献 = 诊断工具 + 一组机制性负结果 + 冻结/缓存场景下的 never-hurts 协同选池。所有数字真实运行、落盘、git 可追溯。
+
+**可选后续**(非必需):cbramod cell 的 A(小模型更强,预期 ft_small 亦超 fusion);per-model config base epochs 的忠实版 A;CD 图/leaderboard 收口。
