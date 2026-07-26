@@ -27,7 +27,7 @@ class MIRepNetAdapter(ModelAdapter):
         from data.preproc import EA, pad_missing_channels_diff
         from data.channels import (
             use_channels_names, BNCI2014001_chn_names,
-            BNCI2014004_chn_names)
+            BNCI2014004_chn_names, BNCI2015001_chn_names, AlexMI_chn_names)
         self._EA = EA
         self._pad = pad_missing_channels_diff
         self._template = use_channels_names
@@ -35,6 +35,8 @@ class MIRepNetAdapter(ModelAdapter):
             'BNCI2014001': BNCI2014001_chn_names,
             'BNCI2014001-4': BNCI2014001_chn_names,
             'BNCI2014004': BNCI2014004_chn_names,
+            'BNCI2015001': BNCI2015001_chn_names,
+            'AlexMI': AlexMI_chn_names,
         }
 
     def preprocess(self, X_raw):
