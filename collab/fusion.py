@@ -49,6 +49,23 @@ def _logits(lin, X, device='cpu'):
     return lin(torch.as_tensor(X, dtype=torch.float32, device=device)).cpu().numpy()
 
 
+def cv_acc(feats, y, nc, folds=3, C=0.3):
+    """Internal stratified-CV accuracy of a linear head on ``feats`` — the support-
+    set estimate used to gate/select among candidates without touching the eval set."""
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.model_selection import StratifiedKFold
+    counts = np.bincount(y, minlength=nc)
+    if counts[counts > 0].min() < 2:
+        return 0.0
+    k = int(min(folds, counts[counts > 0].min()))
+    accs = []
+    for tr, va in StratifiedKFold(n_splits=k).split(feats, y):
+        mu, sd = feats[tr].mean(0), feats[tr].std(0) + 1e-6
+        clf = LogisticRegression(max_iter=500, C=C).fit((feats[tr] - mu) / sd, y[tr])
+        accs.append((clf.predict((feats[va] - mu) / sd) == y[va]).mean())
+    return float(np.mean(accs))
+
+
 def _sk_logreg(Xtr, ytr, Xte, nc, C=0.3):
     """Fast, deterministic L2 logistic head (used for the linear methods)."""
     from sklearn.linear_model import LogisticRegression
