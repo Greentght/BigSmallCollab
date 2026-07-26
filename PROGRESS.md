@@ -2063,3 +2063,38 @@ Swap 230/457,StrictRouted 470/337——非对称如设计。CSV `*_loso_bdeeg_f*
 
 **下一步**:B(主卖点)。设计分歧 B1(小→大 adapter 注入冻结大模型) vs B2(DML 双向KL) vs B3(co-teaching),
 待用户圈。诊断也支持把 F1 重新纳入(logit 不够→用特征)。
+
+---
+
+## 2026-07-26 (F+T 主结果) — 少样本被试自适应特征融合:整条线第一个稳健泛化的正结果
+
+**为什么做。** D0+R1 定论:跨被试静态协同不可达("谁对"被试特异,penult 分离度 in-sample 0.999→LOSO 0.507);
+协同只能靠测试被试少样本自适应,且特征>>logits(logit gate AUC 仅 0.63)。F+T 测:在测试被试的 K 个标注 trial
+上,于**冻结特征**(大 D_b + 小 D_s)上训轻量融合头,能否吃到 headroom。零基座重训,复用 D0 LOSO 缓存。
+代码 `collab/fusion.py`(concat-lr/mlp/gated/mutual=特征级B)+ `scripts/run_ft_fusion.py`(K 扫+被试级配对+Holm)。
+
+**主假设**:fusion(两模型特征)> 同 K 下只自适应更强模型(head_big),即协同价值超过"只微调大模型"。
+
+**全 12 cell 泛化扫描(2集×2教师×3小,K=10/20/30,3seed×5draw,被试级配对 Wilcoxon;结果 `results/metrics/ft_generality.csv`):**
+| K | fusion>head_big | 均值Δ | 跨cell符号检验 | fusion>fixed_big |
+|---|---|---|---|---|
+| 10 | 12/12 (raw-sig 6/12) | +3.86 | p=2.4e-4 | 4/12 (−0.75) |
+| 20 | 12/12 (raw-sig 9/12) | +5.57 | p=2.4e-4 | 9/12 (+3.17) |
+| 30 | 12/12 (raw-sig 8/12) | +6.34 | p=2.4e-4 | 12/12 (+5.62) |
+- **36/36 (cell,K) 全为正,跨 cell 二项检验 p=1.5e-11。**
+- **最大赢家 = 弱教师 CBraMod / 2014004**:fusion 比 head_big 高 **+13~14.6**(K20/30,p=0.0039),比 fixed_big 高 +10~12.4。
+  即蒸馏/路由失败的弱教师,在"特征融合+少样本"下成最大增益(特征互补但 logits 不可用)。MIRep cell 增益较小(+1.4~+4.2)但一致。
+- 旗舰 MIRep×IFNet/2014001-4:K20 fusion 53.4 vs head_big 49.7 vs fixed 48.3(Δ+3.7, p=0.012);K30 56.1 vs 52.0 vs 48.4(+4.2, p=0.027)。
+
+**判读。** 大小协同真实且可达,但只能经"特征级融合 + 测试被试少样本自适应",非 logit 空间(KD/路由/双向全在此失败)。
+效应最强处正是历史方法失败处(弱互补教师)。这是本研究线第一个稳健泛化的显著正结果。
+
+**必须声明的边界(未 claim SOTA 前的关键 caveat)。**
+1. **对照 head_big = 冻结大模型特征上的线性探针,非端到端微调大模型。** 最强基线 = 真微调 MIRepNet/CBraMod on K trials
+   (对标 MIRepNet 少样本主场)。**下一步 #1 必测(需 GPU)**:若微调大模型追平,则 F+T 价值转为"更省(无需 backprop 大模型)+可叠加"。
+2. K≥20 才稳超固定大模型(强教师);K=10 时强教师 cell 融合<固定大模型(头欠拟合)。
+3. 逐 cell Holm 因 n=9 Wilcoxon 下限(0.0039)×24 结构性不过 → 用跨 cell 聚合检验判泛化;后续加 2015001(12被试)/AlexMI 提功效。
+4. torch 消融(fusion_mlp/gated/mutual=特征级B)尚未跑完(慢);仅 fusion_lr 已确认。
+
+**下一步(待用户圈)**:A 微调大/小模型 on K 的真基线(决定可发表框架);B 融合机制消融+特征级 B 验证;
+C 扩数据集(2015001/AlexMI)+LaBraM 教师;D CD 图+leaderboard 收口。leaderboard 已追加 F+T 行。
