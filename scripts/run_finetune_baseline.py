@@ -40,11 +40,26 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 METRICS = os.path.join(ROOT, 'results', 'metrics')
 
 
-def build_loso_base(model_name, dataset, fold, seed, nc, mcfg, device):
+_SPLIT_CACHE = {}
+
+
+def cached_loso_split(dataset, fold):
+    """loso_split is seed-independent (the fold is fixed by the held-out subject),
+    so cache it — otherwise the mne/EEGDataset full-dataset load repeats per seed
+    and per model (6x redundant I/O, the dominant cost)."""
+    key = (dataset, fold)
+    if key not in _SPLIT_CACHE:
+        _SPLIT_CACHE[key] = data.loso_split(dataset, fold)
+    return _SPLIT_CACHE[key]
+
+
+def build_loso_base(model_name, dataset, fold, seed, nc, mcfg, device, base_epochs=None):
     """Train the LOSO base (all-but-`fold`) and return (adapter, model, X_te, y_te)."""
-    X_tr, y_tr, _subj, X_te, y_te = data.loso_split(dataset, fold)
+    X_tr, y_tr, _subj, X_te, y_te = cached_loso_split(dataset, fold)
     cfg = dict(mcfg); cfg.update(in_channels=X_tr.shape[1], samples=X_tr.shape[2],
                                  dataset_name=dataset)
+    if base_epochs is not None:
+        cfg['epochs'] = base_epochs
     import torch
     torch.manual_seed(seed); np.random.seed(seed)
     ad = get_adapter(model_name, device=device, **cfg)
@@ -74,6 +89,8 @@ def main():
     ap.add_argument('--draws', type=int, default=3)
     ap.add_argument('--subjects', type=int, nargs='+', default=None,
                     help='restrict to these held-out subjects (default all)')
+    ap.add_argument('--base_epochs', type=int, default=None,
+                    help='override LOSO base training epochs (speed control)')
     ap.add_argument('--ft_epochs', type=int, default=30)
     ap.add_argument('--ft_lr', type=float, default=5e-4)
     ap.add_argument('--gpu', type=int, default=None)
@@ -90,8 +107,8 @@ def main():
         subjects = a.subjects if a.subjects is not None else list(range(n_sub))
         for seed in a.seeds:
             for t in subjects:
-                adb, mb, Xb_te, yb = build_loso_base(big, ds, t, seed, nc, bcfg, device)
-                ads, ms, Xs_te, ys = build_loso_base(small, ds, t, seed, nc, scfg, device)
+                adb, mb, Xb_te, yb = build_loso_base(big, ds, t, seed, nc, bcfg, device, a.base_epochs)
+                ads, ms, Xs_te, ys = build_loso_base(small, ds, t, seed, nc, scfg, device, a.base_epochs)
                 assert np.array_equal(yb, ys), 'big/small held-out labels misaligned'
                 y = yb
                 if np.bincount(y, minlength=nc).min() < 2:
