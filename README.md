@@ -45,7 +45,8 @@ envs/      各模型 conda 环境说明
 - 大模型 **backbone** 与**微调代码** —— `backbones/mirepnet`(`mlm` + PEFT `lora`/`mmd`)、
   `backbones/cbramod`(criss-cross transformer)、`backbones/labram`(`modeling_finetune` +
   `optim_factory` 逐层 LR 衰减)。四个大模型 build+forward 见 `scripts/verify_backbones.py`。
-- 预训练**权重**(共 ~228M,非代码)以 symlink 落在 `weights/`(git 忽略 `*.pth`),
+- 预训练**权重**(非代码)真文件统一存放在 `/data1/llx/pretrained_weights/`(稳定数据盘,
+  与上游仓解耦——删掉 ~/MIRepNet 等不受影响);`weights/*.pth`(git 忽略)是指向它的 symlink,
   由 `core/paths.weight_path()` 解析,可用 `MIREPNET_WEIGHT` / `CBRAMOD_WEIGHT` /
   `LABRAM_WEIGHT` 环境变量覆盖(如指向新微调的 checkpoint)。
 

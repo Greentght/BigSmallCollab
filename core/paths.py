@@ -1,9 +1,10 @@
 """Framework-internal path resolution.
 
 The framework is self-contained: model *code* lives under ``backbones/`` (vendored)
-and ``models/``, and pretrained *weights* live under ``weights/`` (symlinks into the
-upstream checkpoints by default, so 200+ MB of binaries stay out of git). This
-module resolves those weight files; nothing here reaches into external repos.
+and ``models/``, and pretrained *weights* are resolved under ``weights/`` (git-ignored
+``*.pth`` symlinks pointing at the unified store ``/data1/llx/pretrained_weights/`` —
+real files on the stable data disk, decoupled from the upstream repos). This module
+resolves those weight files; nothing here reaches into external repos.
 
 Per-model weight files can be overridden with an environment variable, e.g. when
 running against a freshly fine-tuned checkpoint:
