@@ -15,7 +15,7 @@ running against a freshly fine-tuned checkpoint:
 """
 import os
 
-_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_ROOT = os.path.dirname(os.path.abspath(__file__))
 WEIGHTS_DIR = os.path.join(_ROOT, 'weights')
 
 # model name -> (default filename under weights/, override env var)

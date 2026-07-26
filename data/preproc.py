@@ -18,7 +18,7 @@ from scipy.linalg import fractional_matrix_power
 from scipy.signal import butter, filtfilt, iirnotch
 from scipy.spatial.distance import cdist
 
-from core.channels import channel_positions
+from data.channels import channel_positions
 
 # Canonical raw-epoch sample rate, and the resample target the transformer
 # foundation models (CBraMod / LaBraM) expect. Shared so the adapters don't each

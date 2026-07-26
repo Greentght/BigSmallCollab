@@ -18,9 +18,9 @@ import torch
 import torch.nn as nn
 from scipy.signal import resample as scipy_resample
 
-from core import paths
-from core.preproc import SRC_FS, DST_FS
-from .base import ModelAdapter
+import paths
+from data.preproc import SRC_FS, DST_FS
+from models.base import ModelAdapter
 
 PATCH = 200        # samples per 1-s patch at DST_FS (model input format)
 
@@ -57,7 +57,7 @@ class CBraModAdapter(ModelAdapter):
         return torch.as_tensor(x, dtype=torch.float32)
 
     def build(self, num_classes):
-        from backbones.cbramod.cbramod import CBraMod
+        from .cbramod import CBraMod
         backbone = CBraMod(in_dim=200, out_dim=200, d_model=200,
                            dim_feedforward=800, seq_len=30, n_layer=12, nhead=8)
         pretrain = self.cfg.get('pretrain') or paths.weight_path('cbramod')

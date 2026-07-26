@@ -21,7 +21,7 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader, TensorDataset
 
-from core import artifacts
+from collab import artifacts
 
 
 class ModelAdapter(ABC):
@@ -122,3 +122,17 @@ class ModelAdapter(ABC):
         expected_entropy = ent_sum / K
         bald = pred_entropy - expected_entropy
         return pred_entropy.astype(np.float32), bald.astype(np.float32)
+
+
+class _SmallAdapter(ModelAdapter):
+    """Shared logic for the lightweight specialists (IFNet / EEGNet / ADFCNN):
+    they consume the canonical raw epoch ``(B, C, T)`` as-is (no EA / channel pad)
+    and expose ``model(x, return_features=True) -> (feat, logits)``. Each concrete
+    small adapter (in its own ``models/<name>/adapter.py``) only names ``build``."""
+
+    def preprocess(self, X_raw):
+        return torch.as_tensor(X_raw, dtype=torch.float32)
+
+    def forward(self, model, x):
+        feat, logits = model(x, return_features=True)
+        return feat, logits

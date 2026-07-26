@@ -19,7 +19,9 @@ DS = 'BNCI2014004'   # 3ch/2class, small + fast to load
 
 
 def check_models():
-    from models import IFNet, ResidualEEGNet, ADFCNN_Net
+    from models.ifnet.ifnet import IFNet
+    from models.eegnet.residual_eegnet import ResidualEEGNet
+    from models.adfcnn.adfcnn import ADFCNN_Net
     x = torch.randn(4, 3, 1000)
     for name, m in [('IFNet', IFNet(in_channels=3, samples=1000, num_classes=2)),
                     ('EEGNet', ResidualEEGNet(in_channels=3, samples=1000, num_classes=2)),
@@ -31,7 +33,7 @@ def check_models():
 
 
 def check_ea():
-    from core.preproc import EA as EA_new
+    from data.preproc import EA as EA_new
     sys.path.insert(0, os.path.expanduser('~/MIRepNet'))
     from utils.utils import EA as EA_old
     x = np.random.RandomState(0).randn(20, 3, 1000)
@@ -41,7 +43,7 @@ def check_ea():
 
 
 def check_dataset():
-    from core.eeg_dataset import EEGDataset as DS_new
+    from data.eeg_dataset import EEGDataset as DS_new
     from types import SimpleNamespace
     args = SimpleNamespace(dataset_name=DS, sub=[0], data_mode='session3')
     dnew = DS_new(args=args)
@@ -54,7 +56,7 @@ def check_dataset():
 
 
 def check_split():
-    from core import data
+    import data
     Xtr, ytr, Xte, yte = data.subject_split(DS, 0, val_split=0.3, seed=666)
     Xtr2, ytr2, Xte2, yte2 = data.subject_split(DS, 0, val_split=0.3, seed=666)
     assert np.array_equal(Xtr, Xtr2) and np.array_equal(yte, yte2), 'split nondeterministic'

@@ -36,8 +36,10 @@ import torch
 import yaml
 
 from collab.distill import distill_student
-from core import artifacts, config, metrics
-from core.registry import get_adapter
+import config
+from collab import artifacts
+from eval import metrics
+from models import get_adapter
 from experiments import methods, protocols
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

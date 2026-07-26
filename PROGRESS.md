@@ -1967,3 +1967,20 @@ Swap 230/457,StrictRouted 470/337——非对称如设计。CSV `*_loso_bdeeg_f*
 
 **框架完成度:** 数据 · 小模型 · 大模型backbone+微调 · 协同(collab) · 统计(eval) · 编排(experiments)**六层全部自包含**。
 新实验 = 写一个 `configs/exp/*.yaml` + `python -m experiments.run <yaml> --report`,不再新写脚本。旧 `scripts/run_*` 保留(承载已固化的复杂消融配置)。
+
+---
+
+## 2026-07-26 (框架·结构重构) — 按"东西是什么"分目录:解散 core、模型一模型一文件夹
+
+**用户批评(合理):** ① adapter/model/backbone 其实都是模型(teacher/student 是角色不是属性),不该按实现层次分三处;每个模型自己的适配文件应和模型放一起。② core 是杂物袋,数据处理该合成一处,core 本身没意义。
+
+**做了什么(纯搬家+改引用,零行为变化,全验证):**
+- **解散 `core/`,各归其位**:`data/`(eeg_dataset 加载 + split 划分[原core/data] + preproc[EA/padding/滤波] + channels)、
+  `eval/metrics.py`(acc/kappa/per_class)、`collab/artifacts.py`(跨环境 hub)、顶层 `config.py`/`paths.py`。core/ 消失。
+- **模型合并成一模型一文件夹** `models/<name>/`(网络定义 + `adapter.py` co-located):`models/base.py`=ModelAdapter 契约+小模型基类,
+  `models/__init__.py`=get_adapter registry;文件夹 ifnet/eegnet/adfcnn/mirepnet(mlm+lora/mmd)/cbramod(+adapter_native)/labram(+optim_factory/montage)。
+  `adapters/` 与 `backbones/` 目录删除。加模型 = 加一个文件夹。env 不兼容不受影响(registry 懒加载)。
+- **改了所有 import 站点**(git mv 保留历史 + sed 批量改引用);`from core import a,b,c` 拆成 `import config`/`import data`/`from collab import artifacts`/`from eval import metrics`。
+- **验证全过**:py_compile 全部 .py;verify_foundation(数据+小模型逐位一致)、verify_backbones ×4(各 env build+forward)、smoke_test、`python -m eval`、experiments runner(缓存教师→蒸馏→CSV)端到端;9 个改写脚本 import 0 失败。
+
+**现结构**:`data/ · models/<name>/ · collab/ · eval/ · experiments/ · config.py · paths.py · configs/ · weights/ · results/`。备份 bundle `BigSmallCollab-backup-restructure-*.bundle`。

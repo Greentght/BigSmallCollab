@@ -18,8 +18,10 @@ import pandas as pd
 import torch
 
 from collab.distill import distill_student
-from core import artifacts, config, data
-from core.registry import get_adapter
+import config
+import data
+from collab import artifacts
+from models import get_adapter
 
 LOSO_NAME = 'mirepnet_loso'
 

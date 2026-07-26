@@ -19,8 +19,10 @@ import numpy as np
 import torch
 
 from collab.distill import _set_seed
-from core import artifacts, config, data
-from core.registry import get_adapter
+import config
+import data
+from collab import artifacts
+from models import get_adapter
 
 TEACHER = 'mirepnet'
 LOSO_NAME = 'mirepnet_loso'

@@ -20,9 +20,9 @@ import numpy as np
 import torch
 from scipy.signal import resample as scipy_resample
 
-from core import paths
-from core.preproc import SRC_FS, DST_FS
-from .base import ModelAdapter
+import paths
+from data.preproc import SRC_FS, DST_FS
+from models.base import ModelAdapter
 
 PATCH = 200        # samples per 1-s patch at DST_FS (model input format)
 
@@ -35,7 +35,7 @@ class LaBraMAdapter(ModelAdapter):
         self.input_chans = None  # set in build() once ch_names are known
 
     def _ch_names(self):
-        from core import channels as cl
+        from data import channels as cl
         table = {
             'BNCI2014001': cl.BNCI2014001_chn_names,
             'BNCI2014001-4': cl.BNCI2014001_chn_names,
@@ -55,8 +55,8 @@ class LaBraMAdapter(ModelAdapter):
                                dtype=torch.float32)
 
     def build(self, num_classes):
-        from backbones.labram.modeling_finetune import labram_base_patch200_200
-        from ._labram_montage import get_input_chans
+        from .modeling_finetune import labram_base_patch200_200
+        from .montage import get_input_chans
 
         self.input_chans = get_input_chans(self._ch_names())
         # kwargs mirror LaBraM's run_class_finetuning create_model defaults; abs

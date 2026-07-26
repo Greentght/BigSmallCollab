@@ -23,8 +23,10 @@ import torch
 torch.set_num_threads(int(os.environ.get('TORCH_NUM_THREADS', '4')))
 
 from collab.bdeeg import bd_eeg_fold, GROUPS
-from core import config, data, metrics
-from core.registry import get_adapter
+import config
+import data
+from eval import metrics
+from models import get_adapter
 
 
 def parse_args():

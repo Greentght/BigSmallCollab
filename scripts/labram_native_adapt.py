@@ -38,19 +38,19 @@ from torch.utils.data import DataLoader, TensorDataset
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(_HERE))  # repo root
 
-from backbones.labram.modeling_finetune import labram_base_patch200_200  # noqa: E402
-from backbones.labram.optim_factory import (  # noqa: E402
+from models.labram.modeling_finetune import labram_base_patch200_200  # noqa: E402
+from models.labram.optim_factory import (  # noqa: E402
     get_parameter_groups, LayerDecayValueAssigner)
-from adapters._labram_montage import get_input_chans  # noqa: E402
-from core import paths  # noqa: E402
-from core.preproc import bandpass as _bandpass, notch as _notch  # noqa: E402
+from models.labram.montage import get_input_chans  # noqa: E402
+import paths  # noqa: E402
+from data.preproc import bandpass as _bandpass, notch as _notch  # noqa: E402
 
 PRETRAIN = paths.weight_path("labram")
 
 
 def _load_channel_names():
     """Channel-name lists (uppercase, matching X.npy channel order)."""
-    from core import channels as cl
+    from data import channels as cl
     return {
         "BNCI2014001_4c": cl.BNCI2014001_chn_names,
         "BNCI2014001_2c": cl.BNCI2014001_chn_names,

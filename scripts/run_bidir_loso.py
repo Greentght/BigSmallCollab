@@ -19,8 +19,10 @@ import pandas as pd
 import torch
 
 from collab.bidirectional import bidirectional_distill
-from core import config, data, metrics
-from core.registry import get_adapter
+import config
+import data
+from eval import metrics
+from models import get_adapter
 
 
 def parse_args():

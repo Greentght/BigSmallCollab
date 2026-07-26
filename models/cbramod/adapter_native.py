@@ -26,9 +26,9 @@ import torch.optim as optim
 from scipy.signal import resample
 from torch.utils.data import DataLoader, TensorDataset
 
-from core import paths
-from core.preproc import bandpass as _bandpass, notch as _notch, SRC_FS, DST_FS
-from .base import ModelAdapter
+import paths
+from data.preproc import bandpass as _bandpass, notch as _notch, SRC_FS, DST_FS
+from models.base import ModelAdapter
 
 # band tag -> (l_freq, h_freq, notch_freq)
 _BANDS = {
@@ -55,7 +55,7 @@ class _CBraModNative(nn.Module):
     def __init__(self, num_classes, n_ch, n_patch, dropout, pretrain):
         super().__init__()
         from einops.layers.torch import Rearrange
-        from backbones.cbramod.cbramod import CBraMod
+        from .cbramod import CBraMod
         self.backbone = CBraMod(in_dim=200, out_dim=200, d_model=200,
                                 dim_feedforward=800, seq_len=30,
                                 n_layer=12, nhead=8)

@@ -21,7 +21,7 @@ from types import SimpleNamespace
 import numpy as np
 from sklearn.model_selection import train_test_split
 
-from . import config
+import config
 
 _imported = False
 
@@ -37,7 +37,7 @@ def _ensure_imports():
     global _imported, EEGDataset
     if _imported:
         return
-    from core.eeg_dataset import EEGDataset as _EEGDataset
+    from data.eeg_dataset import EEGDataset as _EEGDataset
     EEGDataset = _EEGDataset
     _imported = True
 

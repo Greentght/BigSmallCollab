@@ -9,7 +9,7 @@ import os
 
 import yaml
 
-_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_ROOT = os.path.dirname(os.path.abspath(__file__))
 CONFIG_DIR = os.path.join(_ROOT, 'configs')
 
 

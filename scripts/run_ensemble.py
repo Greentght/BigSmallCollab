@@ -18,7 +18,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import pandas as pd
 
 from collab import ensemble
-from core import artifacts, config, metrics
+import config
+from collab import artifacts
+from eval import metrics
 
 
 def parse_args():

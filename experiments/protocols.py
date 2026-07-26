@@ -13,7 +13,7 @@ same ``unit`` — so a cached teacher lines up with each cell's train split.
 """
 from collections import namedtuple
 
-from core import data
+import data
 
 Cell = namedtuple('Cell', 'unit seed X_tr y_tr X_te y_te subj_ids')
 

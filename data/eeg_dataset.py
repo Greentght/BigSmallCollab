@@ -8,7 +8,7 @@ from mne.filter import resample
 from scipy.spatial.distance import cdist
 import pandas as pd
 from collections import Counter
-from core.channels import *
+from data.channels import *
 
 class EEGDataset(Dataset):
     def __init__(self, args=None):

@@ -17,21 +17,22 @@ ADFCNN)** 在运动想象解码上的协同实验。三个上游仓库被当作*
      大模型无需在线。
 
 **关键不变量**：同一 `(dataset, subject, seed, split)` 下所有模型样本顺序一致
-（由 `core/data.py` 统一切分保证），否则按行对齐的集成/蒸馏会错位 —
+（由 `data/split.py` 统一切分保证），否则按行对齐的集成/蒸馏会错位 —
 `artifacts.load_aligned` 会用存储的 `y` 校验。
 
 ## 目录
 
 ```
-core/      data(规范切分) · eeg_dataset(自有数据源) · preproc(EA+通道padding) ·
-           channels(montage) · artifacts(产物存取) · paths(权重解析) · config · metrics
-models/    自有小模型定义: ifnet · residual_eegnet · adfcnn
-backbones/ 自有大模型backbone+微调代码: mirepnet(mlm+lora/mmd) · cbramod · labram(+optim_factory)
-weights/   预训练权重 symlink(*.pth, git忽略), 由 core/paths.weight_path 解析
-adapters/  base(契约) · small(ifnet/eegnet/adfcnn) · mirepnet · cbramod · labram
-collab/    ensemble(gate/加权/投票) · distill(离线KD+特征对齐)
-eval/      subject级配对统计: 固定种子 Wilcoxon + Holm + bootstrap CI(acc%优先)
+data/      一处管数据: eeg_dataset(加载) · split(规范切分) · preproc(EA/通道padding/滤波) · channels(montage)
+models/    一模型一文件夹(网络定义 + 适配器 co-located):
+           base(ModelAdapter 契约 + 小模型基类 + registry)
+           ifnet/ · eegnet/ · adfcnn/ · mirepnet/(mlm+lora/mmd) · cbramod/(+native) · labram/(+optim_factory/montage)
+           每个文件夹 = <net>.py + adapter.py;加模型 = 加一个文件夹
+collab/    ensemble(gate/加权/投票) · distill(离线KD+特征对齐) · bidirectional/… · artifacts(跨环境产物 hub)
+eval/      stats(subject级配对 Wilcoxon+Holm+bootstrap CI,acc%优先) · metrics(acc/kappa/per_class)
 experiments/ config驱动 runner: protocols(within/loso) · methods(collab registry) · run
+config.py  数据/模型 yaml 加载        paths.py  权重解析
+weights/   预训练权重 symlink -> /data1/llx/pretrained_weights(*.pth, git忽略)
 scripts/   finetune_export · run_ensemble · run_distill · smoke_test · verify_{foundation,backbones}
 configs/   datasets/*.yaml · models/*.yaml · exp/*.yaml(实验配方)
 results/   artifacts/<ds>/<model>/<subj>_<seed>_<split>.npz · metrics/*.csv
@@ -40,20 +41,20 @@ envs/      各模型 conda 环境说明
 
 **完全自包含(2026-07-25):** 所有模型**代码**都 vendored 进框架,不再引用任何外部仓
 (`sys.path.add_repo` 已全部移除):
-- 数据管线(`core/eeg_dataset` `EEGDataset` / `core/preproc` EA+通道padding / `core/channels`)
-  与小模型(`models/` IFNet/EEGNet/ADFCNN)—— 逐位一致,见 `scripts/verify_foundation.py`。
-- 大模型 **backbone** 与**微调代码** —— `backbones/mirepnet`(`mlm` + PEFT `lora`/`mmd`)、
-  `backbones/cbramod`(criss-cross transformer)、`backbones/labram`(`modeling_finetune` +
-  `optim_factory` 逐层 LR 衰减)。四个大模型 build+forward 见 `scripts/verify_backbones.py`。
+- 数据层 `data/`(`eeg_dataset` `EEGDataset` / `preproc` EA+通道padding+滤波 / `channels` / `split`)
+  与小模型(`models/{ifnet,eegnet,adfcnn}`)—— 逐位一致,见 `scripts/verify_foundation.py`。
+- 大模型 **backbone** 与**微调代码**都在各自的 `models/<name>/` 里 —— `mirepnet`(`mlm` + PEFT
+  `lora`/`mmd`)、`cbramod`(criss-cross transformer)、`labram`(`modeling_finetune` + `optim_factory`
+  逐层 LR 衰减 + `montage`)。四个大模型 build+forward 见 `scripts/verify_backbones.py`。
 - 预训练**权重**(非代码)真文件统一存放在 `/data1/llx/pretrained_weights/`(稳定数据盘,
   与上游仓解耦——删掉 ~/MIRepNet 等不受影响);`weights/*.pth`(git 忽略)是指向它的 symlink,
-  由 `core/paths.weight_path()` 解析,可用 `MIREPNET_WEIGHT` / `CBRAMOD_WEIGHT` /
+  由 `paths.weight_path()` 解析,可用 `MIREPNET_WEIGHT` / `CBRAMOD_WEIGHT` /
   `LABRAM_WEIGHT` 环境变量覆盖(如指向新微调的 checkpoint)。
 
 各大模型仍需在**自己的 conda 环境**里跑(依赖不兼容:MIRepNet 的 numpy/mne pin vs LaBraM 的
 timm0.4.12 vs CBraMod 的 einops);框架靠 artifact hub 解耦——见下。
 
-## 适配器契约 (`adapters/base.py`)
+## 适配器契约 (`models/base.py`)
 
 每个模型用一个 `ModelAdapter` 包装，对外统一：
 - `preprocess(X_raw (N,C,1000)@250Hz) -> 模型输入`（各自拥有预处理）
@@ -101,6 +102,6 @@ conda run -n mirepnet python scripts/smoke_test.py --models ifnet eegnet adfcnn 
 
 ## 范围
 
-- **模型代码全部在框架内**（`models/` + `backbones/`），可直接改/微调；上游仓库仅作权重来源。
+- **模型代码全部在框架内**（每模型一个 `models/<name>/` 文件夹，网络定义 + 适配器同处），可直接改/微调；上游仓库仅作权重来源。
 - 各大模型仍在各自 conda env 里 finetune + 导出产物；协同（集成/蒸馏）在任意 env 消费产物。
 - 特征级门控融合 (`fusion_model.DualBranchFusion`) 仅在单 env 同进程下可用，作为可选 v2。

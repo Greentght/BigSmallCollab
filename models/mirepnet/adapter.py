@@ -13,8 +13,8 @@ carry ``emb_size`` / ``depth`` / ``pretrain`` (path to MIRepNet.pth).
 import numpy as np
 import torch
 
-from core import paths
-from .base import ModelAdapter
+import paths
+from models.base import ModelAdapter
 
 
 class MIRepNetAdapter(ModelAdapter):
@@ -24,8 +24,8 @@ class MIRepNetAdapter(ModelAdapter):
         super().__init__(device=device, **cfg)
         # Data-layer preprocessing is framework-owned; only the pretrained backbone
         # (build()) is still loaded from the MIRepNet repo (see phase-2 vendoring).
-        from core.preproc import EA, pad_missing_channels_diff
-        from core.channels import (
+        from data.preproc import EA, pad_missing_channels_diff
+        from data.channels import (
             use_channels_names, BNCI2014001_chn_names,
             BNCI2014004_chn_names)
         self._EA = EA
@@ -65,7 +65,7 @@ class MIRepNetAdapter(ModelAdapter):
         return out
 
     def build(self, num_classes):
-        from backbones.mirepnet.mlm import mlm_mask
+        from .mlm import mlm_mask
         pretrain = self.cfg.get('pretrain') or paths.weight_path('mirepnet')
         model = mlm_mask(
             emb_size=self.cfg.get('emb_size', 256),

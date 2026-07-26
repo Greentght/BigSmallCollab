@@ -14,8 +14,10 @@ import pandas as pd
 import torch
 
 from collab.mutual import cr_amd_fold, GROUPS
-from core import config, data, metrics
-from core.registry import get_adapter
+import config
+import data
+from eval import metrics
+from models import get_adapter
 
 
 def parse_args():

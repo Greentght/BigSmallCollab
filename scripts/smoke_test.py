@@ -16,8 +16,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import torch
 
-from core import config, data
-from core.registry import get_adapter
+import config
+import data
+from models import get_adapter
 
 
 def main():

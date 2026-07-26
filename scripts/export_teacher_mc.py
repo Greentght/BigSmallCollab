@@ -20,8 +20,10 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import numpy as np
 import torch
 
-from core import artifacts, config, data
-from core.registry import get_adapter
+import config
+import data
+from collab import artifacts
+from models import get_adapter
 
 
 def parse_args():
