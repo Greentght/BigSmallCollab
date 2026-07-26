@@ -1984,3 +1984,50 @@ Swap 230/457,StrictRouted 470/337——非对称如设计。CSV `*_loso_bdeeg_f*
 - **验证全过**:py_compile 全部 .py;verify_foundation(数据+小模型逐位一致)、verify_backbones ×4(各 env build+forward)、smoke_test、`python -m eval`、experiments runner(缓存教师→蒸馏→CSV)端到端;9 个改写脚本 import 0 失败。
 
 **现结构**:`data/ · models/<name>/ · collab/ · eval/ · experiments/ · config.py · paths.py · configs/ · weights/ · results/`。备份 bundle `BigSmallCollab-backup-restructure-*.bundle`。
+
+---
+
+## 2026-07-26 (Phase D0·诊断) — 协同空间在哪:oracle 大但启发式吃不到 ⇒ 需学习型路由/融合
+
+**为什么做。** 单向蒸馏(KL/cos/教师对样本/原型/关系)全线无效后,先诊断"协同空间到底在不在、在哪",
+再决定投入方向。几乎不训练,复用缓存 per-sample logits/feats。
+
+**做了什么(代码,已 commit)。**
+- `collab/artifacts.py` 标准件 `(logits,feats,y)` 已在;补 `scripts/export_preds.py`(统一导出器,
+  within+LOSO,断点续跑,失败不中断)+ `scripts/run_d0_export.sh`(GPU2 多 worker 队列,限 CPU 线程)。
+  补齐缺失缓存:小模型(ifnet/eegnet/adfcnn) within+LOSO、cbramod_native LOSO;大模型 within/LOSO 复用不重训。
+- `eval/d0.py`:读对齐 artifact 算 ①误差解耦(不一致/Yule Q/2×2四格)②oracle 上界(union=任一对即对/
+  置信路由 conf_route/软标签平均 avg_ensemble/teacher-win 按小模型置信分桶)③ECE+reliability ④CKA(lin+rbf);
+  按 5 条判据自动打路线标签。产物 `results/headroom_map.csv` + `results/d0/*.png` + `decision_report.md`。
+- 对齐已校验:IFNet-LOSO 与 MIRepNet-LOSO fold0 逐行 y 一致(load_aligned 断言)。
+
+**焦点范围(用户圈定):** 2 集(BNCI2014001-4 4类 / BNCI2014004 2类)× 2 教师(MIRepNet/CBraMod_native)
+× 3 小(IFNet/EEGNet/ADFCNN),within+LOSO,seed 666/667/668。24 cells(cbramod×2014001-4 LOSO 该轮 partial)。
+
+**核心结论(LOSO 主协议,complete cells):**
+| pair | acc_big | acc_small | best | avg_ens Δ | conf_route Δ | **oracle Δ** | Yule Q | CKA |
+|---|---|---|---|---|---|---|---|---|
+| MIRep×IFNet 14001-4 | 48.4 | 41.3 | 48.4 | +0.2 | −0.3 | **+16.4** | 0.39 | 0.32 |
+| MIRep×EEGNet 14001-4 | 48.4 | 41.5 | 48.4 | +0.3 | −0.2 | **+16.9** | 0.36 | 0.33 |
+| MIRep×ADFCNN 14001-4 | 48.4 | 42.5 | 48.4 | +0.9 | +0.2 | **+17.5** | 0.35 | 0.28 |
+| MIRep×* 14004(2类) | ~77 | ~75 | 77 | +1.2 | +1.2 | **+9~10** | 0.77–0.80 | 0.34–0.51 |
+| CBraMod×* 14004 | 64 | 74–76 | 74–76 | −3~−4.5 | −3~−4.5 | **+10~11** | 0.55–0.59 | 0.17–0.25 |
+
+**判读。**
+1. **协同空间真实且大:oracle-union 比 best-single 高 +9~17%**(误差解耦,Yule Q 远<1;4类 LOSO Q~0.35 最解耦)。
+   非"oracle≈单模型"的放弃情形。
+2. **但 label-free 启发式几乎吃不到:avg-ensemble / conf-route 增益 ≈0,弱教师(CBraMod)甚至 −2~−9%**
+   (CBraMod 比小模型差且过自信,置信路由被它拖垮)。⇒ **可达增益与 oracle 之间的巨大缺口只能靠"学习型
+   per-sample 信任决策"(路由/门控 R 或特征融合 F)填补** —— 这就是主贡献点,也解释了朴素融合为何不够。
+3. **单向软标签 KD 失败被机制性解释**:教师并非一致更强(CBraMod<小模型;MIRepNet 仅 4类 +6%、2类≈持平),
+   校准差 ⇒ 软标签无信息。与历史全部 negative KD 结果自洽。
+4. **CKA 中低(0.17–0.51,CBraMod 尤低)** ⇒ featureKD 需 projector,优先 logit/关系/路由。
+
+**路线决策(待用户圈定):**
+- 主攻 **F1(late-fusion 学习融合头)** + **R1(学习型 router,输入两模型 logits/熵/置信差)**:目标吃下 oracle 缺口。
+  旗舰靶点 = **MIRepNet×小 / BNCI2014001-4(4类)/ LOSO**(oracle +16~17%、最解耦)。
+- **K(大→小)仅 MIRepNet×2014001-4** 有 ~+6% 空间(其余教师≤学生,K 无望——勿再投)。
+- **B(双向/互学习)** 作为主卖点候选:因两向都有独有正确样本(student_win 高),互学习有据。
+- **DoD 核对**:headroom_map.csv + 决策报告已出,partial cell(cbramod×14001-4 LOSO)后台补齐后自动刷新。
+
+**下一步**:等用户在 {F1, R1, B1} 圈 2–3 方向 → 小网格(1集1组合3seed)找信号 → 有信号铺开、无信号记 negative。
