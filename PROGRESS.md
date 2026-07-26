@@ -2031,3 +2031,35 @@ Swap 230/457,StrictRouted 470/337——非对称如设计。CSV `*_loso_bdeeg_f*
 - **DoD 核对**:headroom_map.csv + 决策报告已出,partial cell(cbramod×14001-4 LOSO)后台补齐后自动刷新。
 
 **下一步**:等用户在 {F1, R1, B1} 圈 2–3 方向 → 小网格(1集1组合3seed)找信号 → 有信号铺开、无信号记 negative。
+
+---
+
+## 2026-07-26 (R1 signal hunt) — 学习型 logit 路由 = 负结果;headroom 真实但从 logits 不可迁移
+
+**为什么做。** D0 显示 oracle 缺口大(+9~17%)但朴素融合吃不到;R1 测"学习型 gate 能否吃到"。
+无泄漏:嵌套被试-LOSO 训 gate(每被试在自己那折是 OOS 基座预测),零基座重训,复用 D0 缓存 logits。
+代码 `collab/router.py` + `scripts/run_r1_signal.py`。旗舰 cell = MIRep×IFNet / 2014001-4 / LOSO(oracle 最大、最解耦)。
+
+**gate = 小 MLP(输入两模型 logits/conf/entropy/energy 差),按混合分布 CE 端到端训。三重证据(3 seed,9 被试):**
+| 设置 | acc | vs 基线 |
+|---|---|---|
+| big / small / avg_ens | 48.37 / 41.31 / 48.59 | 基线 |
+| **静态跨被试 gate (soft)** | **46.71** | **显著更差** p=0.0039, 0/9 |
+| 条件计算 Pareto(按 α 唤醒) | wake0.5→44.55 | 不如随机唤醒(~44.85) |
+| in-sample gate 上界 | 55.44 | 吃到 ~40% oracle 缺口 |
+| 同被试自校准(2-fold, 半被试标签) | 50.10 | +0.40 vs max(big,avg_ens), **ns** p=0.57, 6/9 |
+| oracle-union 天花板 | 64.72 | — |
+
+**诊断。** 判别"谁对|两者分歧"的 in-sample AUC=0.633(有信息但弱)。⇒ "谁对"的信号**确实在 logit 特征里**,
+但 (a) 跨被试**不迁移**(gate 过拟合被试特异 logit 几何,静态版比基线还差),(b) 即便同被试慷慨校准也只 +0.4(ns)。
+**oracle +16% 大部分是"暗 headroom":哪个模型对无法从 logit 几何稳定预测。**
+
+**结论 & 转向。**
+- **R1(logit 级路由/门控/条件计算)= 负结果**,记档。avg_ensemble≈best-single 也无增益(4类 LOSO)。
+- 负结果**指向两条**:① **F 特征级**(logits 信息太薄,penultimate 特征更丰富——D0 里 F1 被降优先级,建议重新纳入);
+  ② **B 双向/互学习**(把协同内化进训练/表征,而非事后对固定 logits 打门)。
+- **未测杠杆**:gate 加 MC-dropout 方差/BALD(adapter 有 `mc_uncertainty`);但 in-sample AUC 已仅 0.63,预期收益有限。
+- leaderboard 已追加 R1 行(static soft/hard vs 基线 vs oracle)。
+
+**下一步**:B(主卖点)。设计分歧 B1(小→大 adapter 注入冻结大模型) vs B2(DML 双向KL) vs B3(co-teaching),
+待用户圈。诊断也支持把 F1 重新纳入(logit 不够→用特征)。
