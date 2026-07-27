@@ -1,8 +1,9 @@
 # BigSmallCollab — 大小模型协同框架 (MI-BCI)
 
 统一管理 **大模型 (MIRepNet / CBraMod / LaBraM)** 与 **小模型 (IFNet / EEGNet /
-ADFCNN)** 在运动想象解码上的协同实验。三个上游仓库被当作**只读模型源**引用
-（不复制源码），框架负责数据切分、各模型产出、以及协同（集成 + 蒸馏）。
+ADFCNN)** 在运动想象解码上的协同实验。模型代码已集成在本仓库的 `models/`
+目录下；上游仓库不再作为运行时源码依赖。框架负责统一数据切分、各模型产出、
+以及协同（集成 + 蒸馏）。
 
 ## 核心思想：缓存产物 Hub（解耦不兼容的 conda 环境）
 
@@ -102,6 +103,6 @@ conda run -n mirepnet python scripts/smoke_test.py --models ifnet eegnet adfcnn 
 
 ## 范围
 
-- **模型代码全部在框架内**（每模型一个 `models/<name>/` 文件夹，网络定义 + 适配器同处），可直接改/微调；上游仓库仅作权重来源。
+- **模型代码全部在框架内**（每模型一个 `models/<name>/` 文件夹，网络定义 + 适配器同处），可直接改/微调；预训练权重通过 `weights/*.pth` symlink 或环境变量外置管理。
 - 各大模型仍在各自 conda env 里 finetune + 导出产物；协同（集成/蒸馏）在任意 env 消费产物。
 - 特征级门控融合 (`fusion_model.DualBranchFusion`) 仅在单 env 同进程下可用，作为可选 v2。
