@@ -31,6 +31,7 @@ def parse_args():
     p.add_argument('--lam_bs', type=float, default=0.5)
     p.add_argument('--lam_sb', type=float, default=0.1)
     p.add_argument('--lr_big', type=float, default=1e-4)
+    p.add_argument('--lam_feat', type=float, default=0.5)
     p.add_argument('--gpu', type=int, default=None)
     p.add_argument('--tag', default='')
     return p.parse_args()
@@ -67,7 +68,7 @@ def main():
             res, diag = cr_amd_fold(
                 big_ad, small_ad, nc, X_tr, y_tr, subj_tr, X_te, f,
                 groups=groups, warmup=a.warmup, total=a.total,
-                lam_bs=a.lam_bs, lam_sb=a.lam_sb, lr_big=a.lr_big,
+                lam_bs=a.lam_bs, lam_sb=a.lam_sb, lam_feat=a.lam_feat, lr_big=a.lr_big,
                 lr_small=scfg.get('lr', 1e-3), wd=scfg.get('weight_decay', 0.01),
                 bs=scfg.get('batch_size', 16), seed=seed)
             for g, (sp, bp) in res.items():
