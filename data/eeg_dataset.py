@@ -59,47 +59,37 @@ class EEGDataset(Dataset):
             self.paradigm = 'MI'
             self.num_subjects = 9
             self.sample_rate = 250
-            
-            # (Start, End_Sess2, End_Sess3, End_Total)
-            # S0-S2: 用于 Phase 1 (Transfer/Warmup)
-            # S3:    用于 Phase 2 (Finetune) 和 Test
-            split_points = {
-                0: (0, 400, 560, 720),
-                1: (720, 1120, 1240, 1400),
-                2: (1400, 1800, 1960, 2120),
-                3: (2120, 2540, 2700, 2860),
-                4: (2860, 3280, 3440, 3600),
-                5: (3600, 4000, 4160, 4320),
-                6: (4320, 4720, 4880, 5040),
-                7: (5040, 5480, 5640, 5800),
-                8: (5800, 6200, 6360, 6520)
-            }
+            self.ch_num = 3
 
-            indices = []
+            meta_path = '/data1/llx/BNCI2014004/meta004.csv'
+            meta = pd.read_csv(meta_path)
             data_mode = getattr(self.args, 'data_mode', 'finetune')
-            
             target_subjects = self.args.sub if hasattr(self.args, 'sub') else range(self.num_subjects)
+            wanted_subjects = [int(s) + 1 for s in target_subjects]
 
-            for subject_id in target_subjects:
-                p0, p1, p2, p3 = split_points[subject_id]
-                
-                if data_mode == 'phase1':
-                    # 加载 Session 0, 1, 2 (400条)
-                    print(f"Loading Phase 1 Data (Sess 0-2) for Subject {subject_id}")
-                    indices.append(np.arange(p0, p1))
-                    
-                elif data_mode == 'session3':
-                    # 加载完整的 Session 3 (160条或120条)
-                    print(f"Loading Session 3 (Full) for Subject {subject_id}")
-                    indices.append(np.arange(p1, p2))
+            if data_mode == 'phase1':
+                sessions = ['session_0', 'session_1', 'session_2']
+            elif data_mode == 'session4' or data_mode == 'test':
+                sessions = ['session_4']
+            elif data_mode == 'all_sessions':
+                sessions = sorted(meta['session'].unique().tolist())
+            else:
+                # Backwards-compatible downstream pool. The old code called this
+                # "session3" and selected the same rows via hard-coded p1:p2 ranges.
+                sessions = os.environ.get('MI2014004_SESSION', 'session_3').split(',')
+
+            mask = (meta['subject'].isin(wanted_subjects)
+                    & meta['session'].isin(sessions))
+            indices = meta.index[mask].to_numpy()
 
             if len(indices) > 0:
-                indices = np.concatenate(indices, axis=0)
+                print(f"Loading BNCI2014004 sessions {sessions} for subjects {wanted_subjects}")
                 X = X[indices]
                 y = y[indices]
                 X = X[:, :, :1000]
             else:
-                print(f"Warning: No indices loaded for Subject {target_subjects} in mode {data_mode}!")
+                print(f"Warning: No indices loaded for BNCI2014004 subjects "
+                      f"{target_subjects} in mode {data_mode}, sessions={sessions}!")
         elif self.dataset_name == 'BNCI2014001':
             self.paradigm = 'MI'
             self.num_subjects = 9

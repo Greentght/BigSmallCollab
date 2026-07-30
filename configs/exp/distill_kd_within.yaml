@@ -1,6 +1,6 @@
 # Within-subject distillation: MIRepNet teacher -> IFNet student, KD ablation.
 # Run in the student's env (mirepnet). Teacher artifacts must be exported first:
-#   conda run -n mirepnet python scripts/finetune_export.py --model mirepnet --dataset <ds>
+#   conda run -n mirepnet python scripts/export/finetune_export.py --model mirepnet --dataset <ds>
 # Then:
 #   conda run -n mirepnet python -m experiments.run configs/exp/distill_kd_within.yaml --report
 name: distill_kd_within

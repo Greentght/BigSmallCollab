@@ -15,7 +15,7 @@ conda activate labram
 mkdir -p logs results/labram_native
 for ds in "${DATASETS[@]}"; do
   echo "==== $(date '+%F %T') launching $ds ===="
-  python scripts/labram_native_adapt.py \
+  python scripts/bigmodel/labram_native_adapt.py \
     --dataset "$ds" --preset "$PRESET" --gpu "$GPU" \
     --epochs 50 --batch_size 32 --seeds 666 667 668 \
     2>&1 | tee "logs/labram_native_${ds}_${PRESET}.log"

@@ -1,9 +1,9 @@
-# CBraMod foundation model; 250->200Hz, (ch,4,200) patches. Env: cbramod.
+# CBraMod foundation-model teacher (final settled = native, CAR-only 高分版).
+# Official all_patch_reps 3-layer head + CAR-only norm + filtfilt order-4.
+# Per-dataset lr/epochs/dropout/weight_decay/band are auto-filled by the adapter
+# from its embedded tp0.7 CAR-only table; batch_size is shared. Env: cbramod.
+# (``cbramod_native`` is a back-compat alias of this same model — see models/__init__.py.)
 env: cbramod
 size: big
-epochs: 50
-lr: 0.0005
-batch_size: 32
-weight_decay: 0.05
-scale: 100.0
-# pretrain: defaults to <CBraMod>/pretrained_weights/pretrained_weights.pth
+batch_size: 16
+# lr / epochs / dropout / weight_decay / band: set per-dataset in adapter (_CARONLY)

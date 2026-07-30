@@ -2210,3 +2210,226 @@ leaderboard 已含 F+T 行。产物 results/metrics/ft_generality.csv。
 → 贡献 = 诊断工具 + 一组机制性负结果 + 冻结/缓存场景下的 never-hurts 协同选池。所有数字真实运行、落盘、git 可追溯。
 
 **可选后续**(非必需):cbramod cell 的 A(小模型更强,预期 ft_small 亦超 fusion);per-model config base epochs 的忠实版 A;CD 图/leaderboard 收口。
+
+---
+
+## 2026-07-27 (负结果·特征级双向对齐·被试内) — feature bidir alignment 在 within-subject 场景全线无效
+
+**为什么做。** 历史 LOSO CR-AMD 双向对齐全线无效后,测被试内(within-subject)场景:大小模型在同一被试数据上**同时在线训练**,
+动态正确性路由控制特征对齐方向(大对小wrong/小对大wrong),看双向特征对齐能否互相提升。
+这是"双向蒸馏"最后一条未测场景。代码 `scripts/run_featbidir_within.py`(完整双向 DML 变体,joint CE + cosine 特征对齐)。
+
+**协议。** BNCI2014001-4,big=mirepnet,small=ifnet;两个分割比:
+- **70/30(val_split=0.3)**:70% 训练,30% 测试(标准)
+- **30/70(val_split=0.7)**:30% 训练,70% 测试(低资源)
+
+9 被试 × 3 seed(666/667/668)。关键:`ce_big_long`=大模型训同等 epoch 数(100ep,与 joint 相同)作为公平对照,
+排除"joint 只是多跑了 epoch"的混淆。
+
+**结果(被试级配对 Wilcoxon,n=9,seeds 平均):**
+| 分割 | 对比 | 均值 Δ | wins | p |
+|---|---|---|---|---|
+| 70/30 | bd_big vs ce_big_long | +0.51 | 6/9 | 0.652 |
+| 70/30 | bd_small vs ce_small | −0.68 | 4/9 | 0.483 |
+| 30/70 | bd_big vs ce_big_long | −0.35 | 4/9 | 0.426 |
+| 30/70 | bd_small vs ce_small | +0.24 | 5/9 | 0.820 |
+
+**注:** bd_ens vs ce_small 表现 9/9 正、p=0.004,但这是 2 模型集成 vs 单模型的不公平对比;公平基线(ce_big_long+ce_small ensemble)
+约 74–76%,而 bd_ens≈73.7% 实际**更低**,故该表面正结果为假象。
+
+**结论:双向特征对齐在 within-subject 场景 Δ≈0,两种分割比一致无效。**
+与历史 LOSO CR-AMD / logit 级双向 / BD-EEG 等所有变体完全一致。**双向对齐这条研究线正式关闭。**
+CSV: `results/metrics/featbidir_within_v1.csv`(54 行:9 被试×3 seed×2 val_split)。
+
+---
+
+## 2026-07-27 (负结果·错误样本利用 E0-E5) — 所有错误样本方法均无效或有害;Correct-only KD 仍为最优
+
+**为什么做。** 双向对齐全线关闭后,转向"固定教师、只更新学生、选择性利用错误样本"。
+动机:教师对某些训练样本预测有误,是否仍含有用的信息(E3 上调权重/E4 翻转/E5 校正)。
+代码 `scripts/run_wrong_sample.py`(E0-E5 全套)。
+
+**方法矩阵:**
+| 方法 | 描述 |
+|---|---|
+| E0_CE | 纯 CE baseline |
+| E1_KD_all | KD 全部样本(含教师错误) |
+| E2_KD_correct | KD 仅教师正确样本(**anchor**) |
+| E3_WrongCE | E2 + 上调错误样本 CE 权重 |
+| E4_FlipKD | E2 + 错误样本 logit 翻转(swap y_true↔y_pred) |
+| E5_CalibRevision | 温度校准 + alpha 最小修正软标签 |
+
+小模型统一 IFNet,教师 CBraMod(native)/MIRepNet,λ ∈ {0.1,0.5,1.0},T ∈ {2,4}。
+被试内 70/30,9-12 被试 × 3 seed。
+
+**结果 1:BNCI2015001 × CBraMod 教师**
+教师训练集准确率 **t_acc=98.6%**,平均错误样本数 **2.0/样本池** → 几乎无错误样本可利用。
+所有方法均无实质效果(Δ≈0);E3-E5 无材料可施展。
+
+**结果 2:BNCI2015001 × MIRepNet 教师**
+教师 t_acc=96.7%,n_wrong≈4.6。E2(correct-only KD)为 anchor(IFNet 89.97%)。
+| 方法 | 最优 λ | Δacc vs E2 | p(Wilcoxon) |
+|---|---|---|---|
+| E3_WrongCE | 0.5 | +0.27 | 0.396 |
+| **E4_FlipKD** | **0.5** | **−0.60** | **0.041 ★ 显著变差** |
+| E5_CalibRevision | 0.5 | +0.65 | 0.082 (趋势,NS) |
+→ E4 翻转 logit 方向**显著伤害**;E5 轻微正但不显著;其余无效。
+
+**结果 3:BNCI2014001-4 × MIRepNet 教师**
+教师 t_acc=90.2%,n_wrong≈19.6/201。E2 anchor=66.92%。
+温度校准返回 cal_T=0.59(<1,锐化不是平滑)→ E5 的 α 变大,软标签退化为 one-hot,软标签信息丢失。
+| 方法 | 最优 λ | Δacc vs E2 | p(Wilcoxon) |
+|---|---|---|---|
+| E3_WrongCE | 0.5 | +0.13 | 0.933 |
+| E4_FlipKD | 0.5 | +0.60 | 0.128 |
+| **E5_CalibRevision** | **0.5** | **−0.09** | **0.933 (差于 E2)** |
+→ 全部无效;E5 在 cal_T<1 时反而更差(锐化教师使 α 过大,软标签信息损失)。
+
+**额外发现:CBraMod 在被试内场景结构性 100% 训练准确率。**
+无论 lr/epochs/dropout/weight_decay 如何调整,CBraMod 在被试内场景均达到 99.9–100% 训练准确率(12层 transformer 对每被试 ~200 trial 直接记忆)。
+因此 CBraMod 无法在被试内场景充当"弱教师"为错误样本实验提供材料——这是结构性问题,非参数可解决。
+
+**总结论:**
+- 所有错误样本利用方法(E3/E4/E5)均无效或有害。
+- **E2(Correct-only KD)在所有测试场景中仍为最稳健蒸馏选项。**
+- **错误样本利用这条研究线正式关闭。**
+
+CSV: `results/metrics/wrong_sample_BNCI2015001_cbramod_native_ifnet_v1.csv`(433行),
+`results/metrics/wrong_sample_BNCI2015001_mirepnet_ifnet_v1.csv`(433行),
+`results/metrics/wrong_sample_BNCI2014001-4_mirepnet_ifnet_v1.csv`(325行)。
+
+---
+
+## 2026-07-27 (PLAN/code) — 大模型端到端 LOSO 调参入口接 Claude 会话
+
+**继承断点。** Claude 最新会话的任务是“LOSO 场景下端到端微调 MIRepNet / CBraMod，找最佳参数”。用户已选择聚焦优化网格与 3 张 GPU 并行；Claude 在准备动手时因订阅访问被禁中断。
+
+**本次代码落地。** 新增 `scripts/bigmodel/mirepnet_loso_adapt.py`（MIRepNet LOSO 评估，训练集 per-subject EA + 45ch pad，测试被试独立 EA，无跨被试 whitening 泄漏）；`scripts/bigmodel/cbramod_native_adapt.py` 增加 `--protocol loso`；新增 `scripts/bigmodel/tune_mirepnet_loso.py` 与 `scripts/bigmodel/tune_cbramod_loso.py`，均为 1 seed search + 3 seed confirm，输出 chosen/summary，并对子进程设置 CPU 线程上限。
+
+**网格约定。** MIRepNet 扫 `epochs(10/30/50) × lr(5e-4/1e-3) × wd(1e-6/1e-4) × batch(8/16)=24`；CBraMod 扫 `lr(5e-4/1e-3) × epochs(20/50) × wd(0.01/0.05/0.1) × dropout(0.1/0.5)=24`。CBraMod 预处理固定：004 用 `norm=none, scale=1, b75n60`（3ch CAR harmful），其他集用 CAR-only `scale=1`（AlexMI=b50，其余 b75n60）。
+
+**验证状态。** 已通过 `python -m py_compile`；MIRepNet/CBrMod tune 脚本 `--help` 通过；`cbramod_native_adapt.py --help` 需在 `cbramod` env 下运行并已通过。尚未启动长时间搜索。
+
+**启动记录。** 已用 `setsid` 启动长任务 driver：PID 56056（PPID=1，SID=56056），日志 `logs/tune_loso/bigmodel_loso_tune.log`。顺序执行 MIRepNet LOSO all-phase 后 CBraMod LOSO all-phase，GPU=`1 4 5`，threads/job=4。启动时 MIRepNet search 显示 120 jobs，首批任务已在 1/4/5 上运行。
+
+---
+
+## 2026-07-28 (status/fix) — LOSO 大模型调参首轮因 CUDA 设备初始化 OOM 中止并重启
+
+**当前判断。** 首轮 `logs/tune_loso/bigmodel_loso_tune.log` 不能作为有效调参结果：MIRepNet 每个配置只留下部分 fold；CBraMod 只有 BNCI2014004 少量完整配置，BNCI2014001_4c/2c 在第二个 fold 前后大量失败。因此 `results/mirepnet_loso/tuned/chosen_configs.json` 为空，尚无有效 MIRepNet tuned summary。
+
+**失败原因。** runner 在未先 `torch.cuda.set_device(args.gpu)` 的情况下调用 `torch.manual_seed()` / `torch.cuda.manual_seed_all()`，会触碰所有可见 GPU。GPU0 当时已接近满显存，导致本应跑在 GPU 1/4/5 的 LOSO 子进程仍可能因 GPU0 CUDA context OOM 失败；部分日志显示 OOM 出现在 `torch.manual_seed(seed)` 或 `torch.cuda.empty_cache()`。
+
+**修复。** `scripts/bigmodel/mirepnet_loso_adapt.py` 与 `scripts/bigmodel/cbramod_native_adapt.py` 已改为先设置当前 CUDA device，再只 seed 当前 device；`torch.default_generator.manual_seed(seed)` 负责 CPU seed，避免 `manual_seed_all` 误碰其他卡。`py_compile` 通过；GPU1 上 MIRepNet 004 单 fold/1 epoch smoke 通过；CBraMod 14001_4c 单 fold/1 epoch smoke 通过。
+
+**残留可复用。** tune driver 的完整性判定按 `n_subjects * n_seeds` 行数检查；runner 内部按 `(dataset, fold, seed)` 跳过已有行，所以不删除首轮 CSV，直接从残点续跑。
+
+**重启记录。** 旧 driver 进程组已停止。新 driver 已于 2026-07-28 10:29 CST 用 `setsid` 后台启动，日志 `logs/tune_loso/bigmodel_loso_tune_restart.log`，PID 97928/97963，GPU=`1 8`，threads/job=4。当前从 MIRepNet search 开始，随后自动进入 MIRepNet confirm，再进入 CBraMod search/confirm。首轮中可暂作参考但未完成确认的 CBraMod BNCI2014004 最好完整 search 配置约为 `lr=1e-3, epochs=20, dropout=0.1, wd=0.05`，bac≈0.6947；最终以重启后的完整 search+confirm 为准。
+
+---
+
+## 2026-07-29 (status) — MIRepNet LOSO 已完成，CBraMod LOSO 仍在 search
+
+**检查时间。** 2026-07-29 22:35 CST。
+
+**MIRepNet。** `scripts/bigmodel/tune_mirepnet_loso.py --phase all` 已完成 search+confirm，主日志显示 `[mirepnet_done] Wed Jul 29 13:34:20 CST 2026`。确认结果 `results/mirepnet_loso/tuned/summary_tuned.csv`：BNCI2014004 acc=78.95/bac=0.7895；BNCI2014001-4 acc=49.36/bac=0.4936；BNCI2014001 acc=74.59/bac=0.7459；AlexMI acc=75.10/bac=0.7510；BNCI2015001 acc=69.85/bac=0.6985。
+
+**CBraMod。** 同一个 driver 已进入 `scripts/bigmodel/tune_cbramod_loso.py --phase all`，但尚未结束。当前在 BNCI2014001_4c search 阶段，约 18/24 个配置完整，剩余配置仍在 GPU 1/8 上运行；后续还需完成 BNCI2014001_2c、BNCI2014004、AlexMI_2c、BNCI2015001 的 search，并进入 5 个数据集的 confirm。最终 CBraMod tuned summary 尚未生成。
+
+
+---
+
+## 2026-07-30 (结果补记) — few-shot/被试内双向蒸馏结果与来源表索引
+
+**本条目的。** 把此前 few-shot 蒸馏线、本轮 CR-AMD / BD-EEG 双向蒸馏实验、以及可追溯的来源 Excel/CSV 集中登记。前文已有详细叙事的实验不在这里重写全部表格；本条作为“结果结论 + 来源表”索引。
+
+### 1) 历史蒸馏实验来源 Excel 索引
+
+这些是前文 mask、DKD、EA-KD、关系矩阵蒸馏、原型对齐、基础模型/单向蒸馏等结果的汇总表来源；详细结论见 2026-07-20 到 2026-07-24 相关条目。
+
+| 实验线 | 来源 Excel |
+|---|---|
+| 基础模型 / MIRepNet / CBraMod 对照 | `results/IFNet_MIRepNet_CBraMod_summary.xlsx` |
+| accuracy-only / 基础单向蒸馏汇总 | `results/accuracy_only_distill_summary.xlsx` |
+| teacher-correct-only mask 蒸馏 | `results/teacher_correct_only_distill_summary.xlsx` |
+| DKD / 目标类-非目标类解耦 | `results/dkd_distill_summary.xlsx` |
+| adaptive entropy KD / MC-dropout 熵权重 | `results/adaptive_entropy_kd_summary.xlsx` |
+| 原型对齐 / ProtoKD | `results/proto_distill_summary.xlsx` |
+| 关系矩阵蒸馏 | `results/relational_distill_summary.xlsx` |
+| 真 EA-KD 被试内 | `results/eakd_within_summary.xlsx` |
+| EA-KD 全矩阵 | `results/eakd_matrix_summary.xlsx` |
+
+**历史蒸馏线总账。** 在被试内确定性/可比实验里，mask、EA-KD、关系矩阵、原型对齐、双向前的各类精细蒸馏均未稳健超过朴素 KD 或同架构 base；其中 `eakd_matrix_summary.xlsx` 对应的 EA-KD 全矩阵为 0/8 加值，过度自信弱教师上还会显著有害。若要写论文级精确数字，优先使用上述 Excel，而不是早期非确定性探索 CSV。
+
+### 2) 误设 K-shot 双向蒸馏辅助结果（不作为用户指定 train% 场景主结论）
+
+**场景。** `BNCI2014004`，MIRepNet(B) + IFNet(S)，按每类 `shots={5,10,20}` 抽样训练，测试仍为完整 held-out split。这个是 K-shot 采样，不是用户要求的“选定 session 上 30%/70% 或 70%/30% train/test”场景，因此只作为辅助记录。
+
+| 方法 | shots | G0 S/B | 核心组 S/B | 核心组 ΔS/ΔB |
+|---|---:|---:|---:|---:|
+| CRAMD `G6_CRAMD`, sb=0.1 | 5 | 67.772 / 74.640 | 69.034 / 74.562 | +1.262 / -0.078 |
+| CRAMD `G6_CRAMD`, sb=0.1 | 10 | 70.886 / 76.517 | 71.399 / 76.286 | +0.513 / -0.231 |
+| CRAMD `G6_CRAMD`, sb=0.1 | 20 | 76.157 / 80.015 | 75.901 / 79.295 | -0.256 / -0.720 |
+| BD-EEG `BD_EEG` | 5 | 67.772 / 74.640 | 68.236 / 74.331 | +0.464 / -0.309 |
+| BD-EEG `BD_EEG` | 10 | 70.886 / 76.517 | 71.399 / 76.646 | +0.514 / +0.129 |
+| BD-EEG `BD_EEG` | 20 | 76.157 / 80.015 | 76.569 / 79.526 | +0.412 / -0.489 |
+
+来源表（Excel 可打开的 CSV）：
+`results/metrics/BNCI2014004_fewshot_bidir_compare_mirepnet_ifnet.csv`；
+`results/metrics/BNCI2014004_fewshot_bidirfs_sb0.1_mirepnet_ifnet.csv`；
+`results/metrics/BNCI2014004_fewshot_bidirfs_sb0.1_diag.csv`；
+`results/metrics/BNCI2014004_fewshot_bidirfs_sb0.25_mirepnet_ifnet.csv`；
+`results/metrics/BNCI2014004_fewshot_bidirfs_sb0.25_diag.csv`；
+`results/metrics/BNCI2014004_fewshot_bdeeg_v1_mirepnet_ifnet.csv`；
+`results/metrics/BNCI2014004_fewshot_bdeeg_v1_diag.csv`。
+
+### 3) 正确场景：选定 session 内按比例划分的端到端双向蒸馏
+
+**代码与协议。** 脚本 `scripts/bidir/run_bidir_within_trainpct.py`，通过 `data.subject_split(ds, subj, val_split, seed)` 读取数据集配置里选定的 downstream session；不是写死某个 `004` 文件。模型为 MIRepNet(B) + IFNet(S)，两者每个 batch 同步前向/反向，训练端到端；每个 cell 为 9 被试 × 3 seeds。参数：`warmup=15,total=60,lam_bs=1.0,lam_sb_cramd=0.1,lam_sb_bdeeg=0.25,gamma=1.0,rho=0.5`。`G0_CE` 是同训练长度、无蒸馏控制；`best-single` = 同一 group/cell 内 `max(S_acc,B_acc)`。
+
+**数据划分。**
+
+| split | `val_split` | `BNCI2014004` 样本数 | `BNCI2014001-4` 样本数 |
+|---|---:|---|---|
+| 30% train / 70% test | 0.7 | S1 为 36/84，其余被试为 48/112 | 每被试 86/202 |
+| 70% train / 30% test | 0.3 | S1 为 84/36，其余被试为 112/48 | 每被试 201/87 |
+
+#### 30% train / 70% test 结果（`train30_v1`）
+
+| 数据集 | 方法 | 核心组 | G0 best-single | 核心组 best | Δbest | ΔS | wins | p |
+|---|---|---|---:|---:|---:|---:|---:|---:|
+| BNCI2014004 | CRAMD | `G6_CRAMD` | 82.176 | 81.768 | -0.409 | +0.164 | 3/9 | 0.4258 |
+| BNCI2014004 | BD-EEG | `BD_EEG` | 81.845 | 81.338 | -0.507 | -0.827 | 3/9 | 0.2620 |
+| BNCI2014001-4 | CRAMD | `G6_CRAMD` | 57.774 | 57.627 | -0.147 | +0.440 | 4/9 | 0.7794 |
+| BNCI2014001-4 | BD-EEG | `BD_EEG` | 58.379 | 58.122 | -0.256 | -0.090 | 3/9 | 0.9102 |
+
+补充：`BNCI2014004` 的 `BD_EEG_Swap` best 有 +0.650、p=0.0547，`SymDML` best 有 +0.496、p=0.0929；`BNCI2014001-4` 的 `G5_Routed` 对 S 有 +0.972、p=0.0117，但 best-single 只 +0.164、p=0.9102。这些都不是跨数据集、跨方法稳定的核心双向蒸馏增益。
+
+来源表（Excel 可打开的 CSV）：
+`results/metrics/bidir_within_train30_v1_mirepnet_ifnet.csv`；
+`results/metrics/bidir_within_train30_v1_diag.csv`；
+`results/metrics/bidir_within_train30_v1_compare.csv`。
+日志：`logs/bidir_within_train30_v1.log`。
+
+完整性：主表 648/648 行，diag 表 29160/29160 行；每个 cell/group 都有 45 个 epoch 诊断点。
+
+#### 70% train / 30% test 结果（`train70_v1`）
+
+| 数据集 | 方法 | 核心组 | G0 best-single | 核心组 best | Δbest | ΔS | wins | p |
+|---|---|---|---:|---:|---:|---:|---:|---:|
+| BNCI2014004 | CRAMD | `G6_CRAMD` | 84.002 | 82.562 | -1.440 | -1.594 | 2/9 | 0.2334 |
+| BNCI2014004 | BD-EEG | `BD_EEG` | 83.333 | 82.331 | -1.002 | +0.566 | 2/9 | 0.1275 |
+| BNCI2014001-4 | CRAMD | `G6_CRAMD` | 64.623 | 64.113 | -0.511 | -1.192 | 4/9 | 0.4258 |
+| BNCI2014001-4 | BD-EEG | `BD_EEG` | 64.623 | 64.538 | -0.086 | +0.128 | 5/9 | 0.9102 |
+
+补充：`BNCI2014004` 的 `G1_FixKD` 在 BD-EEG 同批表里 best 有 +0.824、p=0.6121，但它不是双向核心组且不显著；`BNCI2014001-4` 的 `SymDML` best 仅 +0.043、p=0.9441，近似零。
+
+来源表（Excel 可打开的 CSV）：
+`results/metrics/bidir_within_train70_v1_mirepnet_ifnet.csv`；
+`results/metrics/bidir_within_train70_v1_diag.csv`；
+`results/metrics/bidir_within_train70_v1_compare.csv`。
+日志：`logs/bidir_within_train70_v1.log`。
+
+完整性：主表 648/648 行，diag 表 29160/29160 行；每个 cell/group 都有 45 个 epoch 诊断点。
+
+**双向蒸馏结论。** 在用户指定的端到端被试内比例划分场景里，2 个 split × 2 个数据集 × 2 个核心方法共 8 个主 cell，CR-AMD `G6_CRAMD` 和 BD-EEG `BD_EEG` 的 `best-single` 全部低于 `G0_CE`。小模型 S 偶尔有小幅正向，但一旦用“同批次独立训练大小模型二者取最优”的 best-single 控制，核心双向蒸馏没有超过单模型独自端到端训练。因此这条线目前是负结果 / null，不支持“端到端双向蒸馏稳定超过二者独自微调”的目标。
