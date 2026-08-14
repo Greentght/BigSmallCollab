@@ -1,9 +1,7 @@
 # BigSmallCollab — 大小模型协同框架 (MI-BCI)
 
 统一管理 **大模型 (MIRepNet / CBraMod / LaBraM)** 与 **小模型 (IFNet / EEGNet /
-ADFCNN)** 在运动想象解码上的协同实验。模型代码已集成在本仓库的 `models/`
-目录下；上游仓库不再作为运行时源码依赖。框架负责统一数据切分、各模型产出、
-以及协同（集成 + 蒸馏）。
+ADFCNN)** 在运动想象解码上的协同实验。
 
 ## 核心思想：缓存产物 Hub（解耦不兼容的 conda 环境）
 
@@ -40,20 +38,6 @@ results/   artifacts/<ds>/<model>/<subj>_<seed>_<split>.npz · metrics/*.csv
 envs/      各模型 conda 环境说明
 ```
 
-**完全自包含(2026-07-25):** 所有模型**代码**都 vendored 进框架,不再引用任何外部仓
-(`sys.path.add_repo` 已全部移除):
-- 数据层 `data/`(`eeg_dataset` `EEGDataset` / `preproc` EA+通道padding+滤波 / `channels` / `split`)
-  与小模型(`models/{ifnet,eegnet,adfcnn}`)—— 逐位一致,见 `scripts/check/verify_foundation.py`。
-- 大模型 **backbone** 与**微调代码**都在各自的 `models/<name>/` 里 —— `mirepnet`(`mlm` + PEFT
-  `lora`/`mmd`)、`cbramod`(criss-cross transformer)、`labram`(`modeling_finetune` + `optim_factory`
-  逐层 LR 衰减 + `montage`)。三个大模型 build+forward 见 `scripts/check/verify_backbones.py`。
-- 预训练**权重**(非代码)真文件统一存放在 `/data1/llx/pretrained_weights/`(稳定数据盘,
-  与上游仓解耦——删掉 ~/MIRepNet 等不受影响);`weights/*.pth`(git 忽略)是指向它的 symlink,
-  由 `paths.weight_path()` 解析,可用 `MIREPNET_WEIGHT` / `CBRAMOD_WEIGHT` /
-  `LABRAM_WEIGHT` 环境变量覆盖(如指向新微调的 checkpoint)。
-
-各大模型仍需在**自己的 conda 环境**里跑(依赖不兼容:MIRepNet 的 numpy/mne pin vs LaBraM 的
-timm0.4.12 vs CBraMod 的 einops);框架靠 artifact hub 解耦——见下。
 
 ## 适配器契约 (`models/base.py`)
 
