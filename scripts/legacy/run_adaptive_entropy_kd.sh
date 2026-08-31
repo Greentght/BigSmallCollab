@@ -20,7 +20,7 @@ echo "===== $(date) adaptive distill (mirepnet env) ====="
 for TEA in mirepnet cbramod_native; do
   for STU in ifnet eegnet; do
     for DS in $DATASETS; do
-      conda run -n mirepnet python scripts/distill/run_distill.py \
+      conda run -n mirepnet python experiments/distill/run_distill.py \
         --dataset $DS --teacher $TEA --student $STU \
         --lam_kd 0.5 --lam_feat 0.5 --adaptive --gpu $GPU \
         --out_csv results/metrics/${DS}_adaptivekd_${TEA/_/}_to_${STU}.csv

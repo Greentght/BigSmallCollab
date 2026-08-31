@@ -19,7 +19,7 @@ run() {  # dataset lfreq hfreq notch lr epochs dropout wd
   for head in mlp linear; do
     local gpu=${GPUS[$((gi % ${#GPUS[@]}))]}; gi=$((gi+1))
     echo "[launch] $ds head=$head gpu=$gpu"
-    python scripts/bigmodel/cbramod_native_adapt.py --dataset "$ds" $COMMON \
+    python experiments/bigmodel/cbramod_native_adapt.py --dataset "$ds" $COMMON \
       --l_freq "$lf" --h_freq "$hf" $nf --lr "$lr" --epochs "$ep" \
       --dropout "$do" --weight_decay "$wd" --head "$head" --gpu "$gpu" \
       --out "$OUT/${ds}_${head}.csv" --overwrite \

@@ -9,7 +9,7 @@ for DS in BNCI2014004 BNCI2014001-4; do
 done
 echo "===== $(date) LOSO student distill ====="
 for DS in BNCI2014004 BNCI2014001-4; do
-  conda run -n mirepnet python scripts/distill/run_loso_distill.py \
+  conda run -n mirepnet python experiments/distill/run_loso_distill.py \
     --dataset $DS --student ifnet --lam_kd 0.5 --lam_proto 0.5 --gpu $GPU \
     --out_csv results/metrics/${DS}_loso_mirepnet_to_ifnet.csv
 done

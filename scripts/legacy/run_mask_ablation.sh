@@ -16,7 +16,7 @@ done
 
 echo "===== $(date) run mask-ablation distillation ====="
 for DS in $DATASETS; do
-  conda run -n $ENV python scripts/distill/run_distill.py \
+  conda run -n $ENV python experiments/distill/run_distill.py \
     --dataset $DS --teacher mirepnet --student ifnet \
     --lam_kd 0.5 --lam_feat 0.5 --mask_ablation --gpu $GPU \
     --out_csv results/metrics/${DS}_maskablation_mirepnet_to_ifnet.csv

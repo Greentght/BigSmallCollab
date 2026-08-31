@@ -16,7 +16,7 @@ done
 echo "===== $(date) distill cbramod_native -> {ifnet, eegnet} ====="
 for STU in ifnet eegnet; do
   for DS in $DATASETS; do
-    conda run -n mirepnet python scripts/distill/run_distill.py \
+    conda run -n mirepnet python experiments/distill/run_distill.py \
       --dataset $DS --teacher cbramod_native --student $STU \
       --lam_kd 0.5 --lam_feat 0.5 --mask_ablation --gpu $GPU \
       --out_csv results/metrics/${DS}_maskablation_cbramodnative_to_${STU}.csv

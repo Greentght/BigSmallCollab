@@ -7,7 +7,7 @@ cd /home/lixinli/BigSmallCollab
 GPU=7
 for DS in BNCI2014004 BNCI2014001-4; do
   echo "===== $(date) $DS ====="
-  conda run -n mirepnet python scripts/distill/run_distill.py \
+  conda run -n mirepnet python experiments/distill/run_distill.py \
     --dataset $DS --teacher mirepnet --student ifnet --proto_ablation \
     --lam_kd 0.5 --lam_proto 0.5 --gpu $GPU \
     --out_csv results/metrics/${DS}_proto_mirepnet_to_ifnet.csv

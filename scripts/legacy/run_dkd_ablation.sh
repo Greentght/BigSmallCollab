@@ -9,7 +9,7 @@ DS=BNCI2014001-4
 for TEA in mirepnet cbramod_native; do
   for STU in ifnet eegnet; do
     echo "===== $(date) $TEA -> $STU ($DS) ====="
-    conda run -n mirepnet python scripts/distill/run_distill.py \
+    conda run -n mirepnet python experiments/distill/run_distill.py \
       --dataset $DS --teacher $TEA --student $STU \
       --lam_kd 0.5 --dkd_ablation --gpu $GPU \
       --out_csv results/metrics/${DS}_dkd_${TEA/_/}_to_${STU}.csv

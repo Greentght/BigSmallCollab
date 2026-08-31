@@ -1,14 +1,21 @@
 # scripts/legacy — archived experiment drivers
 
-One-off shell drivers (`*.sh`) and analysis scripts (`analyze_*`, `aggregate_*`)
-from earlier experiment rounds, kept for reproducibility/reference. **Superseded by:**
+This directory is for archived experiment code and one-off historical drivers.
+It is kept for reproducibility/reference, not as the place to add new experiments.
 
-- **`experiments/`** — config-driven runner (`python -m experiments.run configs/exp/<x>.yaml`)
-  replaces the ad-hoc `run_*.sh` orchestration.
-- **`eval/`** — `python -m eval '<metrics_glob>'` / `report_contrasts` replaces the
+Superseded by:
+
+- **`experiments/`** — formal experiment entry points, including the config runner
+  (`python -m experiments.run configs/exp/<x>.yaml`) and active line-specific
+  drivers under `experiments/{distill,fusion,adapt,bigmodel}/`.
+- **`eval/`** — `python -m eval '<metrics_glob>'` / `report_contrasts` replaces
   bespoke `analyze_*.py` / `aggregate_*.py` paired-stats code.
 
-These still encode specific settled ablation configs. They are **not maintained**:
-paths inside them (e.g. `python scripts/analyze_x.py`) assume the pre-archive layout,
-so adjust paths before rerunning. The `.py` entry points they call (`run_distill.py`,
-`run_bdeeg_loso.py`, …) remain in `scripts/`.
+Archived contents:
+
+- `bidir/` — bidirectional / CR-AMD / BD-EEG / feature-level mutual drivers,
+  kept because the line was closed as null.
+- `wrongsample/` — wrong-sample utilization E0-E5, kept for closed/null results.
+- `run_*.sh`, `analyze_*`, `aggregate_*` — earlier orchestration and reporting
+  helpers. They may encode settled ablation configs, but are not maintained as
+  primary entry points.

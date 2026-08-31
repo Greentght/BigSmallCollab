@@ -29,10 +29,10 @@ models/    一模型一文件夹(网络定义 + 适配器 co-located):
            每个文件夹 = <net>.py + adapter.py;加模型 = 加一个文件夹
 collab/    ensemble(gate/加权/投票) · distill(离线KD+特征对齐) · bidirectional/… · artifacts(跨环境产物 hub)
 eval/      stats(subject级配对 Wilcoxon+Holm+bootstrap CI,acc%优先) · metrics(acc/kappa/per_class)
-experiments/ config驱动 runner: protocols(within/loso) · methods(collab registry) · run
+experiments/ 正式实验入口: config runner(protocols/methods/run) · distill/fusion/adapt/bigmodel drivers
 config.py  数据/模型 yaml 加载        paths.py  权重解析
 weights/   预训练权重 symlink -> /data1/llx/pretrained_weights(*.pth, git忽略)
-scripts/   命令行入口(按功能分类见下「脚本导航」);legacy/ 存放已归档的一次性 driver
+scripts/   工具入口: check/ · export/ · legacy/(已归档/负结果复现实验)
 configs/   datasets/*.yaml · models/*.yaml · exp/*.yaml(实验配方)
 results/   artifacts/<ds>/<model>/<subj>_<seed>_<split>.npz · metrics/*.csv
 envs/      各模型 conda 环境说明
@@ -60,11 +60,11 @@ conda run -n cbramod  python scripts/export/finetune_export.py --model cbramod  
 conda run -n labram   python scripts/export/finetune_export.py --model labram   --dataset BNCI2014004 --gpu 1
 
 # 2) 测试时集成（任意 env）
-python scripts/fusion/run_ensemble.py --dataset BNCI2014004 \
+python experiments/fusion/run_ensemble.py --dataset BNCI2014004 \
     --models mirepnet cbramod labram ifnet adfcnn eegnet --big mirepnet cbramod labram
 
 # 3) 离线蒸馏（在 student 的 env 里跑；teacher 产物须已导出）
-conda run -n mirepnet python scripts/distill/run_distill.py \
+conda run -n mirepnet python experiments/distill/run_distill.py \
     --dataset BNCI2014004 --teacher cbramod --student ifnet --lam_kd 0.5 --lam_feat 0.5
 ```
 
@@ -84,55 +84,58 @@ conda run -n labram   python scripts/check/verify_backbones.py --model labram
 conda run -n mirepnet python scripts/check/smoke_test.py --models ifnet eegnet adfcnn mirepnet
 ```
 
-## 脚本导航 (`scripts/`)
+## 实验与工具入口
 
-`scripts/` 是命令行入口层（可复现的实验 driver），**按方案分成 7 个子目录**。前三个是共享
-基础设施（日常主要用它们）；后四个是各条实验方案，其中 `bidir/` 与 `wrongsample/` 已判 null
-（保留供复现，结论见 `PROGRESS.md` / memory）。每个脚本 `--help` 或文件首行 docstring 有详细说明。
-被多个方案共用的脚本，放在它首次出现的基础目录里（如 `export/finetune_export.py`）。
+`experiments/` 是正式实验层。新增协同方案优先写 `configs/exp/*.yaml` 并走
+`python -m experiments.run <yaml> --report`；如果暂时需要专门 driver，也放在
+`experiments/<line>/`，不要再新增到 `scripts/`。
 
-**`check/` — 自检 / 冒烟**（改完代码先跑）
-- `verify_foundation.py` — 数据层+小模型 vendoring 逐位一致
-- `verify_backbones.py --model {mirepnet,cbramod,labram}` — 大模型 backbone build+forward
-- `smoke_test.py` — 数据切分 + 适配器 forward 契约
+**`experiments/run.py` — config-driven 主入口**
+- `protocols.py` — within / LOSO cell 生成
+- `methods.py` — YAML condition 到 `collab.distill.distill_student` kwargs 的 registry
+- `run.py` — config -> cells -> conditions -> metrics CSV -> optional report
 
-**`export/` — 微调 + 导出产物**（一切协同实验的共享前置：先把 teacher/student 产物缓存出来）
-- `finetune_export.py --model <m> --dataset <ds>` — 微调单个模型并导出标准产物（**主入口**）
-- `export_preds.py` — 统一的逐样本预测/特征导出（within + LOSO）
-- `export_teacher_mc.py` — teacher + MC-dropout 不确定度
-- `export_teacher_loso.py` — LOSO 逐 fold teacher 微调
-- `run_c_export.sh` / `run_d0_export.sh` — 批量补齐 BNCI2015001/AlexMI、D0 逐样本产物队列
-
-**`bigmodel/` — 大模型原生适配 & 调参**（MIRepNet / CBraMod / LaBraM 的忠实 native pipeline）
+**`experiments/bigmodel/` — 大模型原生适配 & 调参**
 - `cbramod_native_adapt.py` · `labram_native_adapt.py` — native 预处理下游适配；CBraMod 支持 `--protocol loso`
 - `mirepnet_loso_adapt.py` — MIRepNet 端到端 LOSO 评估（per-subject EA + 45ch pad）
 - `tune_mirepnet_loso.py` · `tune_cbramod_loso.py` — LOSO 场景聚焦网格调参（1 seed search + 3 seed confirm）
 - `tune_cbramod_native.py` · `tune_labram_native.py` — 逐(数据集,split)超参调参
 - `tune_cbramod_004_caronly.py` — CBraMod 在 BNCI2014004 的 CAR-only 精调
 
-**`distill/` — 蒸馏方案**
-- `run_distill.py` — 离线 KD + 特征对齐蒸馏（**主蒸馏入口**）
+**`experiments/distill/` — 蒸馏实验**
+- `run_distill.py` — 离线 KD + 特征对齐蒸馏（历史主蒸馏入口；新实验优先沉到 YAML）
 - `run_loso_distill.py` — LOSO 逐 fold 学生蒸馏
+- `run_loso_subject_oof_kd.py` — LOSO subject-OOF KD 入口
 
-**`fusion/` — 集成 / 融合 / 路由（结果主线）**
+**`experiments/fusion/` — 集成 / 融合 / 路由实验**
 - `run_ensemble.py` — 测试时集成（消费缓存产物，任意 env）
 - `run_ft_fusion.py` — F+T 少样本特征融合主实验（结论已更正，见 `PROGRESS.md`）
 - `run_balance_gate.py` — balance-gated 少样本选择（融合线的 corrected main line）
 - `run_finetune_baseline.py` — 端到端微调基线（F+T 的关键对照）
 - `run_r1_signal.py` — 学习式 logit 路由信号排查（负结果）
 
-**`bidir/` — 双向互蒸馏方案（全线判 null，留作复现）**
-- `run_bidir_loso.py` · `run_bidir_fewshot.py` · `run_cramd_loso.py` · `run_bdeeg_loso.py`
-  — 各类双向互蒸馏（LOSO / 少样本 / CR-AMD / BD-EEG）
-- `run_featbidir_fewshot.py` · `run_featbidir_within.py` — 特征级双向对齐
-- `loso_pred_states.py` — LOSO 逐 fold 预测状态诊断工具
+**`experiments/adapt/` — target-support / 少样本适配实验**
+- `run_target_support_m*.py` — M0/M1/M2 系列 target-support 实验
+- `summarize_*` / `audit_*` — 对应稳定性汇总与方差审计
 
-**`wrongsample/` — wrong-sample 方案（判 null）**
-- `run_wrong_sample.py` — wrong-sample 利用 E0–E5（closed；仅 E2 correct-only KD 存活）
+`scripts/` 是工具箱，不承载正式实验矩阵。
 
-> 更早的一次性 `run_*.sh` 编排和 `analyze_*`/`aggregate_*` 分析脚本已归档在
-> `scripts/legacy/`（见其 `README.md`），被 `experiments/`（config 驱动 runner）和
-> `eval/`（统一配对统计）取代。
+**`scripts/check/` — 自检 / 冒烟**（改完代码先跑）
+- `verify_foundation.py` — 数据层+小模型 vendoring 逐位一致
+- `verify_backbones.py --model {mirepnet,cbramod,labram}` — 大模型 backbone build+forward
+- `smoke_test.py` — 数据切分 + 适配器 forward 契约
+
+**`scripts/export/` — 微调 + 导出产物**（一切协同实验的共享前置：先把 teacher/student 产物缓存出来）
+- `finetune_export.py --model <m> --dataset <ds>` — 微调单个模型并导出标准产物（**主入口**）
+- `export_preds.py` — 统一的逐样本预测/特征导出（within + LOSO）
+- `export_teacher_mc.py` — teacher + MC-dropout 不确定度
+- `export_teacher_loso.py` — LOSO 逐 fold teacher 微调
+- `run_c_export.sh` / `run_d0_export.sh` — 批量补齐 BNCI2015001/AlexMI、D0 逐样本产物队列
+
+**`scripts/legacy/` — 归档实验 / 负结果复现**
+- `bidir/` — 双向互蒸馏 / CR-AMD / BD-EEG / feature-level mutual（全线判 null，留作复现）
+- `wrongsample/` — wrong-sample 利用 E0-E5（closed；仅 E2 correct-only KD 存活）
+- `run_*.sh`、`analyze_*`、`aggregate_*` — 早期一次性编排和统计脚本
 
 ## 范围
 

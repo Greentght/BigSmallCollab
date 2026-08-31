@@ -1,14 +1,10 @@
-"""Config-driven experiment orchestration.
+"""Formal experiment orchestration and active experiment drivers.
 
-One declarative YAML = one experiment, run by ``python -m experiments.run
-configs/exp/<name>.yaml`` — replacing the pile of near-duplicate ``scripts/*.sh``
-+ ``run_*.py`` drivers. The runner walks (dataset x unit x seed x condition),
-consumes cached teacher artifacts, trains the student via ``collab.distill``, and
-writes an eval-consumable long-form metrics CSV (then optionally prints the
-``eval`` paired-stats report).
+`experiments.run` is the preferred config-driven entry point: one YAML under
+`configs/exp/` becomes one metrics CSV and optional eval report. Active line-
+specific drivers live here too (`distill/`, `fusion/`, `adapt/`, `bigmodel/`) so
+`scripts/` can stay focused on tooling (`check/`, `export/`, `legacy/`).
 
-Pieces:
-  - ``protocols`` — cell generators (within-subject / LOSO) over the canonical data.
-  - ``methods``   — condition spec -> ``distill_student`` kwargs (the collab registry).
-  - ``run``       — the driver tying config -> cells -> conditions -> CSV -> report.
+Reusable algorithms stay in `collab/`; experiment code here should orchestrate
+protocols, conditions, artifacts, and metrics rather than duplicate core methods.
 """

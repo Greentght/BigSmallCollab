@@ -1,28 +1,37 @@
 # BigSmallCollab 代码阅读指南
 
-这份文档按项目真实流水线介绍主要文件的作用。先记住一句话：
+这份文档按当前目录职责介绍怎么读代码。先记住一句话：
 
 ```text
-统一切数据 -> 每个模型用 adapter 微调 -> 导出 artifact -> 协同模块读取 artifact 或在线共同训练 -> eval 做统计
+配置和数据切分 -> adapter 统一模型 -> export 产出 artifact -> experiments 编排实验 -> collab 提供协同算法 -> eval 做统计
 ```
+
+现在的阅读模式是：**不要从 `scripts/` 开始理解实验框架**。`scripts/` 只是工具箱；正式实验入口在 `experiments/`，可复用协同算法在 `collab/`。
 
 ## 1. 总体分层
 
 ```text
-configs/      数据集、模型、实验 YAML 配置
-config.py     读取 YAML 配置
-paths.py      解析预训练权重路径
+configs/       数据集、模型、实验 YAML 配置
+config.py      读取 YAML 配置
+paths.py       解析预训练权重路径
 
-data/         数据加载、通道表、预处理、统一切分
-models/       模型结构 + adapter 统一接入层
-scripts/      常用实验入口脚本
-collab/       协同算法：集成、蒸馏、双向蒸馏、特征融合
-eval/         acc/kappa 和 subject 级统计检验
-experiments/  更规范的 YAML 驱动实验 runner
-results/      输出目录：artifacts 和 metrics
+data/          数据加载、通道表、预处理、统一切分
+models/        模型结构 + adapter 统一接入层
+collab/        可复用协同算法和 artifact hub
+experiments/   正式实验入口：config runner + active line-specific drivers
+scripts/       工具入口：check/、export/、legacy/
+eval/          acc/kappa、per-class 指标和 subject 级统计检验
+results/       输出目录：artifacts、metrics、tuned summaries
 ```
 
-核心设计是：模型代码已经在本仓库 `models/` 里，但不同大模型依赖不兼容，所以训练仍可在各自 conda 环境里跑；协同阶段通过标准化 artifact 解耦。
+核心设计是：模型代码已经 vendored 到 `models/`，但大模型依赖仍可能不兼容。因此训练和导出可以在各自 conda 环境里完成，协同阶段靠标准化 artifact 解耦。
+
+目录边界：
+
+- `collab/`：库层，只放可复用算法、artifact 读写和通用融合/蒸馏逻辑。
+- `experiments/`：实验层，负责 protocol、condition、subject/seed 遍历、CSV 输出和专门实验 driver。
+- `scripts/`：工具层，只放自检、导出、批处理和归档复现脚本。
+- `scripts/legacy/`：历史/负结果复现，不作为新增实验入口。
 
 ## 2. 配置入口
 
@@ -31,9 +40,10 @@ results/      输出目录：artifacts 和 metrics
 - `config.py`：提供 `load_dataset_config(name)` 和 `load_model_config(name)`。
 - `configs/datasets/*.yaml`：定义数据集类别数、通道数、被试数、默认 seeds、`val_split`。
 - `configs/models/*.yaml`：定义每个模型的 env、大小模型类型、epochs、lr、batch_size、weight_decay 等。
+- `configs/exp/*.yaml`：正式实验配方。新增矩阵实验优先写这里。
 - `paths.py`：解析预训练权重。权重默认走 `weights/*.pth`，也可以用环境变量覆盖，例如 `MIREPNET_WEIGHT`、`CBRAMOD_WEIGHT`、`LABRAM_WEIGHT`。
 
-这里要注意：`val_split` 在项目里表示测试集比例，例如 `0.3` 是 70% 校准/训练，30% 测试。
+注意：`val_split` 在项目里表示测试集比例，例如 `0.3` 是 70% 校准/训练，30% 测试。
 
 ## 3. 数据流水线
 
@@ -48,19 +58,19 @@ results/      输出目录：artifacts 和 metrics
 
 ```text
 data.subject_split(dataset, subject, val_split, seed)
-  -> 返回 X_tr, y_tr, X_te, y_te
+  -> X_tr, y_tr, X_te, y_te
 
 data.loso_split(dataset, test_subject)
-  -> 返回 X_tr, y_tr, subj_tr, X_te, y_te
+  -> X_tr, y_tr, subj_tr, X_te, y_te
 ```
 
-所有模型必须使用这里生成的 split。否则后面的集成和蒸馏会按行错位，因为 artifact 里的第 i 行必须对应同一个样本。
+所有模型必须使用这里生成的 split。后续 artifact 的第 i 行必须对应同一个样本，否则集成和蒸馏都会按行错位。
 
-## 4. 模型接入层：Adapter
+## 4. 模型接入层
 
-模型统一接口在 `models/base.py`。
+统一接口在 `models/base.py`。
 
-每个模型 adapter 都实现三件事：
+每个 adapter 都实现：
 
 ```text
 preprocess(X_raw) -> 模型输入张量
@@ -68,7 +78,7 @@ build(num_classes) -> nn.Module
 forward(model, x) -> feat, logits
 ```
 
-然后 `ModelAdapter` 基类提供：
+`ModelAdapter` 基类再提供：
 
 ```text
 finetune(...)
@@ -79,16 +89,16 @@ mc_uncertainty(...)
 
 模型注册在 `models/__init__.py` 的 `get_adapter(name, ...)`。
 
-各模型主要差异：
+优先读 adapter，不要一开始钻进完整网络结构：
 
 - `models/ifnet/adapter.py`：小模型，基本吃原始 `(B,C,T)`。
 - `models/eegnet/adapter.py`：小模型，调用 `ResidualEEGNet`。
 - `models/adfcnn/adapter.py`：小模型，调用 `ADFCNN_Net`。
 - `models/mirepnet/adapter.py`：大模型，先做 EA + 45 通道补齐，再进入 `models/mirepnet/mlm.py`。
-- `models/cbramod/adapter_native.py`：大模型 CBraMod（唯一实现，final settled native/tuned 版；`--model cbramod` 即走这里，`cbramod_native` 为兼容别名）。
+- `models/cbramod/adapter_native.py`：CBraMod settled native/tuned 版；`--model cbramod` 即走这里，`cbramod_native` 为兼容别名。
 - `models/labram/adapter.py`：LaBraM，250Hz 转 200Hz patchify，并计算 `input_chans` 通道映射。
 
-网络结构文件本身可以后看：
+网络结构文件可以后读：
 
 ```text
 models/ifnet/ifnet.py
@@ -99,46 +109,7 @@ models/cbramod/cbramod.py
 models/labram/modeling_finetune.py
 ```
 
-理解项目流水线时，优先看 adapter，而不是先钻进完整网络结构。
-
-## 5. 微调并导出 Artifact
-
-最常用入口是 `scripts/export/finetune_export.py`。
-
-真实流程：
-
-```text
-scripts/export/finetune_export.py
-  -> config.py 读取 dataset/model YAML
-  -> data.subject_split(...) 得到 X_tr/y_tr/X_te/y_te
-  -> models.get_adapter(model)
-  -> adapter.build(num_classes)
-  -> adapter.finetune(model, X_tr, y_tr, num_classes)
-  -> adapter.export(train/test)
-  -> collab/artifacts.py 保存 .npz
-```
-
-典型命令：
-
-```bash
-conda run -n mirepnet python scripts/export/finetune_export.py   --model ifnet   --dataset BNCI2014004   --gpu 0
-```
-
-大模型按各自环境跑：
-
-```bash
-conda run -n mirepnet python scripts/export/finetune_export.py --model mirepnet --dataset BNCI2014004 --gpu 0
-conda run -n cbramod  python scripts/export/finetune_export.py --model cbramod  --dataset BNCI2014004 --gpu 1
-conda run -n labram   python scripts/export/finetune_export.py --model labram   --dataset BNCI2014004 --gpu 2
-```
-
-只跑部分 subject/seed：
-
-```bash
-conda run -n mirepnet python scripts/export/finetune_export.py   --model ifnet   --dataset BNCI2014004   --subjects 0 1   --seeds 666   --gpu 0
-```
-
-## 6. Artifact 是什么
+## 5. Artifact Hub
 
 artifact 不是 checkpoint。它是模型对固定样本导出的标准化中间产物，保存位置由 `collab/artifacts.py` 管：
 
@@ -146,7 +117,7 @@ artifact 不是 checkpoint。它是模型对固定样本导出的标准化中间
 results/artifacts/<dataset>/<model>/<subject>_<seed>_<split>.npz
 ```
 
-每个 `.npz` 里有：
+每个 `.npz` 包含：
 
 ```text
 logits  模型 softmax 前分类分数，形状 (N,C)
@@ -171,51 +142,118 @@ collab.artifacts.load_aligned(...)
 
 `load_aligned()` 会检查所有模型的 `y` 是否完全一致；不一致就报错。
 
-## 7. 测试时集成协同
+## 6. scripts：工具入口
 
-入口：`scripts/fusion/run_ensemble.py`
+`scripts/` 现在只按工具理解。
 
-它不加载模型，只读取 `test` artifact：
+### 6.1 自检
 
-```text
-scripts/fusion/run_ensemble.py
-  -> artifacts.load_aligned(dataset, models, subject, seed, 'test')
-  -> collab/ensemble.py
-  -> eval/metrics.py
-  -> results/metrics/<dataset>_ensemble.csv
-```
+入口在 `scripts/check/`：
 
-核心方法在 `collab/ensemble.py`：
+- `verify_foundation.py`：数据层 + 小模型 vendoring 逐位一致。
+- `verify_backbones.py`：大模型 backbone build + forward。
+- `smoke_test.py`：数据切分 + adapter forward 契约。
 
-- `gate(...)`：大模型置信度门控，决定大模型和小模型平均概率的混合比例。
-- `conf_weighted(...)`：所有模型按各自置信度加权。
-- `voting(...)`：硬投票。
-
-命令示例：
+典型命令：
 
 ```bash
-python scripts/fusion/run_ensemble.py   --dataset BNCI2014004   --models mirepnet ifnet eegnet adfcnn   --big mirepnet
+conda run -n mirepnet python scripts/check/verify_foundation.py
+conda run -n mirepnet python scripts/check/verify_backbones.py --model mirepnet
+conda run -n cbramod  python scripts/check/verify_backbones.py --model cbramod
+conda run -n labram   python scripts/check/verify_backbones.py --model labram
+conda run -n mirepnet python scripts/check/smoke_test.py --models ifnet eegnet adfcnn mirepnet
 ```
 
-## 8. 离线蒸馏协同
+### 6.2 微调并导出 artifact
 
-入口：`scripts/distill/run_distill.py`
+最常用入口是 `scripts/export/finetune_export.py`。
 
-这条线是单向的：teacher 已训练并导出 artifact，student 读取 teacher 的 logits/features 训练。teacher 不会更新。
-
-流程：
+真实流程：
 
 ```text
-teacher 先 finetune_export.py 导出 train artifact
-  -> run_distill.py 读取 teacher train artifact
-  -> data.subject_split(...) 重新拿同一份训练/测试数据
+scripts/export/finetune_export.py
+  -> config.py 读取 dataset/model YAML
+  -> data.subject_split(...) 得到 X_tr/y_tr/X_te/y_te
+  -> models.get_adapter(model)
+  -> adapter.build(num_classes)
+  -> adapter.finetune(model, X_tr, y_tr, num_classes)
+  -> adapter.export(train/test)
+  -> collab.artifacts.save(...)
+```
+
+典型命令：
+
+```bash
+conda run -n mirepnet python scripts/export/finetune_export.py --model ifnet --dataset BNCI2014004 --gpu 0
+conda run -n mirepnet python scripts/export/finetune_export.py --model mirepnet --dataset BNCI2014004 --gpu 0
+conda run -n cbramod  python scripts/export/finetune_export.py --model cbramod --dataset BNCI2014004 --gpu 1
+conda run -n labram   python scripts/export/finetune_export.py --model labram --dataset BNCI2014004 --gpu 2
+```
+
+只跑部分 subject/seed：
+
+```bash
+conda run -n mirepnet python scripts/export/finetune_export.py --model ifnet --dataset BNCI2014004 --subjects 0 1 --seeds 666 --gpu 0
+```
+
+LOSO 相关导出仍属于工具层：
+
+- `scripts/export/export_preds.py`：统一导出 within 或 LOSO artifact。LOSO 时 artifact model 名通常变成 `<model>_loso`。
+- `scripts/export/export_teacher_loso.py`：专门导出 LOSO teacher；MIRepNet 在 LOSO 中需要按 subject 分别 EA，再合并训练。
+- `scripts/export/export_teacher_mc.py`：teacher + MC-dropout 不确定度。
+- `scripts/export/export_teacher_loso_subjoof.py`：subject-OOF LOSO teacher 导出。
+
+## 7. experiments：正式实验入口
+
+`experiments/` 是现在读实验的主入口。读任何 active driver 时，按这个顺序看：
+
+```text
+parse_args / YAML config
+  -> dataset/model config
+  -> protocol 或 split
+  -> artifact load / model adapter
+  -> collab 算法调用
+  -> eval.metrics
+  -> results/metrics/*.csv
+```
+
+### 7.1 YAML 驱动 runner
+
+优先入口：
+
+```bash
+conda run -n mirepnet python -m experiments.run configs/exp/distill_kd_within.yaml --report
+```
+
+相关文件：
+
+- `experiments/run.py`：按 dataset/unit/seed/condition 循环运行，写 long-form metrics CSV。
+- `experiments/protocols.py`：生成 within/LOSO cell。
+- `experiments/methods.py`：把 YAML condition 映射成 `collab.distill.distill_student` 参数。
+
+新增矩阵实验优先加 `configs/exp/*.yaml` 和 `experiments/methods.py` registry，而不是新增脚本。
+
+### 7.2 蒸馏实验
+
+入口在 `experiments/distill/`：
+
+- `run_distill.py`：离线 KD + 特征对齐蒸馏的历史主入口；复杂 ablation 仍在这里。
+- `run_loso_distill.py`：LOSO 逐 fold 学生蒸馏。
+- `run_loso_subject_oof_kd.py`：LOSO subject-OOF KD。
+
+离线蒸馏流程：
+
+```text
+teacher 先由 scripts/export 导出 train artifact
+  -> experiments/distill 读取 teacher train artifact
+  -> data.subject_split(...) 或 data.loso_split(...)
   -> assert teacher['y'] == y_tr
   -> get_adapter(student)
   -> collab.distill.distill_student(...)
   -> 写 results/metrics/*.csv
 ```
 
-核心训练函数：`collab/distill.py` 的 `distill_student(...)`。
+核心训练函数在 `collab/distill.py`：`distill_student(...)`。
 
 基本损失：
 
@@ -228,24 +266,88 @@ loss = CE(student, y)
 典型命令：
 
 ```bash
-# 1. 先导出 teacher artifact
-conda run -n mirepnet python scripts/export/finetune_export.py   --model mirepnet   --dataset BNCI2014004   --gpu 0
-
-# 2. 再蒸馏 student
-conda run -n mirepnet python scripts/distill/run_distill.py   --dataset BNCI2014004   --teacher mirepnet   --student ifnet   --lam_kd 0.5   --lam_feat 0.5   --gpu 0
+conda run -n mirepnet python scripts/export/finetune_export.py --model mirepnet --dataset BNCI2014004 --gpu 0
+conda run -n mirepnet python experiments/distill/run_distill.py --dataset BNCI2014004 --teacher mirepnet --student ifnet --lam_kd 0.5 --lam_feat 0.5 --gpu 0
 ```
 
-更规范的 YAML 驱动入口是 `experiments/run.py`：
+### 7.3 集成、融合、路由实验
+
+入口在 `experiments/fusion/`：
+
+- `run_ensemble.py`：测试时集成，只消费 `test` artifact，不加载模型。
+- `run_ft_fusion.py`：LOSO few-shot 下，在 test subject 的 K 个标注样本上训练轻量 head。
+- `run_balance_gate.py`：balance-gated 少样本选择，当前融合线 corrected main line。
+- `run_finetune_baseline.py`：端到端微调基线，对照 frozen feature fusion。
+- `run_r1_signal.py`：学习式 logit 路由信号排查。
+
+`run_ensemble.py` 的流程：
+
+```text
+experiments/fusion/run_ensemble.py
+  -> collab.artifacts.load_aligned(dataset, models, subject, seed, 'test')
+  -> collab.ensemble.gate / conf_weighted / voting
+  -> eval.metrics.evaluate(...)
+  -> results/metrics/<dataset>_ensemble.csv
+```
+
+典型命令：
 
 ```bash
-conda run -n mirepnet python -m experiments.run configs/exp/distill_kd_within.yaml --report
+python experiments/fusion/run_ensemble.py --dataset BNCI2014004 --models mirepnet ifnet eegnet adfcnn --big mirepnet
 ```
 
-相关文件：
+特征融合核心在 `collab/fusion.py`：
 
-- `experiments/protocols.py`：生成 within/loso 的 cell。
-- `experiments/methods.py`：把 YAML condition 映射成 `distill_student` 参数。
-- `experiments/run.py`：按 dataset/unit/seed/condition 循环运行。
+```text
+head_single
+fusion_concat
+fusion_gated
+fusion_mutual
+```
+
+### 7.4 大模型原生适配和调参
+
+入口在 `experiments/bigmodel/`：
+
+- `cbramod_native_adapt.py`、`labram_native_adapt.py`：大模型 native pipeline 下游适配。
+- `mirepnet_loso_adapt.py`：MIRepNet LOSO 端到端评估。
+- `tune_mirepnet_loso.py`、`tune_cbramod_loso.py`：LOSO 场景 search + confirm。
+- `tune_cbramod_native.py`、`tune_labram_native.py`：逐数据集 native tuning。
+- `tune_cbramod_004_caronly.py`：BNCI2014004 CAR-only 精调。
+
+阅读这些文件时重点看三件事：
+
+```text
+1. 它是否走 adapter，还是复刻 native pipeline。
+2. 它如何处理 subject-wise EA、通道补齐、resample 和 montage。
+3. 它的结果写到 results/metrics 还是 results/<model>_loso/tuned。
+```
+
+### 7.5 target-support / 少样本适配
+
+入口在 `experiments/adapt/`：
+
+- `run_target_support_m0.py`、`run_target_support_m0_var.py`：M0 target-support baseline 和方差版本。
+- `run_m1a_oracle_alpha.py`、`run_m1b_source_alpha.py`：M1 alpha 系列。
+- `run_target_support_m2_kcurve.py`：M2 K-shot 曲线。
+- `summarize_target_support_kshot_stability.py`、`audit_target_support_m0_variance.py`：汇总和审计。
+
+这条线通常读法是：先看输入 artifact 或支撑集构造，再看 selection/alpha 规则，最后看输出 CSV 的 grouping key。
+
+## 8. collab：协同算法库
+
+`collab/` 是可复用算法层，不应该承担命令行编排。
+
+主要文件：
+
+- `collab/artifacts.py`：跨环境 artifact hub。
+- `collab/ensemble.py`：测试时集成，包含 `gate`、`conf_weighted`、`voting`。
+- `collab/distill.py`：离线 KD、feature align、DKD、prototype、relational 等核心训练函数。
+- `collab/fusion.py`：frozen feature head、concat/gated/mutual fusion。
+- `collab/router.py`：logit routing / gate feature utilities。
+- `collab/bidirectional.py`、`collab/mutual.py`、`collab/bdeeg.py`：真正双向/互学习算法，主要由 legacy 复现实验调用。
+
+读 `collab/` 时不要从 argparse 或 CSV 输出角度读；它的核心问题是“给定数组、adapter 或 batch，算法怎么算”。
 
 ## 9. LOSO 和跨被试协同
 
@@ -257,103 +359,50 @@ LOSO 是 Leave-One-Subject-Out：留一个被试做测试，其余被试训练�
 data.loso_split(dataset, test_subject)
 ```
 
-常用脚本：
+常见路径：
 
-- `scripts/export/export_preds.py`：统一导出 within 或 LOSO artifact。LOSO 时 artifact model 名会变成 `<model>_loso`。
-- `scripts/export/export_teacher_loso.py`：专门导出 `mirepnet_loso` teacher。MIRepNet 在 LOSO 中需要按 subject 分别 EA，再合并训练。
-- `scripts/distill/run_loso_distill.py`：读取 `mirepnet_loso`，训练 student 做跨被试蒸馏。
+```text
+scripts/export/export_teacher_loso.py
+  -> 导出 teacher LOSO artifact
 
-示例：
+experiments/distill/run_loso_distill.py
+  -> 读取 teacher LOSO artifact
+  -> student 做跨被试蒸馏
+
+experiments/bigmodel/*_loso*.py
+  -> 大模型端到端 LOSO 评估或调参
+```
+
+典型命令：
 
 ```bash
-conda run -n mirepnet python scripts/export/export_teacher_loso.py   --dataset BNCI2014004   --gpu 0
-
-conda run -n mirepnet python scripts/distill/run_loso_distill.py   --dataset BNCI2014004   --student ifnet   --gpu 0
+conda run -n mirepnet python scripts/export/export_teacher_loso.py --dataset BNCI2014004 --gpu 0
+conda run -n mirepnet python experiments/distill/run_loso_distill.py --dataset BNCI2014004 --student ifnet --gpu 0
 ```
 
-## 10. 真正双向蒸馏
+## 10. legacy：历史和负结果复现
 
-这里要和 artifact 离线蒸馏区分开。
+`legacy` 不是主阅读路径，但有些历史结论需要它。
 
-离线 artifact 蒸馏是：
+相关目录：
+
+- `scripts/legacy/bidir/`：双向互蒸馏、CR-AMD、BD-EEG、feature-level mutual。结论整体为 null/不稳定，保留复现。
+- `scripts/legacy/wrongsample/`：wrong-sample 利用 E0-E5，closed/null。
+- `scripts/legacy/run_*.sh`：早期批处理命令，路径已经更新到当前入口，但仍不作为新实验模板。
+- `scripts/legacy/analyze_*`、`aggregate_*`：早期统计脚本，优先用 `eval/` 取代。
+
+真正双向蒸馏和 artifact 离线蒸馏要分开理解：
 
 ```text
-teacher 冻结 -> student 学 teacher
+离线蒸馏：teacher 冻结 -> student 学 teacher artifact
+双向蒸馏：两个模型同进程同时 forward、同时更新，并动态决定谁教谁
 ```
 
-真正双向蒸馏是：
+双向蒸馏要求两个模型能在同一个 conda 环境、同一个 Python 进程中同时加载。CBraMod/LaBraM 这类依赖冲突模型更适合走 artifact 解耦。
 
-```text
-两个模型在同一个训练过程中同时 forward、同时更新，并动态决定谁教谁
-```
+## 11. 评估与统计
 
-相关文件：
-
-- `scripts/bidir/run_bidir_loso.py` -> `collab/bidirectional.py`
-- `scripts/bidir/run_cramd_loso.py` -> `collab/mutual.py`
-- `scripts/bidir/run_bdeeg_loso.py` -> `collab/bdeeg.py`
-
-最直接命令：
-
-```bash
-conda run -n mirepnet python scripts/bidir/run_bidir_loso.py   --dataset BNCI2014001-4   --gpu 0   --epochs 100
-```
-
-`run_bidir_loso.py` 中：
-
-```text
-Uni    只做 B -> S
-Bidir  做 B -> S 和 S -> B
-```
-
-`collab/bidirectional.py` 的核心逻辑：
-
-```text
-每个 batch:
-  B = MIRepNet forward
-  S = IFNet forward
-
-  如果 B 对、S 错: B -> S KD
-  如果 S 对、B 错: S -> B KD
-
-  loss = CE_B + CE_S + routed KD terms
-```
-
-更完整的互学习实验：
-
-```bash
-conda run -n mirepnet python scripts/bidir/run_cramd_loso.py   --dataset BNCI2014001-4   --gpu 0
-```
-
-它会比较：
-
-```text
-G0_CE       两个模型各自 CE 训练，无蒸馏
-G1_FixKD    大模型冻结，传统 B -> S
-G3_SymDML   双向全样本互蒸馏
-G5_Routed   B 对 S 错时 B -> S
-G6_CRAMD    B -> S 和 S -> B 都做，但按互补样本路由
-G8/G9       特征级双向对齐相关组
-```
-
-限制：真正双向蒸馏要求两个模型能在同一个 conda 环境、同一个 Python 进程中同时加载。目前最自然的是 `MIRepNet <-> IFNet`，因为都能在 `mirepnet` 环境里跑。CBraMod/LaBraM 这类依赖冲突模型更适合先走 artifact 解耦。
-
-## 11. 特征融合协同
-
-特征融合不是重新训练 backbone，而是在 frozen artifact 的 features 上训练轻量 head。
-
-相关文件：
-
-- `collab/fusion.py`：实现 `head_single`、`fusion_concat`、`fusion_gated`、`fusion_mutual`。
-- `scripts/fusion/run_ft_fusion.py`：LOSO few-shot 场景下，在 test subject 的 K 个标注样本上训练轻量 head。
-- `scripts/fusion/run_finetune_baseline.py`：对照实验，比较 frozen feature fusion 和真正 end-to-end fine-tune。
-- `scripts/bidir/run_featbidir_fewshot.py`：few-shot 下的 feature-level bidirectional alignment。
-
-核心问题是：融合是否比“只适配大模型 head”或“只适配小模型 head”更好。
-
-## 12. 评估与统计
-
-基础指标：`eval/metrics.py`
+基础指标在 `eval/metrics.py`：
 
 ```text
 evaluate(y_true, y_pred) -> acc, kappa
@@ -361,9 +410,7 @@ preds_from_logits(logits)
 per_class(y, pred, num_classes)
 ```
 
-正式统计：`eval/stats.py`
-
-它会按 subject/fold 作为配对单位，先把 seeds 聚合成 per-unit mean，然后做：
+正式统计在 `eval/stats.py`。它会按 subject/fold 作为配对单位，先把 seeds 聚合成 per-unit mean，然后做：
 
 ```text
 paired Wilcoxon
@@ -377,31 +424,66 @@ bootstrap CI
 python -m eval 'results/metrics/*.csv' --baseline ifnet_base
 ```
 
-理解实验结论时不要只看 raw mean，小提升要看 subject 级配对统计。
+理解实验结论时不要只看 raw mean；小提升要看 subject 级配对统计。
 
-## 13. 推荐阅读顺序
+## 12. 推荐阅读顺序
 
-建议按这个顺序读：
+### 12.1 第一次读项目
 
 1. `README.md`
-2. `config.py`、`configs/datasets/*.yaml`、`configs/models/*.yaml`
-3. `data/split.py`
-4. `data/eeg_dataset.py`
-5. `models/base.py`
-6. `models/__init__.py`
-7. 一个小模型 adapter，例如 `models/ifnet/adapter.py`
-8. 一个大模型 adapter，例如 `models/mirepnet/adapter.py`
-9. `scripts/export/finetune_export.py`
-10. `collab/artifacts.py`
-11. `scripts/fusion/run_ensemble.py`、`collab/ensemble.py`
-12. `scripts/distill/run_distill.py`、`collab/distill.py`
-13. `experiments/run.py`、`experiments/protocols.py`、`experiments/methods.py`
-14. LOSO/双向蒸馏脚本：`run_bidir_loso.py`、`run_cramd_loso.py`、`run_bdeeg_loso.py`
-15. `eval/metrics.py`、`eval/stats.py`
+2. `CODE_READING_GUIDE.md`
+3. `config.py`、`configs/datasets/*.yaml`、`configs/models/*.yaml`
+4. `data/split.py`
+5. `data/eeg_dataset.py`
+6. `models/base.py`
+7. `models/__init__.py`
+8. 一个小模型 adapter，例如 `models/ifnet/adapter.py`
+9. 一个大模型 adapter，例如 `models/mirepnet/adapter.py`
+10. `scripts/export/finetune_export.py`
+11. `collab/artifacts.py`
+12. `experiments/run.py`、`experiments/protocols.py`、`experiments/methods.py`
+13. `collab/distill.py` 或 `collab/ensemble.py`
+14. `eval/metrics.py`、`eval/stats.py`
 
-网络结构文件可以最后读，因为它们解释的是单个模型内部怎么算特征，而不是项目怎么组织实验。
+### 12.2 读离线蒸馏
 
-## 14. 最容易混淆的点
+1. `scripts/export/finetune_export.py`
+2. `collab/artifacts.py`
+3. `experiments/distill/run_distill.py`
+4. `collab/distill.py`
+5. `experiments/run.py`、`experiments/methods.py`
+6. 对应 `configs/exp/*.yaml`
+7. `eval/stats.py`
+
+### 12.3 读融合和路由
+
+1. `collab/artifacts.py`
+2. `experiments/fusion/run_ensemble.py`
+3. `collab/ensemble.py`
+4. `experiments/fusion/run_balance_gate.py`
+5. `collab/fusion.py`
+6. `collab/router.py`
+7. `docs/experiment_results_context.md`
+
+### 12.4 读大模型 native/LOSO
+
+1. 对应大模型 adapter：`models/mirepnet/adapter.py`、`models/cbramod/adapter_native.py`、`models/labram/adapter.py`
+2. `experiments/bigmodel/*_adapt.py`
+3. `experiments/bigmodel/tune_*_loso.py`
+4. `data/preproc.py`、`data/channels.py`
+5. `results/<model>_loso/tuned/*` 和 `eval/`
+
+### 12.5 读历史负结果
+
+1. `docs/experiment_results_context.md`
+2. `PROGRESS.md` 中对应时间段
+3. `scripts/legacy/README.md`
+4. `scripts/legacy/bidir/` 或 `scripts/legacy/wrongsample/`
+5. 对应 `collab/bidirectional.py`、`collab/mutual.py`、`collab/bdeeg.py`
+
+网络结构文件可以最后读，因为它们解释的是单个模型内部如何产生特征，而不是项目如何组织实验。
+
+## 13. 最容易混淆的点
 
 ```text
 checkpoint != artifact
@@ -409,6 +491,14 @@ checkpoint != artifact
 
 - checkpoint：模型权重，可以继续训练/推理。
 - artifact：模型对固定样本导出的 logits/features/y，用来协同和分析。
+
+```text
+collab != experiments != scripts
+```
+
+- `collab/`：算法库，应该可 import、可复用、少副作用。
+- `experiments/`：实验入口，负责 protocol、condition、遍历和落盘。
+- `scripts/`：工具入口，负责自检、导出和归档复现。
 
 ```text
 离线蒸馏 != 双向蒸馏
@@ -422,3 +512,11 @@ checkpoint != artifact
 ```
 
 代码已经 vendored 到 `models/`，但依赖仍可能冲突。因此 artifact hub 仍然是项目的核心设计。
+
+```text
+新增实验优先 YAML，不优先新脚本
+```
+
+- 矩阵实验：新增 `configs/exp/*.yaml`，必要时扩展 `experiments/methods.py`。
+- 临时专门 driver：放 `experiments/<line>/`。
+- 导出、自检、批处理：才放 `scripts/`。

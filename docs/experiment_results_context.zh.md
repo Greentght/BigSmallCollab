@@ -25,13 +25,13 @@
 | 实验线 | 场景 | 数据集 | 模型 | 划分/适应方式 | 结果状态 | 主要文件 |
 |---|---|---|---|---|---|---|
 | D0 headroom 诊断 | 缓存 logits/features，within 和 LOSO | BNCI2014001-4, BNCI2014004 | 大：MIRepNet, CBraMod native；小：IFNet, EEGNet, ADFCNN | within = 每被试 downstream session 内 70/30；LOSO = 留一被试测试，其余被试训练 | oracle union headroom 真实存在，大约 +9~17，但跨被试静态 route/fuse 拿不到 | `results/d0/decision_report.md`, `results/headroom_map.csv` |
-| R1 logit router | LOSO 缓存 logits 上训练 gate | 旗舰：BNCI2014001-4, MIRepNet x IFNet | MIRepNet, IFNet | 嵌套 subject-LOSO 训练 gate | 负结果：静态 gate 比基线更差，同被试校准只有 +0.4 且 ns | `collab/router.py`, `scripts/fusion/run_r1_signal.py`, `PROGRESS.md` |
-| KD / 离线蒸馏 | student 对冻结 teacher artifact 训练 | 主要 BNCI2014001-4, BNCI2014004；部分 BNCI2015001 | teacher: MIRepNet/CBraMod；student: IFNet/EEGNet/ADFCNN | within 70/30 或 LOSO，依脚本而定 | 机制性负结果，没有稳健主正结果 | `scripts/distill/*`, `results/metrics/*distill*` |
-| 双向 / 互蒸馏 | 两个模型同进程共同训练 | 主要 MIRepNet x IFNet | MIRepNet, IFNet | LOSO 或 few-shot | 负/不稳定；feature-level mutual 没有超过 concat fusion | `scripts/bidir/*`, `results/metrics/*bidir*`, `*cramd*`, `*bdeeg*` |
-| wrong-sample 利用 | 利用 teacher-correct / teacher-wrong 样本 | BNCI2014001-4, BNCI2015001 | teacher: MIRepNet/CBraMod；student: IFNet | 多为 within split | 基本 closed/null；只有普通 correct-only KD-like 信号残留 | `scripts/wrongsample/run_wrong_sample.py`, `results/metrics/wrong_sample_*` |
+| R1 logit router | LOSO 缓存 logits 上训练 gate | 旗舰：BNCI2014001-4, MIRepNet x IFNet | MIRepNet, IFNet | 嵌套 subject-LOSO 训练 gate | 负结果：静态 gate 比基线更差，同被试校准只有 +0.4 且 ns | `collab/router.py`, `experiments/fusion/run_r1_signal.py`, `PROGRESS.md` |
+| KD / 离线蒸馏 | student 对冻结 teacher artifact 训练 | 主要 BNCI2014001-4, BNCI2014004；部分 BNCI2015001 | teacher: MIRepNet/CBraMod；student: IFNet/EEGNet/ADFCNN | within 70/30 或 LOSO，依脚本而定 | 机制性负结果，没有稳健主正结果 | `experiments/distill/*`, `results/metrics/*distill*` |
+| 双向 / 互蒸馏 | 两个模型同进程共同训练 | 主要 MIRepNet x IFNet | MIRepNet, IFNet | LOSO 或 few-shot | 负/不稳定；feature-level mutual 没有超过 concat fusion | `scripts/legacy/bidir/*`, `results/metrics/*bidir*`, `*cramd*`, `*bdeeg*` |
+| wrong-sample 利用 | 利用 teacher-correct / teacher-wrong 样本 | BNCI2014001-4, BNCI2015001 | teacher: MIRepNet/CBraMod；student: IFNet | 多为 within split | 基本 closed/null；只有普通 correct-only KD-like 信号残留 | `scripts/legacy/wrongsample/run_wrong_sample.py`, `results/metrics/wrong_sample_*` |
 | F+T 初始 feature fusion | 冻结 LOSO features，测试被试 K-shot | BNCI2014001-4, BNCI2014004 | 大：MIRepNet/CBraMod；小：IFNet/EEGNet/ADFCNN | 在 K 个 support trial 上训练 fusion 线性头，剩余 trial 评估 | 初始 “12/12 win” 是基线错误，只比了 `head_big` | `results/metrics/ft_generality.csv` |
-| 修正后的 balance-gated selection | 冻结 LOSO features，测试被试 K-shot | BNCI2014001-4, BNCI2014004, BNCI2015001, AlexMI | 大：MIRepNet/CBraMod；小：IFNet/EEGNet/ADFCNN | `cv_sel2` 支撑集 CV 选大/小 head；`cv_sel3` 支撑集 CV 选大/小/fusion | 正结果但范围有限：24 cell 中 K20 +0.51，K30 +0.58 | `scripts/fusion/run_balance_gate.py`, `results/metrics/balance_gate.csv` |
-| A 端到端微调基线 | 单模型在 K support 上真实端到端微调 | 记录中的旗舰：BNCI2014001-4, MIRepNet x IFNet | MIRepNet, IFNet | 重训 LOSO base，deepcopy 后在 K support 上微调整个模型 | 记录结论：best single FT 比 frozen fusion 高约 +3.9 / +4.8 | `scripts/fusion/run_finetune_baseline.py`, `PROGRESS.md`；当前 CSV 不完整 |
+| 修正后的 balance-gated selection | 冻结 LOSO features，测试被试 K-shot | BNCI2014001-4, BNCI2014004, BNCI2015001, AlexMI | 大：MIRepNet/CBraMod；小：IFNet/EEGNet/ADFCNN | `cv_sel2` 支撑集 CV 选大/小 head；`cv_sel3` 支撑集 CV 选大/小/fusion | 正结果但范围有限：24 cell 中 K20 +0.51，K30 +0.58 | `experiments/fusion/run_balance_gate.py`, `results/metrics/balance_gate.csv` |
+| A 端到端微调基线 | 单模型在 K support 上真实端到端微调 | 记录中的旗舰：BNCI2014001-4, MIRepNet x IFNet | MIRepNet, IFNet | 重训 LOSO base，deepcopy 后在 K support 上微调整个模型 | 记录结论：best single FT 比 frozen fusion 高约 +3.9 / +4.8 | `experiments/fusion/run_finetune_baseline.py`, `PROGRESS.md`；当前 CSV 不完整 |
 
 ## 协议定义
 
@@ -85,9 +85,9 @@ artifact 里只保存：
 
 用于：
 
-- `scripts/fusion/run_ft_fusion.py`
-- `scripts/fusion/run_balance_gate.py`
-- `scripts/fusion/run_finetune_baseline.py`
+- `experiments/fusion/run_ft_fusion.py`
+- `experiments/fusion/run_balance_gate.py`
+- `experiments/fusion/run_finetune_baseline.py`
 
 流程：
 

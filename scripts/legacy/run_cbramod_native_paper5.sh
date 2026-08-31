@@ -33,7 +33,7 @@ for i in "${!DATASETS[@]}"; do
   GPU="${GPUS[$((i % ${#GPUS[@]}))]}"
   LOG="logs/cbramod_native_${DS}_${PRESET}.log"
   echo "[$(date '+%F %T')] launch ${DS} preset=${PRESET} gpu=${GPU} -> ${LOG}"
-  setsid conda run -n cbramod python scripts/bigmodel/cbramod_native_adapt.py \
+  setsid conda run -n cbramod python experiments/bigmodel/cbramod_native_adapt.py \
       --dataset "${DS}" \
       --preset "${PRESET}" \
       --gpu "${GPU}" \

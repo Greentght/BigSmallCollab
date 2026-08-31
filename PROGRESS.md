@@ -2304,7 +2304,7 @@ CSV: `results/metrics/wrong_sample_BNCI2015001_cbramod_native_ifnet_v1.csv`(433�
 
 **继承断点。** Claude 最新会话的任务是“LOSO 场景下端到端微调 MIRepNet / CBraMod，找最佳参数”。用户已选择聚焦优化网格与 3 张 GPU 并行；Claude 在准备动手时因订阅访问被禁中断。
 
-**本次代码落地。** 新增 `scripts/bigmodel/mirepnet_loso_adapt.py`（MIRepNet LOSO 评估，训练集 per-subject EA + 45ch pad，测试被试独立 EA，无跨被试 whitening 泄漏）；`scripts/bigmodel/cbramod_native_adapt.py` 增加 `--protocol loso`；新增 `scripts/bigmodel/tune_mirepnet_loso.py` 与 `scripts/bigmodel/tune_cbramod_loso.py`，均为 1 seed search + 3 seed confirm，输出 chosen/summary，并对子进程设置 CPU 线程上限。
+**本次代码落地。** 新增 `experiments/bigmodel/mirepnet_loso_adapt.py`（MIRepNet LOSO 评估，训练集 per-subject EA + 45ch pad，测试被试独立 EA，无跨被试 whitening 泄漏）；`experiments/bigmodel/cbramod_native_adapt.py` 增加 `--protocol loso`；新增 `experiments/bigmodel/tune_mirepnet_loso.py` 与 `experiments/bigmodel/tune_cbramod_loso.py`，均为 1 seed search + 3 seed confirm，输出 chosen/summary，并对子进程设置 CPU 线程上限。
 
 **网格约定。** MIRepNet 扫 `epochs(10/30/50) × lr(5e-4/1e-3) × wd(1e-6/1e-4) × batch(8/16)=24`；CBraMod 扫 `lr(5e-4/1e-3) × epochs(20/50) × wd(0.01/0.05/0.1) × dropout(0.1/0.5)=24`。CBraMod 预处理固定：004 用 `norm=none, scale=1, b75n60`（3ch CAR harmful），其他集用 CAR-only `scale=1`（AlexMI=b50，其余 b75n60）。
 
@@ -2320,7 +2320,7 @@ CSV: `results/metrics/wrong_sample_BNCI2015001_cbramod_native_ifnet_v1.csv`(433�
 
 **失败原因。** runner 在未先 `torch.cuda.set_device(args.gpu)` 的情况下调用 `torch.manual_seed()` / `torch.cuda.manual_seed_all()`，会触碰所有可见 GPU。GPU0 当时已接近满显存，导致本应跑在 GPU 1/4/5 的 LOSO 子进程仍可能因 GPU0 CUDA context OOM 失败；部分日志显示 OOM 出现在 `torch.manual_seed(seed)` 或 `torch.cuda.empty_cache()`。
 
-**修复。** `scripts/bigmodel/mirepnet_loso_adapt.py` 与 `scripts/bigmodel/cbramod_native_adapt.py` 已改为先设置当前 CUDA device，再只 seed 当前 device；`torch.default_generator.manual_seed(seed)` 负责 CPU seed，避免 `manual_seed_all` 误碰其他卡。`py_compile` 通过；GPU1 上 MIRepNet 004 单 fold/1 epoch smoke 通过；CBraMod 14001_4c 单 fold/1 epoch smoke 通过。
+**修复。** `experiments/bigmodel/mirepnet_loso_adapt.py` 与 `experiments/bigmodel/cbramod_native_adapt.py` 已改为先设置当前 CUDA device，再只 seed 当前 device；`torch.default_generator.manual_seed(seed)` 负责 CPU seed，避免 `manual_seed_all` 误碰其他卡。`py_compile` 通过；GPU1 上 MIRepNet 004 单 fold/1 epoch smoke 通过；CBraMod 14001_4c 单 fold/1 epoch smoke 通过。
 
 **残留可复用。** tune driver 的完整性判定按 `n_subjects * n_seeds` 行数检查；runner 内部按 `(dataset, fold, seed)` 跳过已有行，所以不删除首轮 CSV，直接从残点续跑。
 
@@ -2332,9 +2332,9 @@ CSV: `results/metrics/wrong_sample_BNCI2015001_cbramod_native_ifnet_v1.csv`(433�
 
 **检查时间。** 2026-07-29 22:35 CST。
 
-**MIRepNet。** `scripts/bigmodel/tune_mirepnet_loso.py --phase all` 已完成 search+confirm，主日志显示 `[mirepnet_done] Wed Jul 29 13:34:20 CST 2026`。确认结果 `results/mirepnet_loso/tuned/summary_tuned.csv`：BNCI2014004 acc=78.95/bac=0.7895；BNCI2014001-4 acc=49.36/bac=0.4936；BNCI2014001 acc=74.59/bac=0.7459；AlexMI acc=75.10/bac=0.7510；BNCI2015001 acc=69.85/bac=0.6985。
+**MIRepNet。** `experiments/bigmodel/tune_mirepnet_loso.py --phase all` 已完成 search+confirm，主日志显示 `[mirepnet_done] Wed Jul 29 13:34:20 CST 2026`。确认结果 `results/mirepnet_loso/tuned/summary_tuned.csv`：BNCI2014004 acc=78.95/bac=0.7895；BNCI2014001-4 acc=49.36/bac=0.4936；BNCI2014001 acc=74.59/bac=0.7459；AlexMI acc=75.10/bac=0.7510；BNCI2015001 acc=69.85/bac=0.6985。
 
-**CBraMod。** 同一个 driver 已进入 `scripts/bigmodel/tune_cbramod_loso.py --phase all`，但尚未结束。当前在 BNCI2014001_4c search 阶段，约 18/24 个配置完整，剩余配置仍在 GPU 1/8 上运行；后续还需完成 BNCI2014001_2c、BNCI2014004、AlexMI_2c、BNCI2015001 的 search，并进入 5 个数据集的 confirm。最终 CBraMod tuned summary 尚未生成。
+**CBraMod。** 同一个 driver 已进入 `experiments/bigmodel/tune_cbramod_loso.py --phase all`，但尚未结束。当前在 BNCI2014001_4c search 阶段，约 18/24 个配置完整，剩余配置仍在 GPU 1/8 上运行；后续还需完成 BNCI2014001_2c、BNCI2014004、AlexMI_2c、BNCI2015001 的 search，并进入 5 个数据集的 confirm。最终 CBraMod tuned summary 尚未生成。
 
 
 ---
@@ -2385,7 +2385,7 @@ CSV: `results/metrics/wrong_sample_BNCI2015001_cbramod_native_ifnet_v1.csv`(433�
 
 ### 3) 正确场景：选定 session 内按比例划分的端到端双向蒸馏
 
-**代码与协议。** 脚本 `scripts/bidir/run_bidir_within_trainpct.py`，通过 `data.subject_split(ds, subj, val_split, seed)` 读取数据集配置里选定的 downstream session；不是写死某个 `004` 文件。模型为 MIRepNet(B) + IFNet(S)，两者每个 batch 同步前向/反向，训练端到端；每个 cell 为 9 被试 × 3 seeds。参数：`warmup=15,total=60,lam_bs=1.0,lam_sb_cramd=0.1,lam_sb_bdeeg=0.25,gamma=1.0,rho=0.5`。`G0_CE` 是同训练长度、无蒸馏控制；`best-single` = 同一 group/cell 内 `max(S_acc,B_acc)`。
+**代码与协议。** 脚本 `scripts/legacy/bidir/run_bidir_within_trainpct.py`，通过 `data.subject_split(ds, subj, val_split, seed)` 读取数据集配置里选定的 downstream session；不是写死某个 `004` 文件。模型为 MIRepNet(B) + IFNet(S)，两者每个 batch 同步前向/反向，训练端到端；每个 cell 为 9 被试 × 3 seeds。参数：`warmup=15,total=60,lam_bs=1.0,lam_sb_cramd=0.1,lam_sb_bdeeg=0.25,gamma=1.0,rho=0.5`。`G0_CE` 是同训练长度、无蒸馏控制；`best-single` = 同一 group/cell 内 `max(S_acc,B_acc)`。
 
 **数据划分。**
 
