@@ -7,7 +7,7 @@ cd "$(dirname "$0")/.."
 source ~/anaconda3/etc/profile.d/conda.sh
 conda activate cbramod
 
-OUT=results/cbramod_native/head_ablation
+OUT=results/cbramod/head_ablation
 mkdir -p "$OUT" logs
 GPUS=(2 3 4 5 7); gi=0
 COMMON="--preset native70 --train_percentage 0.3 --norm_method car --scale_divisor 1 \
@@ -19,7 +19,7 @@ run() {  # dataset lfreq hfreq notch lr epochs dropout wd
   for head in mlp linear; do
     local gpu=${GPUS[$((gi % ${#GPUS[@]}))]}; gi=$((gi+1))
     echo "[launch] $ds head=$head gpu=$gpu"
-    python experiments/bigmodel/cbramod_native_adapt.py --dataset "$ds" $COMMON \
+    python experiments/bigmodel/cbramod_adapt.py --dataset "$ds" $COMMON \
       --l_freq "$lf" --h_freq "$hf" $nf --lr "$lr" --epochs "$ep" \
       --dropout "$do" --weight_decay "$wd" --head "$head" --gpu "$gpu" \
       --out "$OUT/${ds}_${head}.csv" --overwrite \

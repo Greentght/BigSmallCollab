@@ -6,13 +6,13 @@ that model's conda env (see configs/models/<model>.yaml `env`):
 
     conda run -n mirepnet python scripts/export/export_preds.py --model ifnet   --dataset BNCI2014004    --protocol loso   --gpu 2
     conda run -n mirepnet python scripts/export/export_preds.py --model eegnet  --dataset BNCI2014001-4  --protocol within --gpu 2
-    conda run -n cbramod  python scripts/export/export_preds.py --model cbramod_native --dataset BNCI2014004 --protocol loso --gpu 2
+    conda run -n cbramod  python scripts/export/export_preds.py --model cbramod --dataset BNCI2014004 --protocol loso --gpu 2
 
 Protocols
 ---------
 within : per-subject calibration/test split (val_split = TEST fraction, default
          from the dataset config). Artifact model dir = ``<model>``; key = subject.
-         Row-identical to the existing mirepnet / cbramod_native within cache.
+         Row-identical to the existing mirepnet / cbramod within cache.
 loso   : leave-one-subject-out. Fold f = subject f held out for test, all others
          train. Artifact model dir = ``<model>_loso``; key = fold index. Rows are
          fully determined by the held-out subject (no split randomness), so they

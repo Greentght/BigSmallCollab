@@ -11,16 +11,9 @@ KNOWN = ('ifnet', 'eegnet', 'adfcnn', 'mirepnet', 'cbramod', 'labram')
 BIG_MODELS = ('mirepnet', 'cbramod', 'labram')
 SMALL_MODELS = ('ifnet', 'eegnet', 'adfcnn')
 
-# Back-compat alias: ``cbramod_native`` was the interim name of the final settled
-# CBraMod teacher while an older avg-pool variant still existed. That variant is
-# gone; ``cbramod`` now *is* the native teacher. The alias is kept so existing
-# pipeline scripts and cached artifacts under ``.../cbramod_native/`` keep working.
-_ALIASES = {'cbramod_native': 'cbramod'}
-
-
 def get_adapter(name, device='cpu', **cfg):
     """Instantiate the adapter for ``name`` with the given device + config."""
-    n = _ALIASES.get(name.lower(), name.lower())
+    n = name.lower()
     if n == 'ifnet':
         from models.ifnet.adapter import IFNetAdapter
         return IFNetAdapter(device=device, **cfg)
@@ -34,8 +27,8 @@ def get_adapter(name, device='cpu', **cfg):
         from models.mirepnet.adapter import MIRepNetAdapter
         return MIRepNetAdapter(device=device, **cfg)
     if n == 'cbramod':
-        from models.cbramod.adapter_native import CBraModNativeAdapter
-        return CBraModNativeAdapter(device=device, **cfg)
+        from models.cbramod.adapter import CBraModAdapter
+        return CBraModAdapter(device=device, **cfg)
     if n == 'labram':
         from models.labram.adapter import LaBraMAdapter
         return LaBraMAdapter(device=device, **cfg)

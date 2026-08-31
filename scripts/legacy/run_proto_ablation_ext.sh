@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # Exp-4 extension: prototype distillation across teacher x student matrix.
-# Adds cbramod_native->ifnet, mirepnet->eegnet, cbramod_native->eegnet
+# Adds cbramod->ifnet, mirepnet->eegnet, cbramod->eegnet
 # (mirepnet->ifnet already done). Both 2cls(004) and 4cls(001-4).
 set -e
 cd /home/lixinli/BigSmallCollab
 GPU=9
-for COMBO in "cbramod_native ifnet" "mirepnet eegnet" "cbramod_native eegnet"; do
+for COMBO in "cbramod ifnet" "mirepnet eegnet" "cbramod eegnet"; do
   set -- $COMBO; TEA=$1; STU=$2
   for DS in BNCI2014004 BNCI2014001-4; do
     echo "===== $(date) $TEA -> $STU ($DS) ====="

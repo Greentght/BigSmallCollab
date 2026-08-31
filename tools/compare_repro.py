@@ -32,10 +32,16 @@ UNIT_COLS = ('subject', 'fold')
 COND_COLS = ('condition', 'group')
 
 
+def _norm_name(b):
+    """Normalize historical filename variants to the current unified model names
+    (e.g. ``cbramodnative`` -> ``cbramod`` from the pre-rename CSV names)."""
+    return b.replace('cbramodnative', 'cbramod')
+
+
 def _match_files(hist_pat, repro_pat):
-    hist = {os.path.basename(f): f
+    hist = {_norm_name(os.path.basename(f)): f
             for f in glob.glob(hist_pat)}
-    repro = {os.path.basename(f): f
+    repro = {_norm_name(os.path.basename(f)): f
              for f in glob.glob(repro_pat)}
     if not hist:
         raise SystemExit(f'no historical CSV matches {hist_pat!r}')

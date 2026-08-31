@@ -7,8 +7,8 @@
 #                20 epochs, batch 16, lr 1e-3, wd 0.1, native all_patch_reps head.
 #
 # Usage:
-#   bash scripts/legacy/run_cbramod_native_paper5.sh native70 "3 5 6 8 2"
-#   bash scripts/legacy/run_cbramod_native_paper5.sh paper80  "3 5 6 8 2"
+#   bash scripts/legacy/run_cbramod_paper5.sh native70 "3 5 6 8 2"
+#   bash scripts/legacy/run_cbramod_paper5.sh paper80  "3 5 6 8 2"
 set -euo pipefail
 
 PRESET="${1:-native70}"
@@ -18,7 +18,7 @@ read -r -a GPUS <<< "$GPU_STR"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-mkdir -p logs results/cbramod_native
+mkdir -p logs results/cbramod
 
 DATASETS=(
   BNCI2014001_4c
@@ -31,9 +31,9 @@ DATASETS=(
 for i in "${!DATASETS[@]}"; do
   DS="${DATASETS[$i]}"
   GPU="${GPUS[$((i % ${#GPUS[@]}))]}"
-  LOG="logs/cbramod_native_${DS}_${PRESET}.log"
+  LOG="logs/cbramod_${DS}_${PRESET}.log"
   echo "[$(date '+%F %T')] launch ${DS} preset=${PRESET} gpu=${GPU} -> ${LOG}"
-  setsid conda run -n cbramod python experiments/bigmodel/cbramod_native_adapt.py \
+  setsid conda run -n cbramod python experiments/bigmodel/cbramod_adapt.py \
       --dataset "${DS}" \
       --preset "${PRESET}" \
       --gpu "${GPU}" \
@@ -49,4 +49,4 @@ for i in "${!DATASETS[@]}"; do
       > "${LOG}" 2>&1 < /dev/null &
 done
 
-echo "Launched ${#DATASETS[@]} CBraMod native jobs. Check logs/cbramod_native_*_${PRESET}.log"
+echo "Launched ${#DATASETS[@]} CBraMod native jobs. Check logs/cbramod_*_${PRESET}.log"

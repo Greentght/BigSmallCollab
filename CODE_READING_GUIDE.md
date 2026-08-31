@@ -35,10 +35,10 @@ BigSmallCollab/
 │
 ├── models/                  模型层(全部 vendored,无外部仓库依赖)
 │   ├── base.py              ModelAdapter 统一接口:preprocess/build/forward + finetune/infer/export/mc_uncertainty
-│   ├── __init__.py          get_adapter(name) 注册表;cbramod_native 为 cbramod 兼容别名
+│   ├── __init__.py          get_adapter(name) 注册表
 │   ├── ifnet/ eegnet/ adfcnn/   小模型(随机初始化训练)
 │   ├── mirepnet/            大模型(EA + 45ch pad;mlm.py 网络)
-│   ├── cbramod/             大模型(adapter_native.py = settled native 版;CAR-only)
+│   ├── cbramod/             大模型(adapter.py = settled CAR-only 高分版)
 │   └── labram/              大模型(250→200Hz patchify + input_chans 映射)
 │
 ├── collab/                  协同算法库(可 import,不做命令行编排)
@@ -53,7 +53,7 @@ BigSmallCollab/
 │   ├── methods.py           YAML condition -> distill_student 参数 registry
 │   ├── distill/             run_distill.py(KD/MMD/Combo/mask/dkd/eakd/adaptive/pearson 总入口)
 │   │                        run_loso_distill.py / run_loso_subject_oof_kd.py / analyze_fewshot_pearson.py
-│   ├── bigmodel/            cbramod/labram/mirepnet 的 native 适配 + 调参(tune_*.py)
+│   ├── bigmodel/            cbramod/labram/mirepnet 的适配与调参(tune_*.py)
 │   ├── bidir/               双向/CR-AMD/BD-EEG/feature-mutual 驱动(负结果复现)
 │   └── mask/                run_wrong_sample.py(wrong-sample E0-E5)
 │
@@ -101,7 +101,7 @@ forward(model, x) -> (feat, logits)
 
 小模型(ifnet/eegnet/adfcnn)吃原始 `(B,C,T)`,随机初始化;大模型各有预处理:
 MIRepNet = per-subject EA + 45 通道补齐;CBraMod/LaBraM = 250→200Hz + patchify,
-CBraMod 用 `adapter_native.py`(settled CAR-only 版,`--model cbramod` 即走这里)。
+CBraMod 用 `adapter.py`(settled CAR-only 高分版,`--model cbramod` 即走这里)。
 读模型时先读 adapter,别钻网络结构。
 
 ## 4. 工件层(artifact hub)—— 跨 env 解耦的核心
@@ -114,7 +114,7 @@ results/artifacts/<dataset>/<model>[|_loso]/<key>_<seed>_<split>.npz
 - **artifact ≠ checkpoint**:模型每次从 `weights/*.pth` 重建,只落工件和 CSV。
 - 命名:within = `<model>/<subject>_<seed>_<split>.npz`;
   loso = `<model>_loso/<fold>_<seed>_<split>.npz`;特殊键 `mirepnet_loso`、
-  `mirepnet_loso_subjoof`、别名 `cbramod_native` —— **改名会破坏所有消费者**。
+  `mirepnet_loso_subjoof` —— **改名会破坏所有消费者**。
 - 导出脚本在 `scripts/export/`(`finetune_export.py` 是主入口),在**各自模型的 env** 里跑。
 - `ARTIFACT_ROOT` env 可换工件根目录(重跑时指向 `results/artifacts_v0` 复用历史教师工件)。
 
@@ -135,7 +135,7 @@ results/artifacts/<dataset>/<model>[|_loso]/<key>_<seed>_<split>.npz
   distill 参数(baseline/kd/feat/combo/proto/dkd + masked sugar)。
 - **`distill/`** — 蒸馏实验:`run_distill.py` 是历史主入口(mask/dkd/eakd/adaptive/pearson
   各 flag 都在它身上);LOSO 版走 `run_loso_distill.py`、`run_loso_subject_oof_kd.py`。
-- **`bigmodel/`** — 大模型 native 适配(`*_adapt.py`)与网格调参(`tune_*.py`,
+- **`bigmodel/`** — 大模型适配(`*_adapt.py`)与网格调参(`tune_*.py`,
   1-seed search + 3-seed confirm,断点续跑)。
 - **`bidir/` + `mask/`** — 负结果复现线,命令以 `scripts/legacy/run_*.sh` 为准。
 
@@ -152,7 +152,7 @@ results/artifacts/<dataset>/<model>[|_loso]/<key>_<seed>_<split>.npz
 
 通用约定:长任务 `setsid nice -n 19 conda run -n <env> python ... > logs/<task>.log 2>&1 < /dev/null &`;
 重跑时 `export REPRO_OUT=results/metrics_repro`(不覆盖历史);
-教师工件已移入 `results/artifacts_v0/`,学生蒸馏加 `export ARTIFACT_ROOT=results/artifacts_v0` 直接复用。
+教师工件若要复用历史缓存,学生蒸馏加 `export ARTIFACT_ROOT=<旧工件目录>` 即可;或先 `mv results/artifacts results/artifacts_v0`。
 
 ### 0) 自检(跑任何东西前)
 
@@ -194,25 +194,25 @@ conda run -n mirepnet python experiments/distill/run_distill.py \
 ### 4) CBraMod 复现 / 调参 / 协议消融(cbramod env)
 
 ```bash
-bash scripts/legacy/run_cbramod_native_paper5.sh native70 "3 5 6 8 2"          # 5 数据集复现(native70)
-conda run -n cbramod python experiments/bigmodel/tune_cbramod_native.py --phase all --gpus 2 3 5   # within 调参
+bash scripts/legacy/run_cbramod_paper5.sh native70 "3 5 6 8 2"          # 5 数据集复现(native70)
+conda run -n cbramod python experiments/bigmodel/tune_cbramod.py --phase all --gpus 2 3 5   # within 调参
 conda run -n cbramod python experiments/bigmodel/tune_cbramod_004_caronly.py   # 004 CAR-only 精调
 conda run -n cbramod python experiments/bigmodel/tune_cbramod_loso.py --phase all --gpus 1 8 --threads 4  # ★LOSO 收尾(07-29 未完成,断点续跑)
-# 协议/预处理消融旋钮(cbramod_native_adapt.py):--head linear|mlp --norm_method car|none --scale_divisor 1 --band b50|b75n60
+# 协议/预处理消融旋钮(cbramod_adapt.py):--head linear|mlp --norm_method car|none --scale_divisor 1 --band b50|b75n60
 ```
 
 ### 5) CBraMod 作教师蒸馏
 
 ```bash
-conda run -n cbramod  python scripts/export/export_teacher_mc.py --model cbramod_native --dataset BNCI2014004 --gpu 2
-conda run -n mirepnet python experiments/distill/run_distill.py --dataset BNCI2014004 --teacher cbramod_native --student ifnet --gpu 2
+conda run -n cbramod  python scripts/export/export_teacher_mc.py --model cbramod --dataset BNCI2014004 --gpu 2
+conda run -n mirepnet python experiments/distill/run_distill.py --dataset BNCI2014004 --teacher cbramod --student ifnet --gpu 2
 ```
 
 ### 6) LaBraM 复现 / 调参(labram env)
 
 ```bash
-bash scripts/legacy/run_labram_native_paper5.sh 2
-conda run -n labram python experiments/bigmodel/tune_labram_native.py --phase all --gpus 2 3 5
+bash scripts/legacy/run_labram_paper5.sh 2
+conda run -n labram python experiments/bigmodel/tune_labram.py --phase all --gpus 2 3 5
 ```
 
 ### 7) Mask / Confidence / Adaptive / EA-KD / DKD(命令以对应 run_*.sh 为准)

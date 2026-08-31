@@ -10,7 +10,7 @@ retained on purpose (EEGFMBench uses a simpler task_head).
 
 Per-dataset tuned hyperparameters for the ``|0.7`` (70%-train, = distillation
 calibration split) are embedded below from the final CAR-only sweep
-(``results/cbramod_native/tuned_caronly/``), NOT the older ÷scale configs.
+(historical ``results/cbramod_native/tuned_caronly/``), NOT the older ÷scale configs.
 
 The canonical raw epoch ``(N, C_native, 1000)`` @ 250 Hz is fed through: CAR ->
 band-pass (+notch) -> resample 200 Hz -> reshape into ``(N, ch, seconds, 200)``
@@ -37,7 +37,7 @@ _BANDS = {
 }
 
 # Final CAR-only tuned config, |0.7 split (PROGRESS.md 2026-07-13, verified
-# against results/cbramod_native/tuned_caronly/*_tp0.7.csv). scale_divisor=1
+# against historical results/cbramod_native/tuned_caronly/*_tp0.7.csv). scale_divisor=1
 # (CAR-only), norm=car, filtfilt order-4. Keyed by framework dataset name.
 _CARONLY = {
     'BNCI2014004':   dict(lr=1e-3, epochs=20, dropout=0.1, weight_decay=0.01,
@@ -49,7 +49,7 @@ _CARONLY = {
 }
 
 
-class _CBraModNative(nn.Module):
+class _CBraModModel(nn.Module):
     """Pretrained backbone + official all_patch_reps 3-layer MLP head."""
 
     def __init__(self, num_classes, n_ch, n_patch, dropout, pretrain):
@@ -79,8 +79,8 @@ class _CBraModNative(nn.Module):
         return feat, self.classifier[7](feat)
 
 
-class CBraModNativeAdapter(ModelAdapter):
-    name = 'cbramod_native'
+class CBraModAdapter(ModelAdapter):
+    name = 'cbramod'
 
     def __init__(self, device='cpu', **cfg):
         super().__init__(device=device, **cfg)
@@ -112,7 +112,7 @@ class CBraModNativeAdapter(ModelAdapter):
         pretrain = self.cfg.get('pretrain') or paths.weight_path('cbramod')
         n_ch = self.cfg['in_channels']
         n_patch = self._seconds(self.cfg.get('samples', 1000))
-        model = _CBraModNative(num_classes, n_ch=n_ch, n_patch=n_patch,
+        model = _CBraModModel(num_classes, n_ch=n_ch, n_patch=n_patch,
                                dropout=float(self.cfg.get('dropout', 0.1)),
                                pretrain=pretrain)
         return model.to(self.device)
@@ -122,7 +122,7 @@ class CBraModNativeAdapter(ModelAdapter):
 
     def finetune(self, model, X_tr, y_tr, num_classes):
         """Native training loop: AdamW + warmup-cosine, grad clip 1.0, label
-        smoothing 0 — matches cbramod_native_adapt.run_subject."""
+        smoothing 0 — matches cbramod_adapt.run_subject."""
         epochs = int(self.cfg.get('epochs', 20))
         lr = float(self.cfg.get('lr', 1e-3))
         wd = float(self.cfg.get('weight_decay', 0.01))

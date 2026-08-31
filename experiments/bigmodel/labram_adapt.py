@@ -1,6 +1,6 @@
 """LaBraM native-preprocessing downstream adaptation for the paper-5 MI tasks.
 
-Parallel to ``cbramod_native_adapt.py`` but faithful to LaBraM's own pipeline:
+Parallel to ``cbramod_adapt.py`` but faithful to LaBraM's own pipeline:
 
   * preprocessing = band-pass 0.1-75 Hz + notch 50 Hz + resample to 200 Hz +
     divide by 100 (µV -> 0.1 mV units, LaBraM's ``normalization``); *no* CAR.
@@ -357,7 +357,7 @@ def main():
     tag = f"{args.preset}_train{args.train_percentage:g}"
     if cfg.session:
         tag += f"_{cfg.session}"
-    out_path = args.out or os.path.join("results", "labram_native", f"{dataset}_{tag}.csv")
+    out_path = args.out or os.path.join("results", "labram", f"{dataset}_{tag}.csv")
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
 
     x, y, meta = load_dataset(cfg)

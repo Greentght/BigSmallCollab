@@ -295,7 +295,7 @@ _LAM_METHODS = set(METHODS) - _NO_LAM_METHODS
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--dataset',  default='BNCI2015001')
-    ap.add_argument('--teacher',  default='cbramod_native')
+    ap.add_argument('--teacher',  default='cbramod')
     ap.add_argument('--student',  default='ifnet')
     ap.add_argument('--methods',  default=None,
                     help='comma subset of METHODS (default: all)')

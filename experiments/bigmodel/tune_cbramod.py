@@ -1,6 +1,6 @@
 """Per-(dataset, split) hyperparameter tuning of the *native* CBraMod adapter.
 
-Drives ``cbramod_native_adapt.py`` (the native ``all_patch_reps`` model + faithful
+Drives ``cbramod_adapt.py`` (the native ``all_patch_reps`` model + faithful
 native preprocessing recorded in PROGRESS.md 2026-07-09). It does NOT re-implement
 training; it only sweeps a grid and selects the best config per (dataset, split)
 by mean balanced accuracy on one search seed, then confirms with 3 seeds.
@@ -31,9 +31,9 @@ ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 PYBIN = os.environ.get(
     "CBRAMOD_PYBIN", "/home/lixinli/anaconda3/envs/cbramod/bin/python"
 )
-RUNNER = os.path.join(ROOT, "experiments", "bigmodel", "cbramod_native_adapt.py")
-TUNE_DIR = os.path.join(ROOT, "results", "cbramod_native", "tune")
-TUNED_DIR = os.path.join(ROOT, "results", "cbramod_native", "tuned")
+RUNNER = os.path.join(ROOT, "experiments", "bigmodel", "cbramod_adapt.py")
+TUNE_DIR = os.path.join(ROOT, "results", "cbramod", "tune")
+TUNED_DIR = os.path.join(ROOT, "results", "cbramod", "tuned")
 LOG_DIR = os.path.join(ROOT, "logs", "tune_cbramod")
 
 # subjects per source (for resume/completeness checks)

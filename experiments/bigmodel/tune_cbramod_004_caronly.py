@@ -9,9 +9,9 @@ import pandas as pd
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 PY = os.environ.get("CBRAMOD_PYBIN", "/home/lixinli/anaconda3/envs/cbramod/bin/python")
-RUNNER = os.path.join(ROOT, "experiments", "bigmodel", "cbramod_native_adapt.py")
-TUNE = os.path.join(ROOT, "results", "cbramod_native", "tune004")
-TUNED = os.path.join(ROOT, "results", "cbramod_native", "tuned004")
+RUNNER = os.path.join(ROOT, "experiments", "bigmodel", "cbramod_adapt.py")
+TUNE = os.path.join(ROOT, "results", "cbramod", "tune004")
+TUNED = os.path.join(ROOT, "results", "cbramod", "tuned004")
 LOG = os.path.join(ROOT, "logs", "tune_cbramod")
 DS, NSUBJ = "BNCI2014004", 9
 GPUS = [1, 7, 8, 9]

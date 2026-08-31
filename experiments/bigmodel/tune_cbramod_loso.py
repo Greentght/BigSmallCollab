@@ -1,6 +1,6 @@
 """Focused LOSO hyperparameter tuning for native CBraMod.
 
-Uses ``cbramod_native_adapt.py --protocol loso``. The focused grid follows the
+Uses ``cbramod_adapt.py --protocol loso``. The focused grid follows the
 handoff decision: keep preprocessing fixed per dataset and sweep optimizer/head
 training levers only (lr x epochs x weight_decay x dropout = 24 configs).
 
@@ -20,9 +20,9 @@ import pandas as pd
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 PYBIN = os.environ.get("CBRAMOD_PYBIN", "/home/lixinli/anaconda3/envs/cbramod/bin/python")
-RUNNER = os.path.join(ROOT, "experiments", "bigmodel", "cbramod_native_adapt.py")
-TUNE_DIR = os.path.join(ROOT, "results", "cbramod_native", "loso_tune")
-TUNED_DIR = os.path.join(ROOT, "results", "cbramod_native", "loso_tuned")
+RUNNER = os.path.join(ROOT, "experiments", "bigmodel", "cbramod_adapt.py")
+TUNE_DIR = os.path.join(ROOT, "results", "cbramod", "loso_tune")
+TUNED_DIR = os.path.join(ROOT, "results", "cbramod", "loso_tuned")
 LOG_DIR = os.path.join(ROOT, "logs", "tune_cbramod_loso")
 
 N_SUBJECTS = {

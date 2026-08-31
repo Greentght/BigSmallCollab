@@ -548,7 +548,7 @@ def main():
     if cfg.session:
         tag += f"_{cfg.session}"
     out_path = args.out or os.path.join(
-        "results", "cbramod_native", f"{dataset}_{tag}.csv"
+        "results", "cbramod", f"{dataset}_{tag}.csv"
     )
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
 

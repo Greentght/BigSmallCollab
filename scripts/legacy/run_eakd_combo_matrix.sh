@@ -4,7 +4,7 @@
 set -e
 cd /home/lixinli/BigSmallCollab
 GPU=3
-for TEA in mirepnet cbramod_native; do
+for TEA in mirepnet cbramod; do
   for STU in ifnet eegnet; do
     for DS in BNCI2014004 BNCI2014001-4; do
       echo "===== $(date) $TEA -> $STU ($DS) ====="

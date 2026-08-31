@@ -13,11 +13,11 @@ for DS in $DATASETS; do
 done
 echo "===== $(date) MC export: CBraMod-native (cbramod env) ====="
 for DS in $DATASETS; do
-  conda run -n cbramod python scripts/export/export_teacher_mc.py --model cbramod_native --dataset $DS --gpu $GPU
+  conda run -n cbramod python scripts/export/export_teacher_mc.py --model cbramod --dataset $DS --gpu $GPU
 done
 
 echo "===== $(date) adaptive distill (mirepnet env) ====="
-for TEA in mirepnet cbramod_native; do
+for TEA in mirepnet cbramod; do
   for STU in ifnet eegnet; do
     for DS in $DATASETS; do
       conda run -n mirepnet python experiments/distill/run_distill.py \

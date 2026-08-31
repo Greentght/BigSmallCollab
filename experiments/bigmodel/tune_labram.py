@@ -1,6 +1,6 @@
 """Per-dataset hyperparameter tuning of the *native* LaBraM adapter.
 
-Parallel to ``tune_cbramod_native.py``: drives ``labram_native_adapt.py`` (the
+Parallel to ``tune_cbramod.py``: drives ``labram_adapt.py`` (the
 faithful native preprocessing + pretrained labram_base backbone + native
 mean-pool/Linear head). The **model structure is never changed** — only optimizer
 / regularization / preprocessing-band levers are swept, mirroring the CBraMod
@@ -28,9 +28,9 @@ import pandas as pd
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 PYBIN = os.environ.get("LABRAM_PYBIN", "/home/lixinli/anaconda3/envs/labram/bin/python")
-RUNNER = os.path.join(ROOT, "experiments", "bigmodel", "labram_native_adapt.py")
-TUNE_DIR = os.path.join(ROOT, "results", "labram_native", "tune2")
-TUNED_DIR = os.path.join(ROOT, "results", "labram_native", "tuned2")
+RUNNER = os.path.join(ROOT, "experiments", "bigmodel", "labram_adapt.py")
+TUNE_DIR = os.path.join(ROOT, "results", "labram", "tune2")
+TUNED_DIR = os.path.join(ROOT, "results", "labram", "tuned2")
 LOG_DIR = os.path.join(ROOT, "logs", "tune_labram2")
 
 N_SUBJECTS = {

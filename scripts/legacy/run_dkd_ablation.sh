@@ -6,7 +6,7 @@ set -e
 cd /home/lixinli/BigSmallCollab
 GPU=4
 DS=BNCI2014001-4
-for TEA in mirepnet cbramod_native; do
+for TEA in mirepnet cbramod; do
   for STU in ifnet eegnet; do
     echo "===== $(date) $TEA -> $STU ($DS) ====="
     conda run -n mirepnet python experiments/distill/run_distill.py \

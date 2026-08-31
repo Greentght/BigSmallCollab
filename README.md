@@ -11,9 +11,8 @@ ADFCNN)** 在运动想象解码上的协同实验。
 1. **每个模型在自己的 env 里 finetune**，对每个 `(dataset, subject, seed, split)`
    导出标准化产物 `{logits, feats, y}`（`results/artifacts/`）。
 2. **Hub 消费产物**做协同（任意 env，纯数组）：
-   - **测试时集成** — 置信度门控 (Gate, 主力) / 置信度加权 / 投票，只用 logits。
    - **离线 KD + 特征对齐** — student 对着**冻结的缓存 teacher** feats/logits 训练，
-     大模型无需在线。
+     大模型无需在线。（测试时集成/融合线已归档，见 git tag `pre-consolidation`。）
 
 **关键不变量**：同一 `(dataset, subject, seed, split)` 下所有模型样本顺序一致
 （由 `data/split.py` 统一切分保证），否则按行对齐的集成/蒸馏会错位 —
@@ -25,11 +24,11 @@ ADFCNN)** 在运动想象解码上的协同实验。
 data/      一处管数据: eeg_dataset(加载) · split(规范切分) · preproc(EA/通道padding/滤波) · channels(montage)
 models/    一模型一文件夹(网络定义 + 适配器 co-located):
            base(ModelAdapter 契约 + 小模型基类 + registry)
-           ifnet/ · eegnet/ · adfcnn/ · mirepnet/(mlm+lora/mmd) · cbramod/(criss-cross + native head) · labram/(+optim_factory/montage)
+           ifnet/ · eegnet/ · adfcnn/ · mirepnet/(mlm+lora/mmd) · cbramod/(criss-cross + adapter) · labram/(+optim_factory/montage)
            每个文件夹 = <net>.py + adapter.py;加模型 = 加一个文件夹
-collab/    ensemble(gate/加权/投票) · distill(离线KD+特征对齐) · bidirectional/… · artifacts(跨环境产物 hub)
+collab/    distill(离线KD+特征对齐) · bidirectional/mutual/bdeeg(双向线) · seed(统一播种) · artifacts(跨环境产物 hub)
 eval/      stats(subject级配对 Wilcoxon+Holm+bootstrap CI,acc%优先) · metrics(acc/kappa/per_class)
-experiments/ 正式实验入口: config runner(protocols/methods/run) · distill/fusion/adapt/bigmodel drivers
+experiments/ 正式实验入口: config runner(protocols/methods/run) · distill/ bigmodel/ bidir/ mask/ drivers
 config.py  数据/模型 yaml 加载        paths.py  权重解析
 weights/   预训练权重 symlink -> /data1/llx/pretrained_weights(*.pth, git忽略)
 scripts/   工具入口: check/ · export/ · legacy/(已归档/负结果复现实验)
@@ -59,11 +58,7 @@ conda run -n mirepnet python scripts/export/finetune_export.py --model mirepnet 
 conda run -n cbramod  python scripts/export/finetune_export.py --model cbramod  --dataset BNCI2014004 --gpu 1
 conda run -n labram   python scripts/export/finetune_export.py --model labram   --dataset BNCI2014004 --gpu 1
 
-# 2) 测试时集成（任意 env）
-python experiments/fusion/run_ensemble.py --dataset BNCI2014004 \
-    --models mirepnet cbramod labram ifnet adfcnn eegnet --big mirepnet cbramod labram
-
-# 3) 离线蒸馏（在 student 的 env 里跑；teacher 产物须已导出）
+# 2) 离线蒸馏（在 student 的 env 里跑；teacher 产物须已导出）
 conda run -n mirepnet python experiments/distill/run_distill.py \
     --dataset BNCI2014004 --teacher cbramod --student ifnet --lam_kd 0.5 --lam_feat 0.5
 ```
@@ -96,10 +91,10 @@ conda run -n mirepnet python scripts/check/smoke_test.py --models ifnet eegnet a
 - `run.py` — config -> cells -> conditions -> metrics CSV -> optional report
 
 **`experiments/bigmodel/` — 大模型原生适配 & 调参**
-- `cbramod_native_adapt.py` · `labram_native_adapt.py` — native 预处理下游适配；CBraMod 支持 `--protocol loso`
+- `cbramod_adapt.py` · `labram_adapt.py` — 下游适配与调参驱动；CBraMod 支持 `--protocol loso`
 - `mirepnet_loso_adapt.py` — MIRepNet 端到端 LOSO 评估（per-subject EA + 45ch pad）
 - `tune_mirepnet_loso.py` · `tune_cbramod_loso.py` — LOSO 场景聚焦网格调参（1 seed search + 3 seed confirm）
-- `tune_cbramod_native.py` · `tune_labram_native.py` — 逐(数据集,split)超参调参
+- `tune_cbramod.py` · `tune_labram.py` — 逐(数据集,split)超参调参
 - `tune_cbramod_004_caronly.py` — CBraMod 在 BNCI2014004 的 CAR-only 精调
 
 **`experiments/distill/` — 蒸馏实验**

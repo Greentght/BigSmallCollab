@@ -9,7 +9,7 @@ import pandas as pd
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--preset", default="native70")
-    parser.add_argument("--input_dir", default="results/labram_native")
+    parser.add_argument("--input_dir", default="results/labram")
     parser.add_argument("--out", default=None)
     return parser.parse_args()
 

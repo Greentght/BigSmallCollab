@@ -7,7 +7,7 @@ This regenerates the train/test artifacts (fresh teacher instance) and writes a
 sidecar ``<subj>_<seed>_train_mc.npz`` {pred_entropy, bald, y}.
 
     conda run -n mirepnet python scripts/export/export_teacher_mc.py --model mirepnet --dataset BNCI2014004 --gpu 5
-    conda run -n cbramod  python scripts/export/export_teacher_mc.py --model cbramod_native --dataset BNCI2014004 --gpu 5
+    conda run -n cbramod  python scripts/export/export_teacher_mc.py --model cbramod --dataset BNCI2014004 --gpu 5
 
 Consumed by run_distill.py's --adaptive conditions (entropy-weighted KD/Combo).
 """

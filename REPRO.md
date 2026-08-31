@@ -14,7 +14,7 @@
       └─ data/split.py     确定性切分:subject_split(seeded 666/667/668)/ loso_split
           │
           ├─ 大模型线(各自 conda env: cbramod / labram / mirepnet)
-          │   models/<family>/adapter[_native].py: preprocess → build(weights/*.pth) → forward
+          │   models/<family>/adapter.py: preprocess → build(weights/*.pth) → forward
           │   experiments/bigmodel/*_adapt.py / tune_*.py: 复现、调参、协议消融
           │   └─ scripts/export/*.py(export_preds / finetune_export / export_teacher_loso / _mc)
           │        └─ 工件 results/artifacts/<ds>/<model>[|_loso]/<key>_<seed>_<split>.npz
@@ -41,7 +41,7 @@
 - **没有 checkpoint 落盘**:模型每次从 `weights/*.pth` 重建 + finetune,只落工件和 CSV。
 - 工件命名:within = `<model>/<subject>_<seed>_<split>.npz`;
   loso = `<model>_loso/<fold>_<seed>_<split>.npz`;特殊键 `mirepnet_loso`、
-  `mirepnet_loso_subjoof`、别名 `cbramod_native`——改名会破坏所有消费者。
+  `mirepnet_loso_subjoof`——改名会破坏所有消费者。
 
 ---
 
@@ -52,7 +52,7 @@
 | env | 用途 |
 |---|---|
 | `mirepnet` | MIRepNet + 全部小模型(IFNet/EEGNet/ADFCNN)+ 所有蒸馏/协同实验 |
-| `cbramod` | CBraMod native 适配与调参、CBraMod 教师导出 |
+| `cbramod` | CBraMod 适配与调参、CBraMod 教师导出 |
 | `labram` | LaBraM 复现/调参 |
 
 ### 运行约定
@@ -90,13 +90,13 @@ python tools/compare_repro.py --hist 'results/metrics/distill_kd_within.csv' \
 | 1 | 基础蒸馏/MMD/COMBO | `python -m experiments.run configs/exp/distill_kd_within.yaml --gpu 2`(datasets 字段扩到 5 数据集) | mirepnet | `distill_kd_within.csv`;`<ds>_distill_mirepnet_to_ifnet.csv` |
 | 2 | few-shot/K-shot | `experiments/distill/run_distill.py --fewshot --shots ...` — 历史 `_fs{K}` 参数从 PROGRESS 06-27 小节定位后固化到 REPRO | mirepnet | `*_fewshot*`(含 shots 列) |
 | 3 | EEGNet/ADFCNN 学生 | `experiments/distill/run_distill.py --dataset <ds> --teacher mirepnet --student {eegnet,adfcnn} --gpu 2` | mirepnet | `<ds>_distill_mirepnet_to_{eegnet,adfcnn}.csv` |
-| 4 | CBraMod 复现/调参/消融 | `scripts/legacy/run_cbramod_native_paper5.sh native70`、`tune_cbramod_native.py --phase all --gpus 2 3 5`、`tune_cbramod_004_caronly.py`;**★ LOSO 收尾**:`tune_cbramod_loso.py --phase all --gpus 1 8 --threads 4`(07-29 未完成,断点续跑) | cbramod | `results/cbramod_native/*`、`results/mirepnet_loso/tuned/summary_tuned.csv`(已有基线) |
-| 5 | CBraMod 教师蒸馏 | `scripts/legacy/run_adaptive_entropy_kd.sh` 前半(export_teacher_mc cbramod_native)→ `run_distill.py --teacher cbramod_native --student ifnet` | cbramod→mirepnet | `<ds>_distill_cbramodnative_to_ifnet.csv` |
-| 6 | LaBraM 复现/调参 | `scripts/legacy/run_labram_native_paper5.sh 2`、`tune_labram_native.py --phase all --gpus 2 3 5` | labram | `results/labram_native/*` |
+| 4 | CBraMod 复现/调参/消融 | `scripts/legacy/run_cbramod_paper5.sh native70`、`tune_cbramod.py --phase all --gpus 2 3 5`、`tune_cbramod_004_caronly.py`;**★ LOSO 收尾**:`tune_cbramod_loso.py --phase all --gpus 1 8 --threads 4`(07-29 未完成,断点续跑) | cbramod | `results/cbramod/*`、`results/mirepnet_loso/tuned/summary_tuned.csv`(已有基线) |
+| 5 | CBraMod 教师蒸馏 | `scripts/legacy/run_adaptive_entropy_kd.sh` 前半(export_teacher_mc cbramod)→ `run_distill.py --teacher cbramod --student ifnet` | cbramod→mirepnet | `<ds>_distill_cbramodnative_to_ifnet.csv` |
+| 6 | LaBraM 复现/调参 | `scripts/legacy/run_labram_paper5.sh 2`、`tune_labram.py --phase all --gpus 2 3 5` | labram | `results/labram/*` |
 | 7 | Mask/Conf/Adaptive/EA-KD/DKD | `run_mask_ablation*.sh`、`run_dkd_ablation.sh`、`run_adaptive_entropy_kd.sh`、`run_eakd_within.sh`、`run_eakd_combo_matrix.sh`、`run_relational_ablation.sh` | mirepnet | `*_{maskablation,dkd,adaptivekd,eakd,eacombo}_*.csv` |
 | 8 | LOSO 跨被试 | `run_loso_full.sh`(export_teacher_loso → run_loso_distill)+ `run_loso_ext_0014/004.sh`;subject-OOF: `export_teacher_loso_subjoof.py` → `run_loso_subject_oof_kd.py` | mirepnet | `*_loso*.csv` |
 | 9 | 双向/CR-AMD/BD-EEG | `run_bidir_full.sh`、`run_cramd_full.sh`、`run_bdeeg_parallel.sh`(07-25 收口两实验 = CR-AMD + BD-EEG) | mirepnet | `*_loso_{bidir,cramd,bdeeg}_*.csv` |
-| 10 | Pearson | `run_distill.py --fewshot_pearson --shots 5 10 20 --teacher {mirepnet,cbramod_native}`(仅 4 类 001-4)+ `experiments/distill/analyze_fewshot_pearson.py` | mirepnet | `BNCI2014001-4_fewshot_pearson_*_to_ifnet.csv` |
+| 10 | Pearson | `run_distill.py --fewshot_pearson --shots 5 10 20 --teacher {mirepnet,cbramod}`(仅 4 类 001-4)+ `experiments/distill/analyze_fewshot_pearson.py` | mirepnet | `BNCI2014001-4_fewshot_pearson_*_to_ifnet.csv` |
 
 执行顺序与依赖:族 1 base → 族 3 学生 base → 导出教师工件(MIRepNet within / CBraMod
 within / mirepnet_loso)→ 族 7(依赖 within 工件)→ 族 2/10 few-shot → 族 5/6 教师
