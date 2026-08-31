@@ -20,18 +20,7 @@ import torch.nn.functional as F
 import torch.optim as optim
 from torch.utils.data import DataLoader, TensorDataset
 
-
-def _set_seed(seed):
-    """Full-stack seeding for reproducible student training (init + dropout +
-    dataloader shuffle + sampler). cudnn set deterministic to curb GPU nondeterminism."""
-    import random
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(seed)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
+from .seed import set_seed as _set_seed  # back-compat alias (collab.{bdeeg,bidirectional,mutual} import it)
 
 
 def _sim_matrix(feat):

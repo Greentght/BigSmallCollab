@@ -107,12 +107,26 @@ def run_dataset(cfg, dataset, device):
 
 
 def main():
+    # thread cap: shared box discipline (default 4, setdefault keeps pre-set env)
+    os.environ.setdefault('OMP_NUM_THREADS', '4')
+    os.environ.setdefault('MKL_NUM_THREADS', '4')
+    os.environ.setdefault('OPENBLAS_NUM_THREADS', '4')
+    os.environ.setdefault('NUMEXPR_NUM_THREADS', '4')
+    torch.set_num_threads(int(os.environ.get('TORCH_NUM_THREADS', '4')))
+
     ap = argparse.ArgumentParser(prog='python -m experiments.run')
     ap.add_argument('config', help='path to experiment YAML')
     ap.add_argument('--gpu', type=int, default=None)
+    ap.add_argument('--seed', type=int, default=None,
+                    help='process-level seed set once before the run loop '
+                         '(default: leave global RNG untouched — historical behavior)')
     ap.add_argument('--report', action='store_true',
                     help='print the eval paired-stats report after running')
     a = ap.parse_args()
+
+    if a.seed is not None:
+        from collab.seed import set_seed
+        set_seed(a.seed)
 
     with open(a.config) as f:
         cfg = yaml.safe_load(f)
@@ -125,7 +139,9 @@ def main():
     if not rows:
         print('No rows produced (missing teacher artifacts?).'); return
 
-    out_csv = os.path.join(_ROOT, 'results', 'metrics', f"{cfg['name']}.csv")
+    out_csv = os.path.join(os.environ.get('REPRO_OUT',
+                                          os.path.join(_ROOT, 'results', 'metrics')),
+                           f"{cfg['name']}.csv")
     os.makedirs(os.path.dirname(out_csv), exist_ok=True)
     df = pd.DataFrame(rows)
     df.to_csv(out_csv, index=False)

@@ -39,6 +39,11 @@ def parse_args():
 
 
 def main():
+    os.environ.setdefault('OMP_NUM_THREADS', '4')
+    os.environ.setdefault('MKL_NUM_THREADS', '4')
+    os.environ.setdefault('OPENBLAS_NUM_THREADS', '4')
+    os.environ.setdefault('NUMEXPR_NUM_THREADS', '4')
+    torch.set_num_threads(int(os.environ.get('TORCH_NUM_THREADS', '4')))
     a = parse_args()
     dcfg = config.load_dataset_config(a.dataset)
     mcfg = config.load_model_config(TEACHER)

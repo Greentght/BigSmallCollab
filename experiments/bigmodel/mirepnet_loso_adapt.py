@@ -49,11 +49,8 @@ def canonical_dataset_name(name):
 
 
 def set_seed(seed):
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.default_generator.manual_seed(seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed(seed)
+    from collab.seed import set_seed as _seed  # unified impl (was: torch.default_generator.manual_seed)
+    _seed(seed)
 
 
 def existing_keys(out_path):

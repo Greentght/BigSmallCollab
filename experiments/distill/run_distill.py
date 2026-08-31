@@ -345,6 +345,12 @@ def run_fewshot_pearson(a, scfg, subjects, seeds, val_split, nc, device, out_csv
 
 
 def main():
+    # thread cap: shared box discipline (default 4, setdefault keeps pre-set env)
+    os.environ.setdefault('OMP_NUM_THREADS', '4')
+    os.environ.setdefault('MKL_NUM_THREADS', '4')
+    os.environ.setdefault('OPENBLAS_NUM_THREADS', '4')
+    os.environ.setdefault('NUMEXPR_NUM_THREADS', '4')
+    torch.set_num_threads(int(os.environ.get('TORCH_NUM_THREADS', '4')))
     a = parse_args()
     dcfg = config.load_dataset_config(a.dataset)
     scfg = config.load_model_config(a.student)
@@ -356,8 +362,9 @@ def main():
               else 'cpu')
 
     out_csv = a.out_csv or os.path.join(
-        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-        'results', 'metrics',
+        os.environ.get('REPRO_OUT',
+                       os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+                                    'results', 'metrics')),
         f'{a.dataset}_distill_{a.teacher}_to_{a.student}.csv')
     os.makedirs(os.path.dirname(out_csv), exist_ok=True)
 
