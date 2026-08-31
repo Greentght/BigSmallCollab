@@ -107,16 +107,8 @@ conda run -n mirepnet python scripts/check/smoke_test.py --models ifnet eegnet a
 - `run_loso_distill.py` — LOSO 逐 fold 学生蒸馏
 - `run_loso_subject_oof_kd.py` — LOSO subject-OOF KD 入口
 
-**`experiments/fusion/` — 集成 / 融合 / 路由实验**
-- `run_ensemble.py` — 测试时集成（消费缓存产物，任意 env）
-- `run_ft_fusion.py` — F+T 少样本特征融合主实验（结论已更正，见 `PROGRESS.md`）
-- `run_balance_gate.py` — balance-gated 少样本选择（融合线的 corrected main line）
-- `run_finetune_baseline.py` — 端到端微调基线（F+T 的关键对照）
-- `run_r1_signal.py` — 学习式 logit 路由信号排查（负结果）
-
-**`experiments/adapt/` — target-support / 少样本适配实验**
-- `run_target_support_m*.py` — M0/M1/M2 系列 target-support 实验
-- `summarize_*` / `audit_*` — 对应稳定性汇总与方差审计
+> D0-onward 线（集成/融合/路由 `experiments/fusion/`、target-support `experiments/adapt/`、
+> `eval/d0.py`）已于 2026-08-31 归档，可从 git tag `pre-consolidation` 恢复。
 
 `scripts/` 是工具箱，不承载正式实验矩阵。
 
@@ -142,5 +134,5 @@ conda run -n mirepnet python scripts/check/smoke_test.py --models ifnet eegnet a
 ## 范围
 
 - **模型代码全部在框架内**（每模型一个 `models/<name>/` 文件夹，网络定义 + 适配器同处），可直接改/微调；预训练权重通过 `weights/*.pth` symlink 或环境变量外置管理。
-- 各大模型仍在各自 conda env 里 finetune + 导出产物；协同（集成/蒸馏）在任意 env 消费产物。
-- 特征级门控融合 (`fusion_model.DualBranchFusion`) 仅在单 env 同进程下可用，作为可选 v2。
+- 各大模型仍在各自 conda env 里 finetune + 导出产物；协同（蒸馏）在任意 env 消费产物。
+- 重跑流程与数据流说明见 [`REPRO.md`](REPRO.md)。

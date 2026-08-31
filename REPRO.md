@@ -6,6 +6,45 @@
 
 ---
 
+## 0. 数据流总览
+
+```text
+/data1/llx/<ds>/{X,labels}.npy  (DATA_ROOT 可覆盖)
+  └─ data/eeg_dataset.py   EEGDataset:按数据集规则选 session/截断/重采样/过滤类别
+      └─ data/split.py     确定性切分:subject_split(seeded 666/667/668)/ loso_split
+          │
+          ├─ 大模型线(各自 conda env: cbramod / labram / mirepnet)
+          │   models/<family>/adapter[_native].py: preprocess → build(weights/*.pth) → forward
+          │   experiments/bigmodel/*_adapt.py / tune_*.py: 复现、调参、协议消融
+          │   └─ scripts/export/*.py(export_preds / finetune_export / export_teacher_loso / _mc)
+          │        └─ 工件 results/artifacts/<ds>/<model>[|_loso]/<key>_<seed>_<split>.npz
+          │           {logits(N,C) f32, feats(N,D) f32, y(N,) i64}   ← collab/artifacts.py 契约
+          │
+          └─ 学生/蒸馏线(env: mirepnet,不加载大模型,只读工件)
+              experiments/run.py + configs/exp/*.yaml
+              experiments/distill/run_distill.py (KD/MMD/Combo/mask/dkd/eakd/adaptive/pearson)
+              experiments/bidir/ + collab/{bidirectional,mutual,bdeeg}.py (双向线)
+              └─ collab/distill.py distill_student: CE + KD + feature-align (+ 各变体)
+                   └─ eval/metrics.py evaluate → acc% / kappa
+                        └─ results/metrics[|_repro]/<name>.csv (long-form)
+
+统计:  python -m eval '<glob>'        → eval/stats.py: 种子先平均 → subject/fold 配对
+                                        Wilcoxon + Holm + bootstrap CI
+对比:  tools/compare_repro.py         → 历史 vs 重跑(deterministic / ci 两档)
+汇总:  tools/make_summary_xlsx.py     → results/summary_*.xlsx
+```
+
+要点:
+- **跨 env 解耦全靠工件 hub**:大模型只在自己的 conda env 里训练并导出
+  logits/feats/y;学生与协同实验在 mirepnet env 消费工件,**从不加载大模型**。
+  `load_aligned` 会断言 y 逐行对齐(切分一致性护栏)。
+- **没有 checkpoint 落盘**:模型每次从 `weights/*.pth` 重建 + finetune,只落工件和 CSV。
+- 工件命名:within = `<model>/<subject>_<seed>_<split>.npz`;
+  loso = `<model>_loso/<fold>_<seed>_<split>.npz`;特殊键 `mirepnet_loso`、
+  `mirepnet_loso_subjoof`、别名 `cbramod_native`——改名会破坏所有消费者。
+
+---
+
 ## 1. 环境与约定
 
 ### conda env(每模型独立,见 configs/models/*.yaml 的 `env:`)

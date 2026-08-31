@@ -1,5 +1,10 @@
 # Big/Small Collaboration Experiment Context
 
+> **2026-08-31 scope note:** the D0-onward line (D0 / R1 / F+T / balance-gate /
+> A fine-tune baseline) has been archived out of the active tree (git tag
+> `pre-consolidation`). The re-run scope is the pre-D0 lineage; see `REPRO.md`.
+> This document remains the historical record of the 07-28 state.
+
 Last checked: 2026-07-28, from the local repo and `/data1/llx/*`.
 
 This note separates three things that were easy to conflate:

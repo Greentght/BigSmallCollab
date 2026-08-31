@@ -270,40 +270,22 @@ conda run -n mirepnet python scripts/export/finetune_export.py --model mirepnet 
 conda run -n mirepnet python experiments/distill/run_distill.py --dataset BNCI2014004 --teacher mirepnet --student ifnet --lam_kd 0.5 --lam_feat 0.5 --gpu 0
 ```
 
-### 7.3 集成、融合、路由实验
+### 7.3 双向 / CR-AMD / BD-EEG / wrong-sample（负结果复现）
 
-入口在 `experiments/fusion/`：
+入口在 `experiments/bidir/` 和 `experiments/mask/`：
 
-- `run_ensemble.py`：测试时集成，只消费 `test` artifact，不加载模型。
-- `run_ft_fusion.py`：LOSO few-shot 下，在 test subject 的 K 个标注样本上训练轻量 head。
-- `run_balance_gate.py`：balance-gated 少样本选择，当前融合线 corrected main line。
-- `run_finetune_baseline.py`：端到端微调基线，对照 frozen feature fusion。
-- `run_r1_signal.py`：学习式 logit 路由信号排查。
+- `experiments/bidir/`：双向互蒸馏（`run_bidir_loso.py` 等）、CR-AMD（`run_cramd_loso.py`）、BD-EEG（`run_bdeeg_loso.py`）、feature-level mutual（`run_featbidir_*.py`）。结论整体 null/不稳定，保留复现。
+- `experiments/mask/run_wrong_sample.py`：wrong-sample 利用 E0-E5，closed/null（仅 E2 correct-only KD 存活）。
 
-`run_ensemble.py` 的流程：
-
-```text
-experiments/fusion/run_ensemble.py
-  -> collab.artifacts.load_aligned(dataset, models, subject, seed, 'test')
-  -> collab.ensemble.gate / conf_weighted / voting
-  -> eval.metrics.evaluate(...)
-  -> results/metrics/<dataset>_ensemble.csv
-```
-
-典型命令：
+典型命令（参数以 `scripts/legacy/run_bidir_full.sh` / `run_cramd_full.sh` / `run_bdeeg_parallel.sh` 为准）：
 
 ```bash
-python experiments/fusion/run_ensemble.py --dataset BNCI2014004 --models mirepnet ifnet eegnet adfcnn --big mirepnet
+conda run -n mirepnet python experiments/bidir/run_cramd_loso.py --dataset BNCI2014001-4 --warmup 15 --total 50 --lam_bs 0.5 --lam_sb 0.1 --gpu 2 --tag cramd
 ```
 
-特征融合核心在 `collab/fusion.py`：
-
-```text
-head_single
-fusion_concat
-fusion_gated
-fusion_mutual
-```
+> 归档说明：D0 及之后的集成/融合/路由/端到端微调基线/ target-support 线
+> （原 `experiments/fusion/`、`experiments/adapt/`、`eval/d0.py`、`collab/{fusion,router,ensemble}.py`）
+> 已于 2026-08-31 归档删除，可从 git tag `pre-consolidation` 恢复。
 
 ### 7.4 大模型原生适配和调参
 
@@ -323,16 +305,10 @@ fusion_mutual
 3. 它的结果写到 results/metrics 还是 results/<model>_loso/tuned。
 ```
 
-### 7.5 target-support / 少样本适配
+### 7.5 target-support / 少样本适配（已归档）
 
-入口在 `experiments/adapt/`：
-
-- `run_target_support_m0.py`、`run_target_support_m0_var.py`：M0 target-support baseline 和方差版本。
-- `run_m1a_oracle_alpha.py`、`run_m1b_source_alpha.py`：M1 alpha 系列。
-- `run_target_support_m2_kcurve.py`：M2 K-shot 曲线。
-- `summarize_target_support_kshot_stability.py`、`audit_target_support_m0_variance.py`：汇总和审计。
-
-这条线通常读法是：先看输入 artifact 或支撑集构造，再看 selection/alpha 规则，最后看输出 CSV 的 grouping key。
+`experiments/adapt/`（target-support M0/M1a/M1b/M2）已于 2026-08-31 随
+D0-onward 线一并归档删除，代码与结果可从 git tag `pre-consolidation` 恢复。
 
 ## 8. collab：协同算法库
 
@@ -341,11 +317,9 @@ fusion_mutual
 主要文件：
 
 - `collab/artifacts.py`：跨环境 artifact hub。
-- `collab/ensemble.py`：测试时集成，包含 `gate`、`conf_weighted`、`voting`。
-- `collab/distill.py`：离线 KD、feature align、DKD、prototype、relational 等核心训练函数。
-- `collab/fusion.py`：frozen feature head、concat/gated/mutual fusion。
-- `collab/router.py`：logit routing / gate feature utilities。
-- `collab/bidirectional.py`、`collab/mutual.py`、`collab/bdeeg.py`：真正双向/互学习算法，主要由 legacy 复现实验调用。
+- `collab/distill.py`：离线 KD、feature align、DKD、prototype、relational、pearson 等核心训练函数。
+- `collab/seed.py`：统一全栈播种（random/numpy/torch/cuda + cudnn）。
+- `collab/bidirectional.py`、`collab/mutual.py`、`collab/bdeeg.py`：真正双向/互学习算法，由 `experiments/bidir/` 复现实验调用。
 
 读 `collab/` 时不要从 argparse 或 CSV 输出角度读；它的核心问题是“给定数组、adapter 或 batch，算法怎么算”。
 
@@ -380,16 +354,15 @@ conda run -n mirepnet python scripts/export/export_teacher_loso.py --dataset BNC
 conda run -n mirepnet python experiments/distill/run_loso_distill.py --dataset BNCI2014004 --student ifnet --gpu 0
 ```
 
-## 10. legacy：历史和负结果复现
+## 10. legacy：规范启动器
 
-`legacy` 不是主阅读路径，但有些历史结论需要它。
+`scripts/legacy/` 现在只保留 `run_*.sh` 启动器——它们是各实验线的规范命令记录
+（mask/dkd/eakd/relational/proto/adaptive/bidir/cramd/bdeeg/loso/cbramod/labram），
+路径已指向 `experiments/`，重跑时以它们为准（见 `REPRO.md`）。
 
-相关目录：
-
-- `scripts/legacy/bidir/`：双向互蒸馏、CR-AMD、BD-EEG、feature-level mutual。结论整体为 null/不稳定，保留复现。
-- `scripts/legacy/wrongsample/`：wrong-sample 利用 E0-E5，closed/null。
-- `scripts/legacy/run_*.sh`：早期批处理命令，路径已经更新到当前入口，但仍不作为新实验模板。
-- `scripts/legacy/analyze_*`、`aggregate_*`：早期统计脚本，优先用 `eval/` 取代。
+- 双向/CR-AMD/BD-EEG 驱动在 `experiments/bidir/`；wrong-sample 在 `experiments/mask/`。
+- 早期 `analyze_*`/`aggregate_*` 统计脚本已删，统一用 `python -m eval '<glob>'` 取代。
+- D0-onward 线（fusion/adapt/d0）已归档，见 git tag `pre-consolidation`。
 
 真正双向蒸馏和 artifact 离线蒸馏要分开理解：
 
