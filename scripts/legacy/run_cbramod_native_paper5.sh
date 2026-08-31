@@ -7,8 +7,8 @@
 #                20 epochs, batch 16, lr 1e-3, wd 0.1, native all_patch_reps head.
 #
 # Usage:
-#   bash scripts/run_cbramod_native_paper5.sh native70 "3 5 6 8 2"
-#   bash scripts/run_cbramod_native_paper5.sh paper80  "3 5 6 8 2"
+#   bash scripts/legacy/run_cbramod_native_paper5.sh native70 "3 5 6 8 2"
+#   bash scripts/legacy/run_cbramod_native_paper5.sh paper80  "3 5 6 8 2"
 set -euo pipefail
 
 PRESET="${1:-native70}"

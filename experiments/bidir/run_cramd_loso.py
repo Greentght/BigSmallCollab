@@ -2,13 +2,13 @@
 then fork. Records per-(group,fold,seed) S_acc/B_acc, plus per-epoch train-quadrant
 diagnostics. Primary metric = small model (S) held-out accuracy.
 
-    conda run -n mirepnet python scripts/legacy/bidir/run_cramd_loso.py --dataset BNCI2014001-4 --gpu 8
+    conda run -n mirepnet python experiments/bidir/run_cramd_loso.py --dataset BNCI2014001-4 --gpu 8
 """
 import argparse
 import os
 import sys
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 import pandas as pd
 import torch
@@ -49,7 +49,7 @@ def main():
     device = (f'cuda:{a.gpu}' if a.gpu is not None and torch.cuda.is_available() else 'cpu')
     groups = ({k: GROUPS[k] for k in a.groups.split(',')} if a.groups else GROUPS)
 
-    root = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))),
+    root = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
                         'results', 'metrics')
     tag = a.tag or 'cramd'
     out_csv = f'{root}/{a.dataset}_loso_{tag}_mirepnet_ifnet.csv'

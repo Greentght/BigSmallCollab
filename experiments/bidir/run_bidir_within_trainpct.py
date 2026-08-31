@@ -11,7 +11,7 @@ Methods:
   bdeeg : G0_CE/G1_FixKD/SymDML/StrictRouted/BD_EEG/BD_EEG_Swap
 
 Example:
-    conda run -n mirepnet python -u scripts/legacy/bidir/run_bidir_within_trainpct.py \
+    conda run -n mirepnet python -u experiments/bidir/run_bidir_within_trainpct.py \
         --datasets BNCI2014004 BNCI2014001-4 --methods cramd bdeeg \
         --val_split 0.7 --gpu 0 --tag train30_v1
 """
@@ -23,7 +23,7 @@ import sys
 os.environ.setdefault('OMP_NUM_THREADS', '4')
 os.environ.setdefault('MKL_NUM_THREADS', '4')
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 import numpy as np
 import pandas as pd
@@ -39,7 +39,7 @@ from eval import metrics
 from models import get_adapter
 
 
-ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 METRICS = os.path.join(ROOT, 'results', 'metrics')
 
 

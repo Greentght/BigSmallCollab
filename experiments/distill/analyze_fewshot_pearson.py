@@ -5,7 +5,7 @@ subject-level paired comparisons (unit = subject, n=9). For each --shots level
 we report, for the key contrasts, mean/median Delta acc%, 95% bootstrap CI,
 win count, paired Wilcoxon p, and Holm-corrected p across the contrasts.
 
-    conda run -n mirepnet python scripts/analyze_fewshot_pearson.py \
+    conda run -n mirepnet python experiments/distill/analyze_fewshot_pearson.py \
         results/metrics/BNCI2014001-4_fewshot_pearson_mirepnet_to_ifnet.csv
 """
 import sys

@@ -8,5 +8,5 @@ conda run -n mirepnet python experiments/distill/run_loso_distill.py \
   --lam_kd 0.5 --gpu $GPU \
   --out_csv results/metrics/${DS}_loso_reliability_mirepnet_to_ifnet.csv
 echo "===== $(date) $DS pred-states ====="
-conda run -n mirepnet python scripts/legacy/bidir/loso_pred_states.py --dataset $DS --gpu $GPU
+conda run -n mirepnet python experiments/bidir/loso_pred_states.py --dataset $DS --gpu $GPU
 echo "===== $(date) DONE004EXT ====="

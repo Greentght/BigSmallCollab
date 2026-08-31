@@ -22,14 +22,14 @@ Groups (user's minimal validation set):
   G7_DisagCE up-weight S's CE on routed-B->S samples, NO KL
              (is the gain just hard-sample re-weighting, not teacher probs?)
 
-    conda run -n mirepnet python scripts/legacy/bidir/run_bidir_fewshot.py \
+    conda run -n mirepnet python experiments/bidir/run_bidir_fewshot.py \
         --dataset BNCI2014004 --shots 5 10 20 --lam_bs 1.0 --lam_sb 0.1 --gpu 0
 """
 import argparse
 import os
 import sys
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 import numpy as np
 import pandas as pd
@@ -86,7 +86,7 @@ def main():
     device = (f'cuda:{a.gpu}' if a.gpu is not None and torch.cuda.is_available() else 'cpu')
     groups = ({k: GROUPS[k] for k in a.groups.split(',')} if a.groups else GROUPS)
 
-    root = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))),
+    root = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
                         'results', 'metrics')
     tag = a.tag or f'bidirfs_sb{a.lam_sb}'
     out_csv = f'{root}/{a.dataset}_fewshot_{tag}_mirepnet_ifnet.csv'

@@ -130,12 +130,14 @@ conda run -n mirepnet python scripts/check/smoke_test.py --models ifnet eegnet a
 - `export_preds.py` — 统一的逐样本预测/特征导出（within + LOSO）
 - `export_teacher_mc.py` — teacher + MC-dropout 不确定度
 - `export_teacher_loso.py` — LOSO 逐 fold teacher 微调
-- `run_c_export.sh` / `run_d0_export.sh` — 批量补齐 BNCI2015001/AlexMI、D0 逐样本产物队列
+- `export_teacher_loso_subjoof.py` — LOSO subject-OOF 交叉拟合 teacher
 
-**`scripts/legacy/` — 归档实验 / 负结果复现**
-- `bidir/` — 双向互蒸馏 / CR-AMD / BD-EEG / feature-level mutual（全线判 null，留作复现）
-- `wrongsample/` — wrong-sample 利用 E0-E5（closed；仅 E2 correct-only KD 存活）
-- `run_*.sh`、`analyze_*`、`aggregate_*` — 早期一次性编排和统计脚本
+**`experiments/bidir/`、`experiments/mask/` — 负结果复现**
+- `experiments/bidir/` — 双向互蒸馏 / CR-AMD / BD-EEG / feature-level mutual（全线判 null，留作复现）
+- `experiments/mask/run_wrong_sample.py` — wrong-sample 利用 E0-E5（closed；仅 E2 correct-only KD 存活）
+
+**`scripts/legacy/` — 早期一次性编排脚本**
+- `run_*.sh` — 各实验线的规范启动器（路径已指向 `experiments/`）
 
 ## 范围
 

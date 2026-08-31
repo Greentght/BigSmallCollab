@@ -6,13 +6,13 @@ the held-out subject. Conditions:
   Bidir : + reverse routed (lam_sb=0.1)      -- S also nudges B on (S right, B wrong)
 Compare S's held-out acc to LOSO Base (S alone). Records S and B accuracy per fold.
 
-    conda run -n mirepnet python scripts/legacy/bidir/run_bidir_loso.py --dataset BNCI2014001-4 --gpu 8
+    conda run -n mirepnet python experiments/bidir/run_bidir_loso.py --dataset BNCI2014001-4 --gpu 8
 """
 import argparse
 import os
 import sys
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 import numpy as np
 import pandas as pd
@@ -52,7 +52,7 @@ def main():
     device = (f'cuda:{a.gpu}' if a.gpu is not None and torch.cuda.is_available()
               else 'cpu')
     out_csv = a.out_csv or os.path.join(
-        os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))),
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
         'results', 'metrics', f'{a.dataset}_loso_bidir_mirepnet_ifnet.csv')
     os.makedirs(os.path.dirname(out_csv), exist_ok=True)
 

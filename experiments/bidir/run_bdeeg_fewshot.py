@@ -1,7 +1,7 @@
 """Few-shot WITHIN-SUBJECT BD-EEG bidirectional distillation:
 MIRepNet(B) <-> IFNet(S).
 
-Protocol matches scripts/legacy/bidir/run_bidir_fewshot.py:
+Protocol matches experiments/bidir/run_bidir_fewshot.py:
   * for each (shots, subject, seed), load the downstream session through
     data.subject_split(dataset, subject, val_split, seed);
   * sample --shots trials PER CLASS from the 70% calibration pool;
@@ -17,7 +17,7 @@ Groups:
   BD_EEG_Swap  swapped direction-asymmetry ablation
 
 Example:
-    conda run -n mirepnet python scripts/legacy/bidir/run_bdeeg_fewshot.py \
+    conda run -n mirepnet python experiments/bidir/run_bdeeg_fewshot.py \
         --dataset BNCI2014004 --shots 5 10 20 --gpu 0
 """
 import argparse
@@ -28,7 +28,7 @@ import sys
 os.environ.setdefault('OMP_NUM_THREADS', '4')
 os.environ.setdefault('MKL_NUM_THREADS', '4')
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 import numpy as np
 import pandas as pd
@@ -85,7 +85,7 @@ def main():
     device = (f'cuda:{a.gpu}' if a.gpu is not None and torch.cuda.is_available() else 'cpu')
     groups = ({k: GROUPS[k] for k in a.groups.split(',')} if a.groups else GROUPS)
 
-    root = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))),
+    root = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
                         'results', 'metrics')
     os.makedirs(root, exist_ok=True)
     tag = a.tag or 'bdeegfs'

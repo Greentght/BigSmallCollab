@@ -20,7 +20,7 @@ Secondary:    ft_bd_big   > ft_big    (symmetric)
 
 Stats: subject-level paired Wilcoxon (across draws, averaged per subject).
 
-    conda run -n mirepnet python -u scripts/legacy/bidir/run_featbidir_fewshot.py \\
+    conda run -n mirepnet python -u experiments/bidir/run_featbidir_fewshot.py \\
         --cells BNCI2014001-4:mirepnet:ifnet --Ks 20 30 --gpu 2
 """
 import argparse
@@ -28,7 +28,7 @@ import copy
 import os
 import sys
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 import numpy as np
 import torch
@@ -40,7 +40,7 @@ import config
 import data
 from models import get_adapter
 
-ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 METRICS = os.path.join(ROOT, 'results', 'metrics')
 
 _SPLIT_CACHE = {}

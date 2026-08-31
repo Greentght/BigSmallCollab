@@ -5,13 +5,13 @@ S wrong) — on train and test, and (2) check teacher confidence calibration und
 LOSO. The (B wrong, S correct) fraction is what would justify reverse (S->B)
 distillation; teacher calibration informs CorrectMaskKD vs ConfidenceKD.
 
-    conda run -n mirepnet python scripts/legacy/bidir/loso_pred_states.py --dataset BNCI2014004 --gpu 8
+    conda run -n mirepnet python experiments/bidir/loso_pred_states.py --dataset BNCI2014004 --gpu 8
 """
 import argparse
 import os
 import sys
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 import numpy as np
 import pandas as pd
@@ -82,7 +82,7 @@ def main():
                               teacher_test_acc=float(corr.mean() * 100)))
             print(f"fold{f} seed{seed} done", flush=True)
 
-    root = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))),
+    root = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
                         'results', 'metrics')
     qdf = pd.DataFrame(qrows); qdf.to_csv(f'{root}/{a.dataset}_loso_predstates.csv', index=False)
     cdf = pd.DataFrame(crows); cdf.to_csv(f'{root}/{a.dataset}_loso_teachercalib.csv', index=False)

@@ -4,7 +4,7 @@ distillation. Per fold: shared CE warm-up -> fork into groups
 seed) S_acc/B_acc (+kappa) and per-epoch routing diagnostics. Primary metric =
 small model (S) held-out accuracy; secondary = big model (B).
 
-    conda run -n mirepnet python scripts/legacy/bidir/run_bdeeg_loso.py --dataset BNCI2014001-4 --gpu 8
+    conda run -n mirepnet python experiments/bidir/run_bdeeg_loso.py --dataset BNCI2014001-4 --gpu 8
 """
 import argparse
 import os
@@ -15,7 +15,7 @@ import sys
 os.environ.setdefault('OMP_NUM_THREADS', '4')
 os.environ.setdefault('MKL_NUM_THREADS', '4')
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 import pandas as pd
 import torch
@@ -59,7 +59,7 @@ def main():
     device = (f'cuda:{a.gpu}' if a.gpu is not None and torch.cuda.is_available() else 'cpu')
     groups = ({k: GROUPS[k] for k in a.groups.split(',')} if a.groups else GROUPS)
 
-    root = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))),
+    root = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
                         'results', 'metrics')
     out_csv = f'{root}/{a.dataset}_loso_{a.tag}_mirepnet_ifnet.csv'
     diag_csv = f'{root}/{a.dataset}_loso_{a.tag}_diag.csv'

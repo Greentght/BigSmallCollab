@@ -18,14 +18,14 @@ Correctness routing is dynamic (uses current batch predictions):
 
 Primary test: bd_small > ce_small  (subject-level paired Wilcoxon over seeds+splits)
 
-    conda run -n mirepnet python -u scripts/legacy/bidir/run_featbidir_within.py \\
+    conda run -n mirepnet python -u experiments/bidir/run_featbidir_within.py \\
         --datasets BNCI2014001-4 --big mirepnet --small ifnet --gpu 2
 """
 import argparse
 import os
 import sys
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 import numpy as np
 import torch
@@ -37,7 +37,7 @@ import config
 import data
 from models import get_adapter
 
-ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 METRICS = os.path.join(ROOT, 'results', 'metrics')
 
 
