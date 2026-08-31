@@ -93,6 +93,7 @@ def build_cmd(dataset, c, seeds, gpu, out):
         "--dataset", dataset,
         "--protocol", "loso",
         "--preset", "native70",
+        "--pipeline", "native",
         "--gpu", str(gpu),
         "--seeds", *[str(s) for s in seeds],
         "--epochs", str(c["epochs"]),

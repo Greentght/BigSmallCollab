@@ -46,8 +46,8 @@ envs/      各模型 conda 环境说明
 - `forward(model, x) -> (feat[B,D], logits[B,C])`
 - `finetune` / `infer` / `export` 由基类提供。
 
-各模型预处理差异：MIRepNet → EA + 45ch pad；CBraMod/LaBraM → 250→200Hz resample +
-patchify `(ch,4,200)` + µV/100（LaBraM 另需 `input_chans` 通道映射）；小模型 → 原样。
+各模型预处理差异：MIRepNet → EA + 45ch pad；CBraMod → **EA + 45ch pad + 250→200Hz**（最终版，见 PROGRESS 07-01 终表）；
+LaBraM → 250→200Hz resample + patchify `(ch,4,200)`（另需 `input_chans` 通道映射）；小模型 → 原样。
 
 ## 用法
 

@@ -38,7 +38,7 @@ BigSmallCollab/
 │   ├── __init__.py          get_adapter(name) 注册表
 │   ├── ifnet/ eegnet/ adfcnn/   小模型(随机初始化训练)
 │   ├── mirepnet/            大模型(EA + 45ch pad;mlm.py 网络)
-│   ├── cbramod/             大模型(adapter.py = settled CAR-only 高分版)
+│   ├── cbramod/             大模型(adapter.py = 45ch 通道模板管线最终版)
 │   └── labram/              大模型(250→200Hz patchify + input_chans 映射)
 │
 ├── collab/                  协同算法库(可 import,不做命令行编排)
@@ -100,8 +100,8 @@ forward(model, x) -> (feat, logits)
 ```
 
 小模型(ifnet/eegnet/adfcnn)吃原始 `(B,C,T)`,随机初始化;大模型各有预处理:
-MIRepNet = per-subject EA + 45 通道补齐;CBraMod/LaBraM = 250→200Hz + patchify,
-CBraMod 用 `adapter.py`(settled CAR-only 高分版,`--model cbramod` 即走这里)。
+MIRepNet = per-subject EA + 45 通道补齐;CBraMod = **同样的 EA + 45ch 模板 + 250→200Hz**
+(最终版,`adapter.py`,见 PROGRESS 07-01 终表);LaBraM = 250→200Hz patchify。
 读模型时先读 adapter,别钻网络结构。
 
 ## 4. 工件层(artifact hub)—— 跨 env 解耦的核心
@@ -194,12 +194,14 @@ conda run -n mirepnet python experiments/distill/run_distill.py \
 ### 4) CBraMod 复现 / 调参 / 协议消融(cbramod env)
 
 ```bash
-bash scripts/legacy/run_cbramod_paper5.sh native70 "3 5 6 8 2"          # 5 数据集复现(native70)
-conda run -n cbramod python experiments/bigmodel/tune_cbramod.py --phase all --gpus 2 3 5   # within 调参
-conda run -n cbramod python experiments/bigmodel/tune_cbramod_004_caronly.py   # 004 CAR-only 精调
+bash scripts/legacy/run_cbramod_paper5.sh paper80 "3 5 6 8 2"   # ★最终版复现(45ch 模板管线,80/20 单session)
+conda run -n cbramod python experiments/bigmodel/tune_cbramod.py --phase all --gpus 2 3 5   # within 调参(native 管线,已 pin)
+conda run -n cbramod python experiments/bigmodel/tune_cbramod_004_caronly.py   # 004 CAR-only 精调(native)
 conda run -n cbramod python experiments/bigmodel/tune_cbramod_loso.py --phase all --gpus 1 8 --threads 4  # ★LOSO 收尾(07-29 未完成,断点续跑)
-# 协议/预处理消融旋钮(cbramod_adapt.py):--head linear|mlp --norm_method car|none --scale_divisor 1 --band b50|b75n60
+# 管线/消融旋钮(cbramod_adapt.py):--pipeline template|native|benchmark --head linear|mlp
+#   --norm_method car|none --scale_divisor 1 --band b50|b75n60(native 线专用)
 ```
+模板管线验收锚点(07-01 终表,3seed 80/20):14001-2 77.78 / 14001-4 62.07 / 004 74.38 / AlexMI 66.15 / 15001 71.11。
 
 ### 5) CBraMod 作教师蒸馏
 

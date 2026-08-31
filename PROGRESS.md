@@ -2433,3 +2433,24 @@ CSV: `results/metrics/wrong_sample_BNCI2015001_cbramod_native_ifnet_v1.csv`(433�
 完整性：主表 648/648 行，diag 表 29160/29160 行；每个 cell/group 都有 45 个 epoch 诊断点。
 
 **双向蒸馏结论。** 在用户指定的端到端被试内比例划分场景里，2 个 split × 2 个数据集 × 2 个核心方法共 8 个主 cell，CR-AMD `G6_CRAMD` 和 BD-EEG `BD_EEG` 的 `best-single` 全部低于 `G0_CE`。小模型 S 偶尔有小幅正向，但一旦用“同批次独立训练大小模型二者取最优”的 best-single 控制，核心双向蒸馏没有超过单模型独自端到端训练。因此这条线目前是负结果 / null，不支持“端到端双向蒸馏稳定超过二者独自微调”的目标。
+
+---
+
+## 2026-08-31 (记录) — CBraMod 最终版切换:45ch 通道模板管线(取代 CAR-only native)
+
+**决定(用户):** 框架 `cbramod` 的最终高分版 = 2026-07-01 全量终表的 **45ch 通道模板管线**
+(`MIRepNet/cbramod_template.py` 移植),非 07-13 CAR-only native 版。验收锚点(3seed,80/20 单session):
+14001-2 77.78 / 14001-4 62.07 / 004 74.38 / AlexMI 66.15 / 15001 71.11(全部达到或超过论文,004 −3.01)。
+
+**改动:**
+- `models/cbramod/adapter.py`:EA(per-set)+ 45ch 模板 pad + 250→200Hz / scale=1;官方 all_patch_reps
+  大头;equal-lr AdamW 1e-4 wd 5e-2 + cosine + label_smoothing 0.1,bs 64,50ep。新增 `ea_pad_per_subject`。
+- `configs/models/cbramod.yaml`:模板配方超参(ep50/lr1e-4/bs64/wd0.05/do0.1/scale1/ls0.1)。
+- `experiments/bigmodel/cbramod_adapt.py`:`--pipeline {template(默认),native,benchmark}`;新增
+  `_preprocess_template`(≥250Hz 先重采样到 250Hz 再 EA+pad45)。
+- 三个 tune 脚本(`tune_cbramod` / `tune_cbramod_loso` / `tune_cbramod_004_caronly`)显式
+  `--pipeline native` —— 它们是 native 线调参/消融工具,不受默认切换影响。
+- `run_cbramod_paper5.sh`:默认 preset=paper80 + template 管线参数(复现 07-01 五数字)。
+- CAR-only native 管线保留为消融旋钮;历史结果目录 `results/cbramod_native/` 不动。
+
+**待办:** 重跑族 4 时用 `run_cbramod_paper5.sh paper80` 复现 07-01 五数字。

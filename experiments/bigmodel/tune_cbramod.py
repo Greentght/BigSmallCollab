@@ -99,6 +99,7 @@ def build_cmd(dataset, c, tp, seeds, gpu, out):
         PYBIN, RUNNER,
         "--dataset", dataset,
         "--preset", "native70",
+        "--pipeline", "native",
         "--train_percentage", str(tp),
         "--gpu", str(gpu),
         "--seeds", *[str(s) for s in seeds],

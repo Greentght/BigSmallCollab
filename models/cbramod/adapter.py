@@ -1,24 +1,19 @@
-"""Adapter for the *final settled* tuned CBraMod teacher (runs in `cbramod` env).
+"""Adapter for the *final settled* CBraMod teacher — the 45ch channel-template
+pipeline (PROGRESS.md 2026-07-01 全量终表, port of ``MIRepNet/cbramod_template.py``).
 
-This is the "CAR-only 高分版" teacher (PROGRESS.md 2026-07-13): official CBraMod
-``all_patch_reps`` 3-layer head + CAR-only normalization (``norm=car`` = subtract
-cross-channel mean, **no ÷scale division**) + zero-phase ``filtfilt`` (butter
-order-4) band-pass. Removing the ÷scale division was the decisive fix that lifted
-BAC to beat the EEGFMBench record on 14001_4c / 2015001. Aligned with EEGFMBench
-on norm(car) / filter / target_fs / backbone / split; the big official head is
-retained on purpose (EEGFMBench uses a simpler task_head).
+Pipeline per set (the paper's unified preprocessing for all baselines):
+EA (per-set whitening, transductive) -> inverse-distance pad to the 45-ch
+template -> 250 Hz, then truncate 1000 samples, resample 800 @200 Hz,
+``/ scale`` (scale=1), reshape ``(N, 45, 4, 200)``. Official CBraMod
+``all_patch_reps`` 3-layer head, equal-lr AdamW 1e-4, wd 5e-2, cosine,
+label_smoothing 0.1, bs 64, 50 epochs, evaluate once (no test-based selection).
 
-Per-dataset tuned hyperparameters for the ``|0.7`` (70%-train, = distillation
-calibration split) are embedded below from the final CAR-only sweep
-(historical ``results/cbramod_native/tuned_caronly/``), NOT the older ÷scale configs.
-
-The canonical raw epoch ``(N, C_native, 1000)`` @ 250 Hz is fed through: CAR ->
-band-pass (+notch) -> resample 200 Hz -> reshape into ``(N, ch, seconds, 200)``
-patches. ``forward`` returns ``(feat_200, logits)`` where ``feat`` is the 200-d
-penultimate activation (for feature-align KD).
+Reported (3seed, 80/20 single-session): 14001-2 77.78, 14001-4 62.07,
+004 74.38, AlexMI 66.15, 15001 71.11 — all at/above the paper except
+004 (−3.01). The earlier CAR-only native pipeline is superseded (still
+available as an ablation knob in ``experiments/bigmodel/cbramod_adapt.py
+--pipeline native``).
 """
-import math
-
 import numpy as np
 import torch
 import torch.nn as nn
@@ -27,32 +22,13 @@ from scipy.signal import resample
 from torch.utils.data import DataLoader, TensorDataset
 
 import paths
-from data.preproc import bandpass as _bandpass, notch as _notch, SRC_FS, DST_FS
 from models.base import ModelAdapter
-
-# band tag -> (l_freq, h_freq, notch_freq)
-_BANDS = {
-    'b50': (0.3, 50.0, None),
-    'b75n60': (0.3, 75.0, 60.0),
-}
-
-# Final CAR-only tuned config, |0.7 split (PROGRESS.md 2026-07-13, verified
-# against historical results/cbramod_native/tuned_caronly/*_tp0.7.csv). scale_divisor=1
-# (CAR-only), norm=car, filtfilt order-4. Keyed by framework dataset name.
-_CARONLY = {
-    'BNCI2014004':   dict(lr=1e-3, epochs=20, dropout=0.1, weight_decay=0.01,
-                          band='b50'),
-    'BNCI2014001-4': dict(lr=1e-3, epochs=50, dropout=0.1, weight_decay=0.05,
-                          band='b75n60'),
-    'BNCI2014001':   dict(lr=5e-4, epochs=50, dropout=0.5, weight_decay=0.05,
-                          band='b75n60'),  # 14001_2c
-}
 
 
 class _CBraModModel(nn.Module):
     """Pretrained backbone + official all_patch_reps 3-layer MLP head."""
 
-    def __init__(self, num_classes, n_ch, n_patch, dropout, pretrain):
+    def __init__(self, num_classes, n_ch=45, n_patch=4, dropout=0.1, pretrain=None):
         super().__init__()
         from einops.layers.torch import Rearrange
         from .cbramod import CBraMod
@@ -82,79 +58,92 @@ class _CBraModModel(nn.Module):
 class CBraModAdapter(ModelAdapter):
     name = 'cbramod'
 
+    # 45ch-template recipe (PROGRESS 2026-07-01): fixed across datasets.
+    TEMPLATE = dict(lr=1e-4, epochs=50, weight_decay=5e-2, batch_size=64,
+                    dropout=0.1, scale=1.0, label_smoothing=0.1)
+
     def __init__(self, device='cpu', **cfg):
         super().__init__(device=device, **cfg)
-        tuned = _CARONLY.get(cfg.get('dataset_name'))
-        for k in ('lr', 'epochs', 'dropout', 'weight_decay', 'band'):
-            if tuned and k not in cfg:
-                self.cfg[k] = tuned[k]
-
-    def _seconds(self, T):
-        return int(round(T / SRC_FS))
+        from data.channels import (
+            use_channels_names, BNCI2014001_chn_names,
+            BNCI2014004_chn_names, BNCI2015001_chn_names, AlexMI_chn_names)
+        from data.preproc import EA, pad_missing_channels_diff
+        self._EA = EA
+        self._pad = pad_missing_channels_diff
+        self._template = use_channels_names
+        self._src_channels = {
+            'BNCI2014001': BNCI2014001_chn_names,
+            'BNCI2014001-4': BNCI2014001_chn_names,
+            'BNCI2014004': BNCI2014004_chn_names,
+            'BNCI2015001': BNCI2015001_chn_names,
+            'AlexMI': AlexMI_chn_names,
+        }
+        for k, v in self.TEMPLATE.items():
+            self.cfg.setdefault(k, v)
 
     def preprocess(self, X_raw):
-        """(N, C, 1000)@250Hz -> (N, ch, seconds, 200). CAR-only: subtract
-        cross-channel mean, band-pass, resample 200Hz, NO ÷scale division."""
+        """(N, C, 1000)@250Hz -> (N, 45, 4, 200). EA per-set -> 45ch template ->
+        truncate 1000 -> resample 800@200Hz -> /scale."""
+        # LOSO passes data already EA'd per-subject + padded to 45ch; skip to
+        # avoid re-whitening the mixed multi-subject set with one covariance.
+        if self.cfg.get('skip_preprocess'):
+            return torch.as_tensor(np.asarray(X_raw), dtype=torch.float32)
+        ds = self.cfg['dataset_name']
         x = np.asarray(X_raw, dtype=np.float32)
-        band = self.cfg.get('band', 'b50')
-        l_freq, h_freq, notch = _BANDS[band]
-        seconds = self._seconds(x.shape[2])
-        x = x - x.mean(axis=1, keepdims=True)            # CAR
-        x = _bandpass(x, SRC_FS, l_freq, h_freq)
-        x = _notch(x, SRC_FS, notch)
-        x = resample(x, seconds * DST_FS, axis=-1)       # ->200Hz (CAR-only: no /scale)
-        x = np.ascontiguousarray(x, dtype=np.float32)
+        x = self._EA(x).astype(np.float32)                       # per-set whitening
+        x = self._pad(x, self._template, self._src_channels[ds])  # -> 45 ch
+        x = x[:, :, :1000]
+        x = resample(x, 800, axis=-1)                            # -> 200 Hz
+        x = (x / float(self.cfg.get('scale', 1.0))).astype(np.float32)
         n, ch, _ = x.shape
-        x = x.reshape(n, ch, seconds, DST_FS)
-        return torch.as_tensor(x, dtype=torch.float32)
+        return torch.as_tensor(x.reshape(n, ch, 4, 200), dtype=torch.float32)
+
+    def ea_pad_per_subject(self, X_raw, subj_ids):
+        """EA per subject-group + 45ch pad, then concatenate — so each subject is
+        whitened by its own reference covariance (LOSO teacher preprocessing)."""
+        ds = self.cfg['dataset_name']
+        X = np.asarray(X_raw, dtype=np.float32)
+        subj_ids = np.asarray(subj_ids)
+        out = None
+        for s in np.unique(subj_ids):
+            m = subj_ids == s
+            xs = self._pad(self._EA(X[m]).astype('float32'),
+                           self._template, self._src_channels[ds])
+            if out is None:
+                out = np.empty((len(X), xs.shape[1], xs.shape[2]), dtype=np.float32)
+            out[m] = xs
+        return out
 
     def build(self, num_classes):
         pretrain = self.cfg.get('pretrain') or paths.weight_path('cbramod')
-        n_ch = self.cfg['in_channels']
-        n_patch = self._seconds(self.cfg.get('samples', 1000))
-        model = _CBraModModel(num_classes, n_ch=n_ch, n_patch=n_patch,
-                               dropout=float(self.cfg.get('dropout', 0.1)),
-                               pretrain=pretrain)
+        model = _CBraModModel(num_classes, dropout=float(self.cfg.get('dropout', 0.1)),
+                              pretrain=pretrain)
         return model.to(self.device)
 
     def forward(self, model, x):
         return model(x)
 
     def finetune(self, model, X_tr, y_tr, num_classes):
-        """Native training loop: AdamW + warmup-cosine, grad clip 1.0, label
-        smoothing 0 — matches cbramod_adapt.run_subject."""
-        epochs = int(self.cfg.get('epochs', 20))
-        lr = float(self.cfg.get('lr', 1e-3))
-        wd = float(self.cfg.get('weight_decay', 0.01))
-        bs = int(self.cfg.get('batch_size', 16))
-        warmup, min_lr, clip = 5, 1e-6, 1.0
+        """45ch-template recipe: equal-lr AdamW 1e-4 wd 5e-2 + cosine +
+        label_smoothing 0.1, bs 64, 50 epochs, no clip/warmup."""
+        epochs = int(self.cfg.get('epochs', 50))
+        lr = float(self.cfg.get('lr', 1e-4))
+        wd = float(self.cfg.get('weight_decay', 5e-2))
+        bs = int(self.cfg.get('batch_size', 64))
+        ls = float(self.cfg.get('label_smoothing', 0.1))
 
         Xp = self.preprocess(X_tr)
         y = torch.as_tensor(y_tr, dtype=torch.long)
         loader = DataLoader(TensorDataset(Xp, y), batch_size=bs, shuffle=True)
         opt = optim.AdamW(model.parameters(), lr=lr, weight_decay=wd, eps=1e-8)
-
-        min_factor = min_lr / lr
-
-        def lr_factor(e):
-            step = e + 1
-            if warmup > 0 and step <= warmup:
-                return max(step / warmup, min_factor)
-            denom = max(1, epochs - warmup)
-            prog = (step - warmup) / denom
-            cos = 0.5 * (1.0 + math.cos(math.pi * min(prog, 1.0)))
-            return min_factor + (1.0 - min_factor) * cos
-
-        sched = optim.lr_scheduler.LambdaLR(opt, lr_lambda=lr_factor)
-        crit = nn.CrossEntropyLoss()
-        model.train()
+        sch = optim.lr_scheduler.CosineAnnealingLR(opt, T_max=epochs)
+        cr = nn.CrossEntropyLoss(label_smoothing=ls)
         for _ in range(epochs):
+            model.train()
             for xb, yb in loader:
                 xb, yb = xb.to(self.device), yb.to(self.device)
-                _, logits = self.forward(model, xb)
-                loss = crit(logits, yb)
-                opt.zero_grad(); loss.backward()
-                nn.utils.clip_grad_norm_(model.parameters(), clip)
+                opt.zero_grad()
+                cr(model(xb)[1], yb).backward()
                 opt.step()
-            sched.step()
+            sch.step()
         return model

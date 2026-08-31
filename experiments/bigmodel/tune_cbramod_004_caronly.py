@@ -33,7 +33,7 @@ def tag(c):
 
 def cmd(c, tp, seeds, gpu, out):
     l, h, notch = BANDS[c["band"]]
-    x = [PY, RUNNER, "--dataset", DS, "--preset", "native70", "--train_percentage", str(tp),
+    x = [PY, RUNNER, "--dataset", DS, "--preset", "native70", "--pipeline", "native", "--train_percentage", str(tp),
          "--gpu", str(gpu), "--seeds", *map(str, seeds), "--epochs", str(c["epochs"]),
          "--batch_size", "16", "--dropout", str(c["dropout"]), "--label_smoothing", "0.0",
          "--lr", str(c["lr"]), "--weight_decay", str(c["weight_decay"]), "--warmup_epochs", "5",

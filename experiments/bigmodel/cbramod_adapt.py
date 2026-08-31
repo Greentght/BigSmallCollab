@@ -223,12 +223,43 @@ def _preprocess_benchmark(x, cfg, scale_divisor, target_sec):
     return x.reshape(n, ch, target_sec, 200)
 
 
+def _preprocess_template(x, cfg, scale_divisor):
+    """45ch channel-template pipeline (PROGRESS 2026-07-01, the *final settled*
+    CBraMod recipe): resample ->250Hz (if needed), EA per-set, inverse-distance
+    pad to the 45ch template, truncate 1000, resample 800@200Hz, /scale_divisor,
+    -> (N, 45, 4, 200)."""
+    from data.channels import (
+        use_channels_names, BNCI2014001_chn_names,
+        BNCI2014004_chn_names, BNCI2015001_chn_names, AlexMI_chn_names)
+    from data.preproc import EA, pad_missing_channels_diff
+    src = {
+        'BNCI2014001': BNCI2014001_chn_names,
+        'BNCI2014004': BNCI2014004_chn_names,
+        'BNCI2015001': BNCI2015001_chn_names,
+        'AlexMI': AlexMI_chn_names,
+    }[cfg.source]
+    x = np.asarray(x, dtype=np.float32)
+    if cfg.fs != 250:
+        n = int(round(x.shape[-1] * 250 / cfg.fs))
+        x = resample(x, n, axis=-1)                  # -> 250Hz (paper pipeline)
+    x = EA(x).astype(np.float32)                     # per-set whitening
+    x = pad_missing_channels_diff(x, use_channels_names, src)
+    x = x[:, :, :1000]
+    x = resample(x, 800, axis=-1)                    # -> 200Hz
+    x = (x / scale_divisor).astype(np.float32)
+    n, ch, _ = x.shape
+    return x.reshape(n, ch, 4, 200)
+
+
 def preprocess(x, cfg, scale_divisor):
-    """(N, ch, T) -> (N, ch, seconds, 200), faithful CBraMod native format."""
+    """(N, ch, T) -> (N, ch, seconds, 200). Pipeline dispatch:
+    template (default, final settled) | native | benchmark."""
     if cfg.target_fs != 200:
         raise ValueError("CBraMod pretrained patch size expects target_fs=200.")
+    if getattr(cfg, "pipeline", "template") == "template":
+        return _preprocess_template(x, cfg, scale_divisor)
     pad_to = getattr(cfg, "pad_to_seconds", 0) or 0
-    if getattr(cfg, "pipeline", "native") == "benchmark":
+    if getattr(cfg, "pipeline", "template") == "benchmark":
         target_sec = pad_to if (pad_to and pad_to > cfg.seconds) else cfg.seconds
         return _preprocess_benchmark(x, cfg, scale_divisor, target_sec)
     if pad_to and pad_to > cfg.seconds:
@@ -497,8 +528,10 @@ def parse_args():
                         help="mlp=official all_patch_reps 3-layer; linear=benchmark single Linear")
     parser.add_argument("--pad_to_seconds", type=int, default=0,
                         help="benchmark adjust_time_length: keep full signal, pad-repeat to N seconds")
-    parser.add_argument("--pipeline", choices=["native", "benchmark"], default="native",
-                        help="native=CAR->filter->resample; benchmark=resample->trim/pad->filter->CAR")
+    parser.add_argument("--pipeline", choices=["template", "native", "benchmark"],
+                        default="template",
+                        help="template=EA+45ch pad+resample (final settled, PROGRESS 07-01); "
+                             "native=CAR->filter->resample; benchmark=resample->trim/pad->filter->CAR")
     parser.add_argument("--split_method", choices=["random", "fewshot_first"], default="random",
                         help="random=stratified random; fewshot_first=benchmark per-class take-first")
 
