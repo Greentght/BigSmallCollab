@@ -2454,3 +2454,23 @@ CSV: `results/metrics/wrong_sample_BNCI2015001_cbramod_native_ifnet_v1.csv`(433�
 - CAR-only native 管线保留为消融旋钮;历史结果目录 `results/cbramod_native/` 不动。
 
 **待办:** 重跑族 4 时用 `run_cbramod_paper5.sh paper80` 复现 07-01 五数字。
+
+---
+
+## 2026-08-31 (结果) — CBraMod 004 按 EEGFMBench 官方配置(Fewshot-30%)复现
+
+**配置(用户提供 EEGFMBench CBraMod full 配置):** train 30%/test 70%(fewshot_first 确定切分)、
+time_length 5.0s(pad-repeat)、benchmark 顺序预处理(resample→调长→0.3-75Hz+notch60@200Hz)、
+norm_method=null(→ none+scale1,无归一化)、apply_EA=false、ep20/bs16/do0.5/ls0/lr1e-3/wd0.01/
+warmup5/min_lr1e-6/无clip、seeds 0-2、官方 all_patch_reps 头。命令:cbramod_adapt.py
+`--pipeline benchmark --pad_to_seconds 5 --norm_method none --scale_divisor 1 --split_method fewshot_first`。
+
+**结果(9被试×3seed=27):acc 73.13% / BAC .7313 / κ .4625**(分种子 72.78/74.14/72.45,
+被试方差大:S2/S3 随机水平 ~45,S4 ~99)。产物 `results/cbramod/BNCI2014004_bench_fewshot30_5s_seeds012.csv`,
+日志 `logs/cbramod_bench/004_fewshot30_5s.log`。
+
+**对照论文 .7739 仍差 −4.3。** 但比 07-13 CAR-only tp0.3(65.5)大幅接近(+7.6)——
+**确认 time_length 5s + norm null + fewshot_first 是正确方向**。剩余差距嫌疑:
+①数据源(benchmark 自带 npy 的 epoch 边界/试次顺序,我们的 /data1/llx 4.5s pad 到 5s);
+②session 选择(benchmark 可能非 session_3);③norm null 的实际语义(可能仍含某固定缩放)。
+**下一步(待用户定):** 试 norm 变体(car/z_score)、换 session、或直接取 benchmark 自带 npy 对齐。
