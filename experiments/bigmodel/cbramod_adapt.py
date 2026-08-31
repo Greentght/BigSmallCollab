@@ -500,7 +500,7 @@ def parse_args():
     parser.add_argument("--dataset", required=True, help=f"One of: {', '.join(DATASETS)}")
     parser.add_argument("--protocol", choices=["within", "loso"], default="within",
                         help="within=per-subject train/test split; loso=leave one subject out")
-    parser.add_argument("--preset", choices=["native70", "paper80"], default="native70")
+    parser.add_argument("--preset", choices=["native70", "paper80"], default="paper80")
     parser.add_argument("--subjects", type=int, nargs="+")
     parser.add_argument("--folds", type=int, nargs="+",
                         help="held-out subject ids for --protocol loso; defaults to all subjects")
@@ -511,19 +511,19 @@ def parse_args():
 
     parser.add_argument("--train_percentage", type=float, default=None)
     parser.add_argument("--session", default=None)
-    parser.add_argument("--epochs", type=int, default=20)
-    parser.add_argument("--batch_size", type=int, default=16)
+    parser.add_argument("--epochs", type=int, default=50)
+    parser.add_argument("--batch_size", type=int, default=64)
     parser.add_argument("--dataloader_workers", type=int, default=0)
-    parser.add_argument("--dropout", type=float, default=0.5)
-    parser.add_argument("--label_smoothing", type=float, default=0.0)
+    parser.add_argument("--dropout", type=float, default=0.1)
+    parser.add_argument("--label_smoothing", type=float, default=0.1)
     parser.add_argument("--class_weights", action="store_true")
-    parser.add_argument("--lr", type=float, default=1e-3)
-    parser.add_argument("--weight_decay", type=float, default=0.1)
+    parser.add_argument("--lr", type=float, default=1e-4)
+    parser.add_argument("--weight_decay", type=float, default=0.05)
     parser.add_argument("--opt_eps", type=float, default=1e-8)
-    parser.add_argument("--warmup_epochs", type=int, default=5)
-    parser.add_argument("--min_lr", type=float, default=1e-6)
-    parser.add_argument("--clip_grad_norm", type=float, default=1.0)
-    parser.add_argument("--scale_divisor", type=float, default=10.0)
+    parser.add_argument("--warmup_epochs", type=int, default=0)
+    parser.add_argument("--min_lr", type=float, default=0.0)
+    parser.add_argument("--clip_grad_norm", type=float, default=0.0)
+    parser.add_argument("--scale_divisor", type=float, default=1.0)
     parser.add_argument("--head", choices=["mlp", "linear"], default="mlp",
                         help="mlp=official all_patch_reps 3-layer; linear=benchmark single Linear")
     parser.add_argument("--pad_to_seconds", type=int, default=0,
