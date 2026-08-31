@@ -10,6 +10,10 @@ import pandas as pd
 from collections import Counter
 from data.channels import *
 
+# Raw-data root. Default keeps the historical location; override for other machines:
+#   DATA_ROOT=/path/to/data python ...
+_DATA_ROOT = os.environ.get('DATA_ROOT', '/data1/llx')
+
 class EEGDataset(Dataset):
     def __init__(self, args=None):
         self.dataset_name = args.dataset_name
@@ -17,11 +21,11 @@ class EEGDataset(Dataset):
 
         # 根据 dataset_name 决定加载哪个 npy
         if self.dataset_name == 'BNCI2014001-4':
-            X = np.load('/data1/llx/BNCI2014001/X.npy')
-            y = np.load('/data1/llx/BNCI2014001/labels.npy', allow_pickle=True)
+            X = np.load(os.path.join(_DATA_ROOT, 'BNCI2014001', 'X.npy'))
+            y = np.load(os.path.join(_DATA_ROOT, 'BNCI2014001', 'labels.npy'), allow_pickle=True)
         else:
-            X = np.load('/data1/llx/' + self.dataset_name + '/X.npy')
-            y = np.load('/data1/llx/' + self.dataset_name + '/labels.npy', allow_pickle=True)
+            X = np.load(os.path.join(_DATA_ROOT, self.dataset_name, 'X.npy'))
+            y = np.load(os.path.join(_DATA_ROOT, self.dataset_name, 'labels.npy'), allow_pickle=True)
         print("original data shape:", X.shape, "labels shape:", y.shape)
 
         if self.dataset_name == 'BNCI2014001-4':
@@ -61,7 +65,7 @@ class EEGDataset(Dataset):
             self.sample_rate = 250
             self.ch_num = 3
 
-            meta_path = '/data1/llx/BNCI2014004/meta004.csv'
+            meta_path = os.path.join(_DATA_ROOT, 'BNCI2014004', 'meta004.csv')
             meta = pd.read_csv(meta_path)
             data_mode = getattr(self.args, 'data_mode', 'finetune')
             target_subjects = self.args.sub if hasattr(self.args, 'sub') else range(self.num_subjects)
@@ -192,7 +196,7 @@ class EEGDataset(Dataset):
             self.num_subjects = 12
             self.ch_num = 13
 
-            meta = pd.read_csv('/data1/llx/' + self.dataset_name + '/meta.csv')
+            meta = pd.read_csv(os.path.join(_DATA_ROOT, self.dataset_name, 'meta.csv'))
             subj_col = np.asarray(meta['subject'].values)  # 1-indexed
             target_subjects = (self.args.sub if hasattr(self.args, 'sub')
                                else range(self.num_subjects))

@@ -76,14 +76,16 @@ class DatasetCfg:
     norm: str = "none"  # LaBraM does no spatial CAR; "car" available for ablation
 
 
+_DATA_ROOT = os.environ.get('DATA_ROOT', '/data1/llx')  # raw-data root override
+
 DATASETS = {
-    "BNCI2014001_4c": DatasetCfg("BNCI2014001", "/data1/llx/BNCI2014001", 250, 4, 4),
-    "BNCI2014001_2c": DatasetCfg("BNCI2014001", "/data1/llx/BNCI2014001", 250, 4, 2,
+    "BNCI2014001_4c": DatasetCfg("BNCI2014001", os.path.join(_DATA_ROOT, "BNCI2014001"), 250, 4, 4),
+    "BNCI2014001_2c": DatasetCfg("BNCI2014001", os.path.join(_DATA_ROOT, "BNCI2014001"), 250, 4, 2,
                                  keep=("left_hand", "right_hand")),
-    "BNCI2014004": DatasetCfg("BNCI2014004", "/data1/llx/BNCI2014004", 250, 4, 2),
-    "AlexMI_2c": DatasetCfg("AlexMI", "/data1/llx/AlexMI", 512, 3, 2,
+    "BNCI2014004": DatasetCfg("BNCI2014004", os.path.join(_DATA_ROOT, "BNCI2014004"), 250, 4, 2),
+    "AlexMI_2c": DatasetCfg("AlexMI", os.path.join(_DATA_ROOT, "AlexMI"), 512, 3, 2,
                             keep=("right_hand", "feet")),
-    "BNCI2015001": DatasetCfg("BNCI2015001", "/data1/llx/BNCI2015001", 512, 4, 2),
+    "BNCI2015001": DatasetCfg("BNCI2015001", os.path.join(_DATA_ROOT, "BNCI2015001"), 512, 4, 2),
 }
 
 ALIASES = {

@@ -53,17 +53,19 @@ class DatasetCfg:
     pipeline: str = "native"  # native=CAR->filter->resample; benchmark=resample->trim/pad->filter->CAR
 
 
+_DATA_ROOT = os.environ.get('DATA_ROOT', '/data1/llx')  # raw-data root override
+
 DATASETS = {
     "BNCI2014001_4c": DatasetCfg(
         source="BNCI2014001",
-        data_dir="/data1/llx/BNCI2014001",
+        data_dir=os.path.join(_DATA_ROOT, "BNCI2014001"),
         fs=250,
         seconds=4,
         num_classes=4,
     ),
     "BNCI2014001_2c": DatasetCfg(
         source="BNCI2014001",
-        data_dir="/data1/llx/BNCI2014001",
+        data_dir=os.path.join(_DATA_ROOT, "BNCI2014001"),
         fs=250,
         seconds=4,
         num_classes=2,
@@ -71,14 +73,14 @@ DATASETS = {
     ),
     "BNCI2014004": DatasetCfg(
         source="BNCI2014004",
-        data_dir="/data1/llx/BNCI2014004",
+        data_dir=os.path.join(_DATA_ROOT, "BNCI2014004"),
         fs=250,
         seconds=4,
         num_classes=2,
     ),
     "AlexMI_2c": DatasetCfg(
         source="AlexMI",
-        data_dir="/data1/llx/AlexMI",
+        data_dir=os.path.join(_DATA_ROOT, "AlexMI"),
         fs=512,
         seconds=3,
         num_classes=2,
@@ -86,7 +88,7 @@ DATASETS = {
     ),
     "BNCI2015001": DatasetCfg(
         source="BNCI2015001",
-        data_dir="/data1/llx/BNCI2015001",
+        data_dir=os.path.join(_DATA_ROOT, "BNCI2015001"),
         fs=512,
         seconds=4,
         num_classes=2,
