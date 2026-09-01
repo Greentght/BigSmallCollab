@@ -14,6 +14,7 @@ from data.channels import *
 #   DATA_ROOT=/path/to/data python ...
 _DATA_ROOT = os.environ.get('DATA_ROOT', '/data1/llx')
 
+
 class EEGDataset(Dataset):
     def __init__(self, args=None):
         self.dataset_name = args.dataset_name
@@ -30,25 +31,24 @@ class EEGDataset(Dataset):
 
         if self.dataset_name == 'BNCI2014001-4':
             # -------- BNCI2014001 四分类 (feet / left_hand / right_hand / tongue) --------
-            # 9 subjects × 576 trials, 22 channels, 1001 time points
-            # 0-287: Session T, 288-575: Session E
+            # 9 subjects x 576 trials, 22 channels, 1001 time points.
+            # 0-287: sessionT, 288-575: sessionE.
             self.paradigm = 'MI'
             self.num_subjects = 9
             self.sample_rate = 250
             self.ch_num = 22
 
-            data_mode = getattr(self.args, 'data_mode', 'finetune')
+            data_mode = getattr(self.args, 'data_mode', 'sessionT')
+            if data_mode != 'sessionT':
+                raise ValueError(f"BNCI2014001-4 only supports data_mode='sessionT', got {data_mode}")
+
             indices = []
             target_subjects = self.args.sub if hasattr(self.args, 'sub') else range(self.num_subjects)
 
             for i in target_subjects:
                 base_idx = i * 576
-                if data_mode == 'phase1':
-                    print(f"Loading Session T (train) for Subject {i}")
-                    indices.append(np.arange(288) + base_idx)
-                elif data_mode == 'session3':
-                    print(f"Loading Session E (eval) for Subject {i}")
-                    indices.append(np.arange(288) + base_idx + 288)
+                print(f"Loading sessionT for Subject {i}")
+                indices.append(np.arange(288) + base_idx)
 
             if len(indices) > 0:
                 indices = np.concatenate(indices, axis=0)
@@ -67,20 +67,13 @@ class EEGDataset(Dataset):
 
             meta_path = os.path.join(_DATA_ROOT, 'BNCI2014004', 'meta004.csv')
             meta = pd.read_csv(meta_path)
-            data_mode = getattr(self.args, 'data_mode', 'finetune')
+            data_mode = getattr(self.args, 'data_mode', 'session3')
+            if data_mode != 'session3':
+                raise ValueError(f"BNCI2014004  data_mode='session3', got {data_mode}")
+
             target_subjects = self.args.sub if hasattr(self.args, 'sub') else range(self.num_subjects)
             wanted_subjects = [int(s) + 1 for s in target_subjects]
-
-            if data_mode == 'phase1':
-                sessions = ['session_0', 'session_1', 'session_2']
-            elif data_mode == 'session4' or data_mode == 'test':
-                sessions = ['session_4']
-            elif data_mode == 'all_sessions':
-                sessions = sorted(meta['session'].unique().tolist())
-            else:
-                # Backwards-compatible downstream pool. The old code called this
-                # "session3" and selected the same rows via hard-coded p1:p2 ranges.
-                sessions = os.environ.get('MI2014004_SESSION', 'session_3').split(',')
+            sessions = ['session_3']
 
             mask = (meta['subject'].isin(wanted_subjects)
                     & meta['session'].isin(sessions))
@@ -100,34 +93,21 @@ class EEGDataset(Dataset):
             self.sample_rate = 250
             self.ch_num = 22
 
-            # 获取数据加载模式 (由 utils.py 传入)
-            # phase1:   对应 Session T (训练 session)
-            # session3: 对应 Session E (评估 session) -- 为了兼容 utils.py 的变量名，这里沿用 session3 这个 key
-            data_mode = getattr(self.args, 'data_mode', 'finetune')
-            
+            # 0-287: sessionT, 288-575: sessionE.
+            data_mode = getattr(self.args, 'data_mode', 'sessionT')
+            if data_mode != 'sessionT':
+                raise ValueError(f"BNCI2014001 only supports data_mode='sessionT', got {data_mode}")
+
             indices = []
             target_subjects = self.args.sub if hasattr(self.args, 'sub') else range(self.num_subjects)
 
             for i in target_subjects:
-                # BNCI2014001 规律：每个被试 576 条
-                # 0-287: Session T
-                # 288-575: Session E
-                base_idx = i * 576 
-                
-                if data_mode == 'phase1':
-                    # 加载 Session T (作为预热历史数据)
-                    print(f"Loading Phase 1 Data (Session T) for Subject {i}")
-                    indices.append(np.arange(288) + base_idx)
-                    
-                elif data_mode == 'session3': 
-                    # 注意：utils.py 里写的 mode 是 'session3'，这里我们要把它映射到 Session E
-                    # 加载完整的 Session E (将在 utils.py 中被切分为 80%微调 / 20%测试)
-                    print(f"Loading Target Data (Session E) for Subject {i}")
-                    indices.append(np.arange(288) + base_idx + 288)
-                
-                # 如果有 'test' 模式遗留，也可以映射到 Session E 的后半段，但根据新策略暂时用不到
-                elif data_mode == 'test':
-                     pass 
+                # BNCI2014001: 576 trials per subject.
+                # 0-287: sessionT
+                # 288-575: sessionE
+                base_idx = i * 576
+                print(f"Loading sessionT for Subject {i}")
+                indices.append(np.arange(288) + base_idx)
 
             if len(indices) > 0:
                 indices = np.concatenate(indices, axis=0)

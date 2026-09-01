@@ -20,7 +20,7 @@ import numpy as np
 import torch
 from scipy.signal import resample as scipy_resample
 
-import paths
+import config
 from data.preproc import SRC_FS, DST_FS
 from models.base import ModelAdapter
 
@@ -67,7 +67,7 @@ class LaBraMAdapter(ModelAdapter):
             init_values=0.1, qkv_bias=True, use_abs_pos_emb=True,
             use_rel_pos_bias=False)
 
-        pretrain = self.cfg.get('pretrain') or paths.weight_path('labram')
+        pretrain = self.cfg.get('pretrain') or config.weight_path('labram')
         ckpt = torch.load(pretrain, map_location='cpu')
         sd = ckpt.get('model', ckpt)
         sd = {k[len('student.'):]: v for k, v in sd.items()
@@ -85,3 +85,6 @@ class LaBraMAdapter(ModelAdapter):
         feat = model.forward_features(x, input_chans=self.input_chans)
         logits = model.head(feat)
         return feat, logits
+
+
+ADAPTER = LaBraMAdapter

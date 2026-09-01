@@ -13,7 +13,7 @@ carry ``emb_size`` / ``depth`` / ``pretrain`` (path to MIRepNet.pth).
 import numpy as np
 import torch
 
-import paths
+import config
 from models.base import ModelAdapter
 
 
@@ -68,7 +68,7 @@ class MIRepNetAdapter(ModelAdapter):
 
     def build(self, num_classes):
         from .mlm import mlm_mask
-        pretrain = self.cfg.get('pretrain') or paths.weight_path('mirepnet')
+        pretrain = self.cfg.get('pretrain') or config.weight_path('mirepnet')
         model = mlm_mask(
             emb_size=self.cfg.get('emb_size', 256),
             depth=self.cfg.get('depth', 6),
@@ -78,3 +78,6 @@ class MIRepNetAdapter(ModelAdapter):
     def forward(self, model, x):
         pooled, logits = model(x)
         return pooled, logits
+
+
+ADAPTER = MIRepNetAdapter

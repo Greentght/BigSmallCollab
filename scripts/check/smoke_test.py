@@ -41,7 +41,8 @@ def main():
     assert X_tr.shape[1] == info['channels'], 'native channel mismatch'
 
     for name in a.models:
-        cfg = dict(in_channels=X_tr.shape[1], samples=X_tr.shape[2],
+        cfg = config.load_model_config(name)
+        cfg.update(in_channels=X_tr.shape[1], samples=X_tr.shape[2],
                    dataset_name=a.dataset, epochs=1, batch_size=8)
         ad = get_adapter(name, device=device, **cfg)
         model = ad.build(nc)

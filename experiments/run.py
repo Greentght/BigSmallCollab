@@ -14,12 +14,13 @@ signal (all methods reduce to lam=0) run even without an artifact.
 
 YAML schema (see configs/exp/*.yaml):
     name:      str                    # -> results/metrics/<name>.csv
-    protocol:  within | loso
+    protocol:  fewshot | loso             # within accepted as a legacy alias
     datasets:  [str, ...]
     teacher:   str | null             # cached-artifact model name (null = none)
     student:   str
     seeds:     [int,...] | null        # null -> dataset config default
-    units:     [int,...] | null        # subjects (within) / folds (loso); null -> all
+    units:     [int,...] | null        # subjects (fewshot) / folds (loso); null -> all
+    train_percentage: float | null     # fewshot TRAIN fraction; null -> dataset val_split
     distill:   {temperature, epochs, lr, ...}   # shared distill_student kwargs
     conditions: {name: {method, masked, lam_kd, ...}, ...}
     report:    {baseline: str, metrics: [acc, kappa]}   # optional auto-eval
@@ -37,12 +38,43 @@ import yaml
 
 from collab.distill import distill_student
 import config
+import data
 from collab import artifacts
 from eval import metrics
 from models import get_adapter
-from experiments import methods, protocols
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+METHOD_REGISTRY = {
+    'baseline': dict(lam_kd=0.0, lam_feat=0.0, teacher_correct_only=False),
+    'kd': dict(lam_kd=0.5, lam_feat=0.0, teacher_correct_only=False),
+    'feat': dict(lam_kd=0.0, lam_feat=0.5, teacher_correct_only=False),
+    'combo': dict(lam_kd=0.5, lam_feat=0.5, teacher_correct_only=False),
+    'proto': dict(lam_kd=0.0, lam_feat=0.5, feat_proto=True,
+                  teacher_correct_only=False),
+    'dkd': dict(lam_kd=0.5, lam_feat=0.0, dkd=True,
+                teacher_correct_only=False),
+}
+_CONDITION_SUGAR = ('method', 'masked')
+
+
+def resolve_condition(cond, defaults):
+    """Resolve one YAML condition into ``distill_student`` kwargs.
+
+    Conditions may either use a ``method`` shorthand from ``METHOD_REGISTRY`` or
+    spell out the final kwargs directly. The runner-level ``masked`` flag is
+    returned separately because it depends on per-cell teacher logits.
+    """
+    cond = dict(cond or {})
+    method = cond.get('method')
+    kwargs = dict(defaults)
+    if method is not None:
+        if method not in METHOD_REGISTRY:
+            raise KeyError(f'unknown method {method!r}; known: {list(METHOD_REGISTRY)}')
+        kwargs.update(METHOD_REGISTRY[method])
+    kwargs.update({k: v for k, v in cond.items() if k not in _CONDITION_SUGAR})
+    return kwargs, bool(cond.get('masked', False))
 
 
 def _teacher_signal(teacher, dataset, unit, seed, y_tr):
@@ -68,8 +100,12 @@ def run_dataset(cfg, dataset, device):
     teacher = cfg.get('teacher')
     student = cfg['student']
 
-    cells = protocols.get_cells(cfg['protocol'], dataset, units, seeds,
-                                dcfg['val_split'], dcfg['num_subjects'])
+    protocol = data.canonical_protocol(cfg['protocol'])
+    if 'val_split' in cfg and cfg.get('train_percentage') is not None:
+        raise ValueError('pass only one of val_split or train_percentage')
+    val_split = cfg.get('val_split', dcfg['val_split'])
+    cells = data.iter_cells(protocol, dataset, units, seeds, val_split,
+                            dcfg['num_subjects'], cfg.get('train_percentage'))
     rows = []
     for cell in cells:
         # dummy zeros stand in for teacher feats/logits when there's no teacher;
@@ -85,7 +121,7 @@ def run_dataset(cfg, dataset, device):
             log_t = np.zeros((len(cell.y_tr), nc), np.float32)
 
         for name, cond in cfg['conditions'].items():
-            kwargs, masked = methods.resolve(cond, defaults)
+            kwargs, masked = resolve_condition(cond, defaults)
             if masked:
                 if mask is None:
                     raise ValueError(f'condition {name!r} is masked but no teacher')

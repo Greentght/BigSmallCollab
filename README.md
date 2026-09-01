@@ -29,7 +29,7 @@ models/    一模型一文件夹(网络定义 + 适配器 co-located):
 collab/    distill(离线KD+特征对齐) · bidirectional/mutual/bdeeg(双向线) · seed(统一播种) · artifacts(跨环境产物 hub)
 eval/      stats(subject级配对 Wilcoxon+Holm+bootstrap CI,acc%优先) · metrics(acc/kappa/per_class)
 experiments/ 正式实验入口: config runner(protocols/methods/run) · distill/ bigmodel/ bidir/ mask/ drivers
-config.py  数据/模型 yaml 加载        paths.py  权重解析
+config.py  数据/模型 yaml 加载 + 权重解析(weight_path)
 weights/   预训练权重 symlink -> /data1/llx/pretrained_weights(*.pth, git忽略)
 scripts/   工具入口: check/ · export/ · legacy/(已归档/负结果复现实验)
 configs/   datasets/*.yaml · models/*.yaml · exp/*.yaml(实验配方)
@@ -37,6 +37,20 @@ results/   artifacts/<ds>/<model>/<subj>_<seed>_<split>.npz · metrics/*.csv
 envs/      各模型 conda 环境说明
 ```
 
+**完全自包含(2026-07-25):** 所有模型**代码**都 vendored 进框架,不再引用任何外部仓
+(`sys.path.add_repo` 已全部移除):
+- 数据层 `data/`(`eeg_dataset` `EEGDataset` / `preproc` EA+通道padding+滤波 / `channels` / `split`)
+  与小模型(`models/{ifnet,eegnet,adfcnn}`)—— 逐位一致,见 `scripts/check/verify_foundation.py`。
+- 大模型 **backbone** 与**微调代码**都在各自的 `models/<name>/` 里 —— `mirepnet`(`mlm` + PEFT
+  `lora`/`mmd`)、`cbramod`(criss-cross transformer)、`labram`(`modeling_finetune` + `optim_factory`
+  逐层 LR 衰减 + `montage`)。三个大模型 build+forward 见 `scripts/check/verify_backbones.py`。
+- 预训练**权重**(非代码)真文件统一存放在 `/data1/llx/pretrained_weights/`(稳定数据盘,
+  与上游仓解耦——删掉 ~/MIRepNet 等不受影响);`weights/*.pth`(git 忽略)是指向它的 symlink,
+  由 `config.weight_path()` 解析,可用 `MIREPNET_WEIGHT` / `CBRAMOD_WEIGHT` /
+  `LABRAM_WEIGHT` 环境变量覆盖(如指向新微调的 checkpoint)。
+
+各大模型仍需在**自己的 conda 环境**里跑(依赖不兼容:MIRepNet 的 numpy/mne pin vs LaBraM 的
+timm0.4.12 vs CBraMod 的 einops);框架靠 artifact hub 解耦——见下。
 
 ## 适配器契约 (`models/base.py`)
 
@@ -125,8 +139,21 @@ conda run -n mirepnet python scripts/check/smoke_test.py --models ifnet eegnet a
 **`scripts/legacy/` — 早期一次性编排脚本**（已归档到 tag `archive-legacy-scripts`）
 - `run_*.sh` — 各实验线的规范启动器；取回:`git checkout archive-legacy-scripts -- scripts/legacy`
 
+## 数据流与关键概念
+
+```text
+原始数据 -> data/split.py(规范切分) -> models/<name>/adapter.py(预处理/前向)
+  -> scripts/export/*.py(导出工件 .npz) -> experiments/*(编排) -> collab/*(算法) -> eval/*(统计) -> results/
+```
+
+几个最容易混淆的点：
+
+- **checkpoint ≠ artifact**：checkpoint 是权重；artifact 是模型对固定样本导出的 `{logits, feats, y}`。
+- **离线蒸馏 ≠ 双向蒸馏**：离线 = teacher 冻结、学生单向学工件；双向 = 两模型同进程同时更新互教（要求同 env）。
+- **模型代码在仓库内 ≠ 能在同一 env 同时跑**：依赖冲突仍在（MIRepNet 的 numpy/mne pin vs LaBraM 的 timm0.4.12），所以 artifact hub 是核心设计。
+- **新实验优先 YAML**：矩阵实验写 `configs/exp/*.yaml` + `run.py` 的 `METHOD_REGISTRY`；专门 driver 放 `experiments/<line>/`；导出/自检放 `scripts/`。
+
 ## 范围
 
 - **模型代码全部在框架内**（每模型一个 `models/<name>/` 文件夹，网络定义 + 适配器同处），可直接改/微调；预训练权重通过 `weights/*.pth` symlink 或环境变量外置管理。
 - 各大模型仍在各自 conda env 里 finetune + 导出产物；协同（蒸馏）在任意 env 消费产物。
-- 重跑流程与数据流说明见 [`REPRO.md`](REPRO.md)。

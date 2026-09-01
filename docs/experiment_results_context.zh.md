@@ -1,7 +1,7 @@
 # 大小模型协同实验结果与数据上下文整理
 
 > **2026-08-31 范围说明:**D0 及之后线(D0 / R1 / F+T / balance-gate / A 端到端微调基线)
-> 已归档出活跃树(git tag `pre-consolidation`)。重跑范围为 pre-D0 谱系,见 `REPRO.md`。
+> 已归档出活跃树(git tag `pre-consolidation`)。重跑范围为 pre-D0 谱系。
 > 本文件保留为 07-28 状态的历史记录。
 
 检查时间：2026-07-28。依据当前本地仓库、`PROGRESS.md`、已落盘结果，以及 `/data1/llx/*` 数据文件。
@@ -54,8 +54,7 @@
 
 流程：
 
-- 先用 `data_mode='session3'` 读取该被试的 downstream pool。
-- 这里的 session3 是代码变量名，不是所有数据集真实都有一个叫 session 3 的 session。具体对应关系：BNCI2014001-4 = session_E；BNCI2014004 = loader 里写死的 p1:p2 block；BNCI2015001 = session_A；AlexMI = session=0, run=0 且 drop 掉 rest。
+- 先由 loader 读取该数据集规范的默认 session：BNCI2014001/BNCI2014001-4 = `sessionT`；BNCI2014004 = `session3`；BNCI2015001 = `session_A`；AlexMI = session=0, run=0 且 drop 掉 rest。
 - 再做 stratified `train_test_split(..., test_size=0.3, random_state=seed)`。
 - 训练/校准集 = 70%，测试集 = 30%。
 - 这个协议用于早期 per-subject finetune/export、KD、ensemble 等实验。
@@ -68,8 +67,8 @@
 
 流程：
 
-- fold `t` 的测试集 = 被试 `t` 的 downstream pool。
-- 训练集 = 其他所有被试的 downstream pool。
+- fold `t` 的测试集 = 被试 `t` 的规范默认 session。
+- 训练集 = 其他所有被试的规范默认 session。
 - fold 层面没有随机切分。
 - LOSO artifact 路径：
 
@@ -266,8 +265,8 @@ shape = (5184, 22, 1001)
   - `left_hand`
   - `right_hand`
   - `tongue`
-- 只用 `session_E` 作为 downstream pool。
-- `session_T` 不进入这些主 LOSO / K-shot 实验的测试池。
+- 只用 `sessionT` 作为当前主实验基础 session。
+- `sessionE` 不进入当前 001/001-4 主实验加载。
 - 每个 trial 从 1001 samples 截断到 1000。
 - 9 被试。
 - 每被试选中 288 trials。
@@ -277,20 +276,20 @@ shape = (5184, 22, 1001)
 对 0-index subject `s`：
 
 - raw subject block = `[576*s, 576*s+575]`
-- selected downstream/test pool = `[576*s+288, 576*s+575]`
-- selected pool 里的 run `r` = `[576*s+288+48*r, 576*s+335+48*r]`
+- selected session pool = `[576*s, 576*s+287]`
+- selected pool 里的 run `r` = `[576*s+48*r, 576*s+47+48*r]`
 
 | 0-index subject | raw subject id | 使用 session | raw rows | n |
 |---:|---:|---|---|---:|
-| 0 | 1 | session_E | 288-575 | 288 |
-| 1 | 2 | session_E | 864-1151 | 288 |
-| 2 | 3 | session_E | 1440-1727 | 288 |
-| 3 | 4 | session_E | 2016-2303 | 288 |
-| 4 | 5 | session_E | 2592-2879 | 288 |
-| 5 | 6 | session_E | 3168-3455 | 288 |
-| 6 | 7 | session_E | 3744-4031 | 288 |
-| 7 | 8 | session_E | 4320-4607 | 288 |
-| 8 | 9 | session_E | 4896-5183 | 288 |
+| 0 | 1 | sessionT | 0-287 | 288 |
+| 1 | 2 | sessionT | 576-863 | 288 |
+| 2 | 3 | sessionT | 1152-1439 | 288 |
+| 3 | 4 | sessionT | 1728-2015 | 288 |
+| 4 | 5 | sessionT | 2304-2591 | 288 |
+| 5 | 6 | sessionT | 2880-3167 | 288 |
+| 6 | 7 | sessionT | 3456-3743 | 288 |
+| 7 | 8 | sessionT | 4032-4319 | 288 |
+| 8 | 9 | sessionT | 4608-4895 | 288 |
 
 LOSO fold `t`：
 
@@ -312,22 +311,22 @@ shape = (6520, 3, 1126)
 - 任务：2 类 MI
   - `left_hand`
   - `right_hand`
-- loader 现在从 `/data1/llx/BNCI2014004/meta004.csv` 正常读取 metadata。
-- 默认使用真实 `session_3`。旧代码用硬编码 `p1:p2`，对应的正是 `meta004.csv` 里的 `session_3`。
-- `session_4` 没有进入当前 downstream few-shot 实验，除非显式设置 `data_mode="session4"` 或环境变量切换。
+- loader 从 `/data1/llx/BNCI2014004/meta004.csv` 读取 metadata。
+- 默认只使用 `session3`，底层对应 `meta004.csv` 里的 `session_3`。
+- 其他 session 不进入当前 004 主实验加载。
 - 每个 trial 截断到 1000 samples。
 
-| 0-index subject | phase1 rows，不进 downstream few-shot | 使用的 `session3` rows | leftover rows，不用 | selected n | class counts |
-|---:|---|---|---|---:|---|
-| 0 | 0-399 | 400-559 | 560-719 | 160 | 80/80 |
-| 1 | 720-1119 | 1120-1239 | 1240-1399 | 120 | 60/60 |
-| 2 | 1400-1799 | 1800-1959 | 1960-2119 | 160 | 80/80 |
-| 3 | 2120-2539 | 2540-2699 | 2700-2859 | 160 | 80/80 |
-| 4 | 2860-3279 | 3280-3439 | 3440-3599 | 160 | 80/80 |
-| 5 | 3600-3999 | 4000-4159 | 4160-4319 | 160 | 80/80 |
-| 6 | 4320-4719 | 4720-4879 | 4880-5039 | 160 | 80/80 |
-| 7 | 5040-5479 | 5480-5639 | 5640-5799 | 160 | 80/80 |
-| 8 | 5800-6199 | 6200-6359 | 6360-6519 | 160 | 80/80 |
+| 0-index subject | 其他 session rows，不加载 | 使用的 `session3` rows | selected n | class counts |
+|---:|---|---|---:|---|
+| 0 | 0-399, 560-719 | 400-559 | 160 | 80/80 |
+| 1 | 720-1119, 1240-1399 | 1120-1239 | 120 | 60/60 |
+| 2 | 1400-1799, 1960-2119 | 1800-1959 | 160 | 80/80 |
+| 3 | 2120-2539, 2700-2859 | 2540-2699 | 160 | 80/80 |
+| 4 | 2860-3279, 3440-3599 | 3280-3439 | 160 | 80/80 |
+| 5 | 3600-3999, 4160-4319 | 4000-4159 | 160 | 80/80 |
+| 6 | 4320-4719, 4880-5039 | 4720-4879 | 160 | 80/80 |
+| 7 | 5040-5479, 5640-5799 | 5480-5639 | 160 | 80/80 |
+| 8 | 5800-6199, 6360-6519 | 6200-6359 | 160 | 80/80 |
 
 LOSO fold `t`：
 

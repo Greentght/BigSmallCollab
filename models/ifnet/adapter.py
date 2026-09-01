@@ -11,3 +11,6 @@ class IFNetAdapter(_SmallAdapter):
                       samples=self.cfg.get('samples', 1000),
                       num_classes=num_classes)
         return model.to(self.device)
+
+
+ADAPTER = IFNetAdapter

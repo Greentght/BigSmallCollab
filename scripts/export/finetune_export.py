@@ -1,28 +1,18 @@
-"""Finetune ONE model and export its standardized artifacts.
+"""Compatibility wrapper for few-shot artifact export.
 
-Run inside that model's conda env (see configs/models/<model>.yaml `env`):
+Preferred entry point:
 
-    conda run -n mirepnet python scripts/export/finetune_export.py --model ifnet  --dataset BNCI2014004
-    conda run -n cbramod  python scripts/export/finetune_export.py --model cbramod --dataset BNCI2014004 --gpu 1
-    conda run -n labram   python scripts/export/finetune_export.py --model labram  --dataset BNCI2014004 --gpu 1
+    python scripts/export/export_preds.py --model <model> --dataset <dataset> --protocol fewshot
 
-For every (subject, seed) it finetunes on the calibration split and writes BOTH:
-  - split='test'  -> used by ensemble + as eval set for distillation
-  - split='train' -> teacher feats/logits consumed by offline distillation
-Restartable: a (subject, seed) whose test+train artifacts already exist is skipped.
+This file keeps the historical ``finetune_export.py`` command working while the
+implementation lives in ``export_preds.py``.
 """
 import argparse
 import os
 import sys
+from importlib import import_module
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-
-import torch
-
-import config
-import data
-from collab import artifacts
-from models import get_adapter
 
 
 def parse_args():
@@ -41,54 +31,27 @@ def parse_args():
 
 
 def main():
-    os.environ.setdefault('OMP_NUM_THREADS', '4')
-    os.environ.setdefault('MKL_NUM_THREADS', '4')
-    os.environ.setdefault('OPENBLAS_NUM_THREADS', '4')
-    os.environ.setdefault('NUMEXPR_NUM_THREADS', '4')
-    torch.set_num_threads(int(os.environ.get('TORCH_NUM_THREADS', '4')))
     a = parse_args()
-    dcfg = config.load_dataset_config(a.dataset)
-    mcfg = config.load_model_config(a.model)
+    argv = [
+        '--model', a.model,
+        '--dataset', a.dataset,
+        '--protocol', 'fewshot',
+    ]
+    if a.subjects is not None:
+        argv += ['--keys'] + [str(s) for s in a.subjects]
+    if a.seeds is not None:
+        argv += ['--seeds'] + [str(s) for s in a.seeds]
+    if a.val_split is not None:
+        argv += ['--val_split', str(a.val_split)]
+    if a.gpu is not None:
+        argv += ['--gpu', str(a.gpu)]
+    if a.epochs is not None:
+        argv += ['--epochs', str(a.epochs)]
+    if not a.export_train:
+        argv += ['--no_export_train']
 
-    subjects = a.subjects or list(range(dcfg['num_subjects']))
-    seeds = a.seeds or dcfg['seeds']
-    val_split = a.val_split if a.val_split is not None else dcfg['val_split']
-    num_classes = dcfg['num_classes']
-    device = (f'cuda:{a.gpu}' if a.gpu is not None and torch.cuda.is_available()
-              else 'cpu')
-
-    for seed in seeds:
-        for subj in subjects:
-            have_test = artifacts.exists(a.dataset, a.model, subj, seed, 'test')
-            have_train = (not a.export_train or
-                          artifacts.exists(a.dataset, a.model, subj, seed, 'train'))
-            if have_test and have_train:
-                print(f'[skip] {a.model} {a.dataset} S{subj} seed{seed}', flush=True)
-                continue
-
-            X_tr, y_tr, X_te, y_te = data.subject_split(
-                a.dataset, subj, val_split=val_split, seed=seed)
-
-            adapter_cfg = dict(mcfg)
-            adapter_cfg.update(in_channels=X_tr.shape[1], samples=X_tr.shape[2],
-                               dataset_name=a.dataset)
-            if a.epochs is not None:
-                adapter_cfg['epochs'] = a.epochs
-
-            ad = get_adapter(a.model, device=device, **adapter_cfg)
-            model = ad.build(num_classes)
-            model = ad.finetune(model, X_tr, y_tr, num_classes)
-
-            p_te = ad.export(model, X_te, y_te, a.dataset, subj, seed, 'test')
-            msg = f'[ok] {a.model} {a.dataset} S{subj} seed{seed} -> {p_te}'
-            if a.export_train:
-                ad.export(model, X_tr, y_tr, a.dataset, subj, seed, 'train')
-            print(msg, flush=True)
-
-            del model
-            if device != 'cpu':
-                torch.cuda.empty_cache()
-    print('Done.')
+    export_preds = import_module('scripts.export.export_preds')
+    export_preds.main(argv)
 
 
 if __name__ == '__main__':

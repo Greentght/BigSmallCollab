@@ -1,9 +1,4 @@
-# CBraMod foundation-model teacher (final settled = 45ch 通道模板管线 高分版,
-# PROGRESS.md 2026-07-01 全量终表): EA + inverse-distance pad 到 45ch 模板 +
-# 250Hz -> resample 800@200Hz / scale=1;官方 all_patch_reps 3 层大头;
-# equal-lr AdamW 1e-4 wd 5e-2 + cosine + label_smoothing 0.1, bs 64, 50 epochs.
-# Reported (3seed, 80/20 单session): 14001-2 77.78 / 14001-4 62.07 / 004 74.38 /
-# AlexMI 66.15 / 15001 71.11 — 全部达到或超过论文(004 差 −3.01)。Env: cbramod。
+# CBraMod foundation-model teacher
 env: cbramod
 size: big
 epochs: 50

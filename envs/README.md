@@ -18,7 +18,7 @@ conda create -y -n labram --clone cbramod
 conda run -n labram pip install timm==0.4.12
 ```
 
-The upstream repos are referenced read-only via `core/paths.py` (default `~/MIRepNet`,
-`~/CBraMod`, `~/LaBraM`; override with `MIREPNET_REPO` / `CBRAMOD_REPO` / `LABRAM_REPO`).
+Pretrained weights are resolved via `config.weight_path()` under `weights/` (override
+with `MIREPNET_WEIGHT` / `CBRAMOD_WEIGHT` / `LABRAM_WEIGHT`).
 Vendored deps the framework adds on top of a base EEG env: `pyyaml`, `scipy`,
 `scikit-learn` (already present in all three envs).

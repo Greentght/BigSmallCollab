@@ -1,18 +1,19 @@
-"""Unified per-sample prediction/feature exporter (within + LOSO).
+"""Unified per-sample prediction/feature exporter (fewshot + LOSO).
 
 Trains ONE model under a chosen protocol and writes standardized artifacts
 (logits/feats/y) that the collab hub + Phase-D0 diagnostics consume. Run inside
 that model's conda env (see configs/models/<model>.yaml `env`):
 
     conda run -n mirepnet python scripts/export/export_preds.py --model ifnet   --dataset BNCI2014004    --protocol loso   --gpu 2
-    conda run -n mirepnet python scripts/export/export_preds.py --model eegnet  --dataset BNCI2014001-4  --protocol within --gpu 2
+    conda run -n mirepnet python scripts/export/export_preds.py --model eegnet  --dataset BNCI2014001-4  --protocol fewshot --gpu 2
     conda run -n cbramod  python scripts/export/export_preds.py --model cbramod --dataset BNCI2014004 --protocol loso --gpu 2
 
 Protocols
 ---------
-within : per-subject calibration/test split (val_split = TEST fraction, default
-         from the dataset config). Artifact model dir = ``<model>``; key = subject.
-         Row-identical to the existing mirepnet / cbramod within cache.
+fewshot: per-subject calibration/test split. ``--train_percentage`` is the
+         TRAIN fraction; ``--val_split`` is the legacy TEST fraction. Artifact
+         model dir = ``<model>``; key = subject. ``within`` is accepted as an
+         alias for existing scripts/caches.
 loso   : leave-one-subject-out. Fold f = subject f held out for test, all others
          train. Artifact model dir = ``<model>_loso``; key = fold index. Rows are
          fully determined by the held-out subject (no split randomness), so they
@@ -37,21 +38,23 @@ from collab import artifacts
 from models import get_adapter
 
 
-def parse_args():
+def parse_args(argv=None):
     p = argparse.ArgumentParser()
     p.add_argument('--model', required=True)
     p.add_argument('--dataset', default='BNCI2014004')
-    p.add_argument('--protocol', choices=['within', 'loso'], default='loso')
+    p.add_argument('--protocol', choices=['fewshot', 'loso', 'within'], default='loso')
     p.add_argument('--keys', type=int, nargs='+', default=None,
-                   help='subjects (within) or folds (loso) to run; default all')
+                   help='subjects (fewshot) or folds (loso) to run; default all')
     p.add_argument('--seeds', type=int, nargs='+', default=None)
     p.add_argument('--val_split', type=float, default=None,
-                   help='within only: TEST fraction (default from dataset cfg)')
+                   help='fewshot only: TEST fraction (default from dataset cfg)')
+    p.add_argument('--train_percentage', type=float, default=None,
+                   help='fewshot only: TRAIN fraction; overrides dataset val_split')
     p.add_argument('--gpu', type=int, default=None)
     p.add_argument('--epochs', type=int, default=None, help='override config')
     p.add_argument('--no_export_train', dest='export_train',
                    action='store_false', default=True)
-    return p.parse_args()
+    return p.parse_args(argv)
 
 
 def _fit_and_export(model_name, artifact_dir, dataset, key, seed, num_classes,
@@ -81,13 +84,13 @@ def _fit_and_export(model_name, artifact_dir, dataset, key, seed, num_classes,
     return acc
 
 
-def main():
+def main(argv=None):
     os.environ.setdefault('OMP_NUM_THREADS', '4')
     os.environ.setdefault('MKL_NUM_THREADS', '4')
     os.environ.setdefault('OPENBLAS_NUM_THREADS', '4')
     os.environ.setdefault('NUMEXPR_NUM_THREADS', '4')
     torch.set_num_threads(int(os.environ.get('TORCH_NUM_THREADS', '4')))
-    a = parse_args()
+    a = parse_args(argv)
     dcfg = config.load_dataset_config(a.dataset)
     mcfg = config.load_model_config(a.model)
     seeds = a.seeds or dcfg['seeds']
@@ -95,11 +98,19 @@ def main():
     n_sub = dcfg['num_subjects']
     device = (f'cuda:{a.gpu}' if a.gpu is not None and torch.cuda.is_available()
               else 'cpu')
-    artifact_dir = a.model if a.protocol == 'within' else f'{a.model}_loso'
+    protocol = data.canonical_protocol(a.protocol)
+    if a.val_split is not None and a.train_percentage is not None:
+        raise ValueError('pass only one of --val_split or --train_percentage')
+    artifact_dir = a.model if protocol == 'fewshot' else f'{a.model}_loso'
     keys = a.keys if a.keys is not None else list(range(n_sub))
     val_split = a.val_split if a.val_split is not None else dcfg['val_split']
+    if a.train_percentage is not None:
+        train_percentage = float(a.train_percentage)
+        if train_percentage <= 0.0 or train_percentage >= 1.0:
+            raise ValueError('--train_percentage must be in (0, 1)')
+        val_split = 1.0 - train_percentage
 
-    print(f'[export] {a.model} {a.dataset} {a.protocol} -> dir={artifact_dir} '
+    print(f'[export] {a.model} {a.dataset} {protocol} -> dir={artifact_dir} '
           f'device={device} keys={keys} seeds={seeds}', flush=True)
 
     for seed in seeds:
@@ -110,7 +121,7 @@ def main():
             if have_test and have_train:
                 print(f'[skip] {artifact_dir} k{key} seed{seed}', flush=True)
                 continue
-            if a.protocol == 'within':
+            if protocol == 'fewshot':
                 X_tr, y_tr, X_te, y_te = data.subject_split(
                     a.dataset, key, val_split=val_split, seed=seed)
             else:

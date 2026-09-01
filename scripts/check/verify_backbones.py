@@ -14,6 +14,7 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
+import config
 from models import get_adapter
 
 
@@ -25,8 +26,9 @@ def main():
     ap.add_argument('--classes', type=int, default=2)
     args = ap.parse_args()
 
-    ad = get_adapter(args.model, device='cpu', dataset_name=args.dataset,
-                     in_channels=args.channels, samples=1000)
+    cfg = config.load_model_config(args.model)
+    cfg.update(dataset_name=args.dataset, in_channels=args.channels, samples=1000)
+    ad = get_adapter(args.model, device='cpu', **cfg)
     model = ad.build(args.classes)
     n_params = sum(p.numel() for p in model.parameters())
     X = np.random.RandomState(0).randn(8, args.channels, 1000).astype('float32')

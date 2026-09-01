@@ -45,7 +45,8 @@ def check_ea():
 def check_dataset():
     from data.eeg_dataset import EEGDataset as DS_new
     from types import SimpleNamespace
-    args = SimpleNamespace(dataset_name=DS, sub=[0], data_mode='session3')
+    default_mode = 'session3' if DS == 'BNCI2014004' else 'sessionT'
+    args = SimpleNamespace(dataset_name=DS, sub=[0], data_mode=default_mode)
     dnew = DS_new(args=args)
     sys.path.insert(0, os.path.expanduser('~/MIRepNet'))
     from dataset import EEGDataset as DS_old

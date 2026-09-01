@@ -42,10 +42,10 @@ from models.labram.modeling_finetune import labram_base_patch200_200  # noqa: E4
 from models.labram.optim_factory import (  # noqa: E402
     get_parameter_groups, LayerDecayValueAssigner)
 from models.labram.montage import get_input_chans  # noqa: E402
-import paths  # noqa: E402
+import config  # noqa: E402
 from data.preproc import bandpass as _bandpass, notch as _notch  # noqa: E402
 
-PRETRAIN = paths.weight_path("labram")
+PRETRAIN = config.weight_path("labram")
 
 
 def _load_channel_names():

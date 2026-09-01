@@ -4,9 +4,9 @@ pipeline (PROGRESS.md 2026-07-01 全量终表, port of ``MIRepNet/cbramod_templa
 Pipeline per set (the paper's unified preprocessing for all baselines):
 EA (per-set whitening, transductive) -> inverse-distance pad to the 45-ch
 template -> 250 Hz, then truncate 1000 samples, resample 800 @200 Hz,
-``/ scale`` (scale=1), reshape ``(N, 45, 4, 200)``. Official CBraMod
-``all_patch_reps`` 3-layer head, equal-lr AdamW 1e-4, wd 5e-2, cosine,
-label_smoothing 0.1, bs 64, 50 epochs, evaluate once (no test-based selection).
+``/ scale`` (from config), reshape ``(N, 45, 4, 200)``. Official CBraMod
+``all_patch_reps`` 3-layer head. The canonical training recipe lives in
+``configs/models/cbramod.yaml``; adapter code only consumes and validates it.
 
 Reported (3seed, 80/20 single-session): 14001-2 77.78, 14001-4 62.07,
 004 74.38, AlexMI 66.15, 15001 71.11 — all at/above the paper except
@@ -21,7 +21,7 @@ import torch.optim as optim
 from scipy.signal import resample
 from torch.utils.data import DataLoader, TensorDataset
 
-import paths
+import config
 from models.base import ModelAdapter
 
 
@@ -58,12 +58,20 @@ class _CBraModModel(nn.Module):
 class CBraModAdapter(ModelAdapter):
     name = 'cbramod'
 
-    # 45ch-template recipe (PROGRESS 2026-07-01): fixed across datasets.
-    TEMPLATE = dict(lr=1e-4, epochs=50, weight_decay=5e-2, batch_size=64,
-                    dropout=0.1, scale=1.0, label_smoothing=0.1)
+    REQUIRED_MODEL_CONFIG = (
+        'lr', 'epochs', 'weight_decay', 'batch_size',
+        'dropout', 'scale', 'label_smoothing',
+    )
 
     def __init__(self, device='cpu', **cfg):
         super().__init__(device=device, **cfg)
+        missing = [k for k in self.REQUIRED_MODEL_CONFIG if k not in self.cfg]
+        if missing:
+            raise KeyError(
+                'CBraModAdapter missing model config keys: '
+                f'{", ".join(missing)}. Load configs/models/cbramod.yaml via '
+                "config.load_model_config('cbramod') and pass it to get_adapter()."
+            )
         from data.channels import (
             use_channels_names, BNCI2014001_chn_names,
             BNCI2014004_chn_names, BNCI2015001_chn_names, AlexMI_chn_names)
@@ -78,8 +86,6 @@ class CBraModAdapter(ModelAdapter):
             'BNCI2015001': BNCI2015001_chn_names,
             'AlexMI': AlexMI_chn_names,
         }
-        for k, v in self.TEMPLATE.items():
-            self.cfg.setdefault(k, v)
 
     def preprocess(self, X_raw):
         """(N, C, 1000)@250Hz -> (N, 45, 4, 200). EA per-set -> 45ch template ->
@@ -94,7 +100,7 @@ class CBraModAdapter(ModelAdapter):
         x = self._pad(x, self._template, self._src_channels[ds])  # -> 45 ch
         x = x[:, :, :1000]
         x = resample(x, 800, axis=-1)                            # -> 200 Hz
-        x = (x / float(self.cfg.get('scale', 1.0))).astype(np.float32)
+        x = (x / float(self.cfg['scale'])).astype(np.float32)
         n, ch, _ = x.shape
         return torch.as_tensor(x.reshape(n, ch, 4, 200), dtype=torch.float32)
 
@@ -115,8 +121,8 @@ class CBraModAdapter(ModelAdapter):
         return out
 
     def build(self, num_classes):
-        pretrain = self.cfg.get('pretrain') or paths.weight_path('cbramod')
-        model = _CBraModModel(num_classes, dropout=float(self.cfg.get('dropout', 0.1)),
+        pretrain = self.cfg.get('pretrain') or config.weight_path('cbramod')
+        model = _CBraModModel(num_classes, dropout=float(self.cfg['dropout']),
                               pretrain=pretrain)
         return model.to(self.device)
 
@@ -124,13 +130,12 @@ class CBraModAdapter(ModelAdapter):
         return model(x)
 
     def finetune(self, model, X_tr, y_tr, num_classes):
-        """45ch-template recipe: equal-lr AdamW 1e-4 wd 5e-2 + cosine +
-        label_smoothing 0.1, bs 64, 50 epochs, no clip/warmup."""
-        epochs = int(self.cfg.get('epochs', 50))
-        lr = float(self.cfg.get('lr', 1e-4))
-        wd = float(self.cfg.get('weight_decay', 5e-2))
-        bs = int(self.cfg.get('batch_size', 64))
-        ls = float(self.cfg.get('label_smoothing', 0.1))
+        """45ch-template recipe: config-driven AdamW + cosine, no clip/warmup."""
+        epochs = int(self.cfg['epochs'])
+        lr = float(self.cfg['lr'])
+        wd = float(self.cfg['weight_decay'])
+        bs = int(self.cfg['batch_size'])
+        ls = float(self.cfg['label_smoothing'])
 
         Xp = self.preprocess(X_tr)
         y = torch.as_tensor(y_tr, dtype=torch.long)
@@ -147,3 +152,6 @@ class CBraModAdapter(ModelAdapter):
                 opt.step()
             sch.step()
         return model
+
+
+ADAPTER = CBraModAdapter

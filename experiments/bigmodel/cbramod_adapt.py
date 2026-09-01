@@ -29,10 +29,10 @@ from torch.utils.data import DataLoader, TensorDataset
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))  # repo root
 
 from models.cbramod.cbramod import CBraMod  # noqa: E402
-import paths  # noqa: E402
+import config  # noqa: E402
 from data.preproc import bandpass as _bandpass, notch as _notch  # noqa: E402
 
-PRETRAIN = paths.weight_path("cbramod")
+PRETRAIN = config.weight_path("cbramod")
 
 
 @dataclass(frozen=True)

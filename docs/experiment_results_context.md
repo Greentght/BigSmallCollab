@@ -2,7 +2,7 @@
 
 > **2026-08-31 scope note:** the D0-onward line (D0 / R1 / F+T / balance-gate /
 > A fine-tune baseline) has been archived out of the active tree (git tag
-> `pre-consolidation`). The re-run scope is the pre-D0 lineage; see `REPRO.md`.
+> `pre-consolidation`). The re-run scope is the pre-D0 lineage.
 > This document remains the historical record of the 07-28 state.
 
 Last checked: 2026-07-28, from the local repo and `/data1/llx/*`.
@@ -40,7 +40,7 @@ The current honest conclusion is:
 
 Implemented by `data.subject_split(dataset, subject, val_split=0.3, seed=...)`.
 
-- First load the downstream subject pool via `data_mode='session3'`.
+- First load each dataset's canonical default session: BNCI2014001/BNCI2014001-4 use `sessionT`; BNCI2014004 uses `session3`; BNCI2015001 uses `session_A`; AlexMI uses session=0, run=0 and drops rest.
 - Then do stratified `train_test_split(..., test_size=0.3, random_state=seed)`.
 - Train/calibration = 70%, test = 30%.
 - This is used by standard per-subject finetune/export and many early KD/ensemble diagnostics.
@@ -49,8 +49,8 @@ Implemented by `data.subject_split(dataset, subject, val_split=0.3, seed=...)`.
 
 Implemented by `data.loso_split(dataset, test_subject)`.
 
-- For fold `t`, test pool = downstream pool of subject `t`.
-- Training pool = downstream pools of all other subjects.
+- For fold `t`, test pool = canonical default session of subject `t`.
+- Training pool = canonical default sessions of all other subjects.
 - No split randomness at the fold level.
 - Cached LOSO artifacts are written as `results/artifacts/<dataset>/<model>_loso/<subject>_<seed>_{train,test}.npz`.
 
@@ -161,7 +161,7 @@ Source: `/data1/llx/BNCI2014001/X.npy`, shape `(5184, 22, 1001)`.
 
 - Task: 4-class MI: `feet`, `left_hand`, `right_hand`, `tongue`.
 - Loader dataset name: `BNCI2014001-4`.
-- Uses `session_E` only for downstream pool (`data_mode='session3'`).
+- Uses `sessionT` as the current canonical experiment session.
 - Truncates 1001 samples to 1000.
 - 9 subjects, 288 selected trials per subject, 72 trials per class.
 - Each selected session has 6 runs, 48 trials each, 12 per class.
@@ -169,20 +169,20 @@ Source: `/data1/llx/BNCI2014001/X.npy`, shape `(5184, 22, 1001)`.
 For zero-index subject `s`:
 
 - raw subject block = `[576*s, 576*s+575]`
-- selected downstream/test pool = `[576*s+288, 576*s+575]`
-- run `r` inside selected pool = `[576*s+288+48*r, 576*s+335+48*r]`
+- selected session pool = `[576*s, 576*s+287]`
+- run `r` inside selected pool = `[576*s+48*r, 576*s+47+48*r]`
 
 | 0-index subject | raw subject id | selected session | selected rows | n |
 |---:|---:|---|---|---:|
-| 0 | 1 | session_E | 288-575 | 288 |
-| 1 | 2 | session_E | 864-1151 | 288 |
-| 2 | 3 | session_E | 1440-1727 | 288 |
-| 3 | 4 | session_E | 2016-2303 | 288 |
-| 4 | 5 | session_E | 2592-2879 | 288 |
-| 5 | 6 | session_E | 3168-3455 | 288 |
-| 6 | 7 | session_E | 3744-4031 | 288 |
-| 7 | 8 | session_E | 4320-4607 | 288 |
-| 8 | 9 | session_E | 4896-5183 | 288 |
+| 0 | 1 | sessionT | 0-287 | 288 |
+| 1 | 2 | sessionT | 576-863 | 288 |
+| 2 | 3 | sessionT | 1152-1439 | 288 |
+| 3 | 4 | sessionT | 1728-2015 | 288 |
+| 4 | 5 | sessionT | 2304-2591 | 288 |
+| 5 | 6 | sessionT | 2880-3167 | 288 |
+| 6 | 7 | sessionT | 3456-3743 | 288 |
+| 7 | 8 | sessionT | 4032-4319 | 288 |
+| 8 | 9 | sessionT | 4608-4895 | 288 |
 
 LOSO fold `t`: train all rows above except subject `t`; test rows = subject `t` selected rows.
 
@@ -192,21 +192,21 @@ Source: `/data1/llx/BNCI2014004/X.npy`, shape `(6520, 3, 1126)`.
 
 - Task: 2-class MI: `left_hand`, `right_hand`.
 - Loader dataset name: `BNCI2014004`.
-- Uses loader's `session3` range `p1:p2`; rows after `p2` are not used by this loader for downstream experiments.
+- Uses `session3` only; this maps to `session_3` in `/data1/llx/BNCI2014004/meta004.csv`.
 - Truncates to 1000 samples.
-- No local `meta.csv`; ranges below come from `data/eeg_dataset.py`.
+- Other sessions are not loaded by the canonical 004 path.
 
-| 0-index subject | phase1 rows not used in downstream few-shot | selected `session3` rows | leftover rows not used | selected n | class counts |
-|---:|---|---|---|---:|---|
-| 0 | 0-399 | 400-559 | 560-719 | 160 | 80/80 |
-| 1 | 720-1119 | 1120-1239 | 1240-1399 | 120 | 60/60 |
-| 2 | 1400-1799 | 1800-1959 | 1960-2119 | 160 | 80/80 |
-| 3 | 2120-2539 | 2540-2699 | 2700-2859 | 160 | 80/80 |
-| 4 | 2860-3279 | 3280-3439 | 3440-3599 | 160 | 80/80 |
-| 5 | 3600-3999 | 4000-4159 | 4160-4319 | 160 | 80/80 |
-| 6 | 4320-4719 | 4720-4879 | 4880-5039 | 160 | 80/80 |
-| 7 | 5040-5479 | 5480-5639 | 5640-5799 | 160 | 80/80 |
-| 8 | 5800-6199 | 6200-6359 | 6360-6519 | 160 | 80/80 |
+| 0-index subject | other session rows not loaded | selected `session3` rows | selected n | class counts |
+|---:|---|---|---:|---|
+| 0 | 0-399, 560-719 | 400-559 | 160 | 80/80 |
+| 1 | 720-1119, 1240-1399 | 1120-1239 | 120 | 60/60 |
+| 2 | 1400-1799, 1960-2119 | 1800-1959 | 160 | 80/80 |
+| 3 | 2120-2539, 2700-2859 | 2540-2699 | 160 | 80/80 |
+| 4 | 2860-3279, 3440-3599 | 3280-3439 | 160 | 80/80 |
+| 5 | 3600-3999, 4160-4319 | 4000-4159 | 160 | 80/80 |
+| 6 | 4320-4719, 4880-5039 | 4720-4879 | 160 | 80/80 |
+| 7 | 5040-5479, 5640-5799 | 5480-5639 | 160 | 80/80 |
+| 8 | 5800-6199, 6360-6519 | 6200-6359 | 160 | 80/80 |
 
 LOSO fold `t`: train selected `session3` rows from all other subjects; test selected `session3` rows from subject `t`.
 
