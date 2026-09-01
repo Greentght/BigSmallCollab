@@ -4,7 +4,7 @@ SUBJECT (each subject whitened by its own reference covariance), then 45ch pad;
 the adapter runs with skip_preprocess (data pre-EA'd) so the mixed multi-subject
 train set is never re-whitened with one covariance.
 
-    conda run -n mirepnet python scripts/export/export_teacher_loso.py --dataset BNCI2014004 --gpu 8
+    conda run -n mirepnet python experiments/finetune/finetune_teacher_loso.py --dataset BNCI2014004 --gpu 8
 
 Artifacts keyed as model='mirepnet_loso', subject=<held-out test subject> (=fold).
 No leakage: MIRepNet pretraining excludes these downstream datasets (paper Table 1).

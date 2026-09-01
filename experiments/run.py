@@ -9,7 +9,7 @@ With ``--report`` (or a ``report:`` block) it prints the paired-stats report.
 
 Must run in the STUDENT's conda env; the teacher is never built here — its
 train-split artifact (feats+logits) must already exist (exported once in the
-teacher's env via ``scripts/export/finetune_export.py``). Conditions with no teacher
+teacher's env via ``experiments/finetune/finetune.py``). Conditions with no teacher
 signal (all methods reduce to lam=0) run even without an artifact.
 
 YAML schema (see configs/exp/*.yaml):

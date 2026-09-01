@@ -1,13 +1,13 @@
 """Finetune a teacher and export standardized artifacts + MC-dropout uncertainty.
 
-Like ``finetune_export.py`` but ALSO computes per-train-sample MC-dropout
+Like ``finetune.py`` but ALSO computes per-train-sample MC-dropout
 uncertainty (predictive entropy + BALD) from the SAME finetuned teacher, so the
 uncertainty aligns row-for-row with the cached train logits/feats that KD uses.
 This regenerates the train/test artifacts (fresh teacher instance) and writes a
 sidecar ``<subj>_<seed>_train_mc.npz`` {pred_entropy, bald, y}.
 
-    conda run -n mirepnet python scripts/export/export_teacher_mc.py --model mirepnet --dataset BNCI2014004 --gpu 5
-    conda run -n cbramod  python scripts/export/export_teacher_mc.py --model cbramod --dataset BNCI2014004 --gpu 5
+    conda run -n mirepnet python experiments/finetune/finetune_teacher_mc.py --model mirepnet --dataset BNCI2014004 --gpu 5
+    conda run -n cbramod  python experiments/finetune/finetune_teacher_mc.py --model cbramod --dataset BNCI2014004 --gpu 5
 
 Consumed by run_distill.py's --adaptive conditions (entropy-weighted KD/Combo).
 """

@@ -28,10 +28,10 @@ models/    一模型一文件夹(网络定义 + 适配器 co-located):
            每个文件夹 = <net>.py + adapter.py;加模型 = 加一个文件夹
 collab/    distill(离线KD+特征对齐) · bidirectional/mutual/bdeeg(双向线) · seed(统一播种) · artifacts(跨环境产物 hub)
 eval/      stats(subject级配对 Wilcoxon+Holm+bootstrap CI,acc%优先) · metrics(acc/kappa/per_class)
-experiments/ 正式实验入口: config runner(protocols/methods/run) · distill/ bigmodel/ bidir/ mask/ drivers
+experiments/ 实验入口: run.py(config runner) · finetune/(单模型微调) · distill/ bigmodel/ bidir/ mask/ drivers
 config.py  数据/模型 yaml 加载 + 权重解析(weight_path)
 weights/   预训练权重 symlink -> /data1/llx/pretrained_weights(*.pth, git忽略)
-scripts/   工具入口: check/ · export/ · legacy/(已归档/负结果复现实验)
+scripts/   自检工具: check/(smoke/verify)
 configs/   datasets/*.yaml · models/*.yaml · exp/*.yaml(实验配方)
 results/   artifacts/<ds>/<model>/<subj>_<seed>_<split>.npz · metrics/*.csv
 envs/      各模型 conda 环境说明
@@ -40,10 +40,10 @@ envs/      各模型 conda 环境说明
 **完全自包含(2026-07-25):** 所有模型**代码**都 vendored 进框架,不再引用任何外部仓
 (`sys.path.add_repo` 已全部移除):
 - 数据层 `data/`(`eeg_dataset` `EEGDataset` / `preproc` EA+通道padding+滤波 / `channels` / `split`)
-  与小模型(`models/{ifnet,eegnet,adfcnn}`)—— 逐位一致,见 `scripts/check/verify_foundation.py`。
+  与小模型(`models/{ifnet,eegnet,adfcnn}`)—— 逐位一致,见 `scripts/verify_foundation.py`。
 - 大模型 **backbone** 与**微调代码**都在各自的 `models/<name>/` 里 —— `mirepnet`(`mlm` + PEFT
   `lora`/`mmd`)、`cbramod`(criss-cross transformer)、`labram`(`modeling_finetune` + `optim_factory`
-  逐层 LR 衰减 + `montage`)。三个大模型 build+forward 见 `scripts/check/verify_backbones.py`。
+  逐层 LR 衰减 + `montage`)。三个大模型 build+forward 见 `scripts/verify_backbones.py`。
 - 预训练**权重**(非代码)真文件统一存放在 `/data1/llx/pretrained_weights/`(稳定数据盘,
   与上游仓解耦——删掉 ~/MIRepNet 等不受影响);`weights/*.pth`(git 忽略)是指向它的 symlink,
   由 `config.weight_path()` 解析,可用 `MIREPNET_WEIGHT` / `CBRAMOD_WEIGHT` /
@@ -67,10 +67,10 @@ LaBraM → 250→200Hz resample + patchify `(ch,4,200)`（另需 `input_chans` �
 
 ```bash
 # 1) 各模型在自己 env 里 finetune + 导出产物（train+test 两个 split）
-conda run -n mirepnet python scripts/export/finetune_export.py --model ifnet    --dataset BNCI2014004
-conda run -n mirepnet python scripts/export/finetune_export.py --model mirepnet --dataset BNCI2014004
-conda run -n cbramod  python scripts/export/finetune_export.py --model cbramod  --dataset BNCI2014004 --gpu 1
-conda run -n labram   python scripts/export/finetune_export.py --model labram   --dataset BNCI2014004 --gpu 1
+conda run -n mirepnet python experiments/finetune/finetune.py --protocol fewshot --model ifnet    --dataset BNCI2014004
+conda run -n mirepnet python experiments/finetune/finetune.py --protocol fewshot --model mirepnet --dataset BNCI2014004
+conda run -n cbramod  python experiments/finetune/finetune.py --protocol fewshot --model cbramod  --dataset BNCI2014004 --gpu 1
+conda run -n labram   python experiments/finetune/finetune.py --protocol fewshot --model labram   --dataset BNCI2014004 --gpu 1
 
 # 2) 离线蒸馏（在 student 的 env 里跑；teacher 产物须已导出）
 conda run -n mirepnet python experiments/distill/run_distill.py \
@@ -84,13 +84,13 @@ conda run -n mirepnet python experiments/distill/run_distill.py \
 
 ```bash
 # 地基（数据+小模型逐位一致）
-conda run -n mirepnet python scripts/check/verify_foundation.py
+conda run -n mirepnet python scripts/verify_foundation.py
 # 大模型 backbone（vendored 代码 + 权重 build+forward）
-conda run -n mirepnet python scripts/check/verify_backbones.py --model mirepnet
-conda run -n cbramod  python scripts/check/verify_backbones.py --model cbramod
-conda run -n labram   python scripts/check/verify_backbones.py --model labram
+conda run -n mirepnet python scripts/verify_backbones.py --model mirepnet
+conda run -n cbramod  python scripts/verify_backbones.py --model cbramod
+conda run -n labram   python scripts/verify_backbones.py --model labram
 # 适配器端到端
-conda run -n mirepnet python scripts/check/smoke_test.py --models ifnet eegnet adfcnn mirepnet
+conda run -n mirepnet python scripts/smoke_test.py --models ifnet eegnet adfcnn mirepnet
 ```
 
 ## 实验与工具入口
@@ -120,17 +120,16 @@ conda run -n mirepnet python scripts/check/smoke_test.py --models ifnet eegnet a
 
 `scripts/` 是工具箱，不承载正式实验矩阵。
 
-**`scripts/check/` — 自检 / 冒烟**（改完代码先跑）
+**`scripts/` — 自检 / 冒烟**（改完代码先跑）
 - `verify_foundation.py` — 数据层+小模型 vendoring 逐位一致
 - `verify_backbones.py --model {mirepnet,cbramod,labram}` — 大模型 backbone build+forward
 - `smoke_test.py` — 数据切分 + 适配器 forward 契约
 
-**`scripts/export/` — 微调 + 导出产物**（一切协同实验的共享前置：先把 teacher/student 产物缓存出来）
-- `finetune_export.py --model <m> --dataset <ds>` — 微调单个模型并导出标准产物（**主入口**）
-- `export_preds.py` — 统一的逐样本预测/特征导出（within + LOSO）
-- `export_teacher_mc.py` — teacher + MC-dropout 不确定度
-- `export_teacher_loso.py` — LOSO 逐 fold teacher 微调
-- `export_teacher_loso_subjoof.py` — LOSO subject-OOF 交叉拟合 teacher
+**`experiments/finetune/` — 单模型微调 + 导出产物**（一切协同实验的共享前置：先把 teacher/student 产物缓存出来）
+- `finetune.py --model <m> --dataset <ds> --protocol fewshot|loso` — 微调单个模型并导出标准产物（**主入口**）
+- `finetune_teacher_mc.py` — teacher + MC-dropout 不确定度
+- `finetune_teacher_loso.py` — LOSO 逐 fold teacher 微调
+- `finetune_teacher_loso_subjoof.py` — LOSO subject-OOF 交叉拟合 teacher
 
 **`experiments/bidir/`、`experiments/mask/` — 负结果复现**
 - `experiments/bidir/` — 双向互蒸馏 / CR-AMD / BD-EEG / feature-level mutual（全线判 null，留作复现）
@@ -143,7 +142,7 @@ conda run -n mirepnet python scripts/check/smoke_test.py --models ifnet eegnet a
 
 ```text
 原始数据 -> data/split.py(规范切分) -> models/<name>/adapter.py(预处理/前向)
-  -> scripts/export/*.py(导出工件 .npz) -> experiments/*(编排) -> collab/*(算法) -> eval/*(统计) -> results/
+  -> experiments/finetune/*.py(微调+导出工件 .npz) -> experiments/*(编排) -> collab/*(算法) -> eval/*(统计) -> results/
 ```
 
 几个最容易混淆的点：

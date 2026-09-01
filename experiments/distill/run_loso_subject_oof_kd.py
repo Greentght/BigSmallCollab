@@ -13,7 +13,7 @@ KD objective is applied. The script also writes teacher diagnostics and in-sampl
 vs OOF logit-difference summaries aligned to the student train rows.
 
 Prerequisite:
-    conda run -n mirepnet python scripts/export/export_teacher_loso_subjoof.py \
+    conda run -n mirepnet python experiments/finetune/finetune_teacher_loso_subjoof.py \
         --dataset BNCI2014001-4 --seeds 666 --gpu 0
 
 Run:

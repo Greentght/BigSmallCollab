@@ -1,4 +1,4 @@
-"""Subject-OOF LOSO teacher export.
+"""Subject-OOF LOSO teacher finetune.
 
 For an outer LOSO fold f, the student trains on all subjects except f. This
 script creates teacher targets for those source-subject samples by cross-fitting
@@ -14,7 +14,7 @@ is keyed as:
     results/artifacts/<dataset>/mirepnet_loso_subjoof/<f>_<seed>_train.npz
 
 Example:
-    conda run -n mirepnet python scripts/export/export_teacher_loso_subjoof.py \
+    conda run -n mirepnet python experiments/finetune/finetune_teacher_loso_subjoof.py \
         --dataset BNCI2014001-4 --seeds 666 --gpu 0
 """
 import argparse

@@ -1,7 +1,7 @@
 """Smoke test: canonical data split + adapter forward contract.
 
 Run inside the `mirepnet` env (covers ifnet/eegnet/adfcnn/mirepnet):
-    conda run -n mirepnet python scripts/check/smoke_test.py --models ifnet mirepnet
+    conda run -n mirepnet python scripts/smoke_test.py --models ifnet mirepnet
 
 Validates, for one subject/seed:
   1. core.data.subject_split returns aligned (N,C,1000) splits.
@@ -12,7 +12,7 @@ import argparse
 import os
 import sys
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import torch
 

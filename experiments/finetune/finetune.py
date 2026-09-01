@@ -1,12 +1,12 @@
-"""Unified per-sample prediction/feature exporter (fewshot + LOSO).
+"""Unified single-model finetune + artifact export (fewshot + LOSO).
 
 Trains ONE model under a chosen protocol and writes standardized artifacts
 (logits/feats/y) that the collab hub + Phase-D0 diagnostics consume. Run inside
 that model's conda env (see configs/models/<model>.yaml `env`):
 
-    conda run -n mirepnet python scripts/export/export_preds.py --model ifnet   --dataset BNCI2014004    --protocol loso   --gpu 2
-    conda run -n mirepnet python scripts/export/export_preds.py --model eegnet  --dataset BNCI2014001-4  --protocol fewshot --gpu 2
-    conda run -n cbramod  python scripts/export/export_preds.py --model cbramod --dataset BNCI2014004 --protocol loso --gpu 2
+    conda run -n mirepnet python experiments/finetune/finetune.py --model ifnet   --dataset BNCI2014004    --protocol loso   --gpu 2
+    conda run -n mirepnet python experiments/finetune/finetune.py --model eegnet  --dataset BNCI2014001-4  --protocol fewshot --gpu 2
+    conda run -n cbramod  python experiments/finetune/finetune.py --model cbramod --dataset BNCI2014004 --protocol loso --gpu 2
 
 Protocols
 ---------
@@ -110,7 +110,7 @@ def main(argv=None):
             raise ValueError('--train_percentage must be in (0, 1)')
         val_split = 1.0 - train_percentage
 
-    print(f'[export] {a.model} {a.dataset} {protocol} -> dir={artifact_dir} '
+    print(f'[finetune] {a.model} {a.dataset} {protocol} -> dir={artifact_dir} '
           f'device={device} keys={keys} seeds={seeds}', flush=True)
 
     for seed in seeds:

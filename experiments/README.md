@@ -11,6 +11,7 @@ python -m experiments.run configs/exp/<name>.yaml --report
 Directory roles:
 
 - `run.py` — config-driven experiment runner (cell gen in `data.split`; method registry is `run.py`'s `METHOD_REGISTRY`).
+- `finetune/` — single-model finetune + artifact export (fewshot / LOSO, any model; the shared prerequisite caching teacher/student artifacts).
 - `distill/` — KD / few-shot Pearson / LOSO distillation drivers (incl. `analyze_fewshot_pearson.py`).
 - `bigmodel/` — native big-model adaptation and tuning drivers (CBraMod / LaBraM / MIRepNet).
 - `bidir/` — bidirectional / CR-AMD / BD-EEG / feature-level mutual drivers (line closed as null, kept for reproduction).
@@ -19,5 +20,5 @@ Directory roles:
 The D0-onward line (fusion / router / balance-gate / target-support) is archived;
 recover it from the `pre-consolidation` git tag.
 
-Reusable collaboration algorithms belong in `collab/`. Operational tools belong
-in `scripts/` (`check/`, `export/`).
+Reusable collaboration algorithms belong in `collab/`. Verification/tooling
+belongs in `scripts/`.

@@ -2,7 +2,7 @@
 
 Run in the STUDENT's conda env (small models -> mirepnet). The teacher's
 train-split artifact (feats + logits) must already exist — exported earlier via
-finetune_export.py in the teacher's own env. The big teacher is never loaded here.
+finetune.py in the teacher's own env. The big teacher is never loaded here.
 
     conda run -n mirepnet python experiments/distill/run_distill.py \
         --dataset BNCI2014004 --teacher cbramod --student ifnet \

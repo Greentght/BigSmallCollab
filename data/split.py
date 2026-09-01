@@ -99,7 +99,7 @@ def loso_split(dataset_name, test_subject, num_subjects=None, data_mode=None):
     ``(X_tr, y_tr, subj_tr, X_te, y_te)`` where ``subj_tr`` is the per-trial
     subject id (for subject-balanced sampling / per-subject EA). Raw
     ``(N, C_native, 1000)`` @ 250 Hz; each adapter preprocesses on top (the
-    MIRepNet teacher must EA per subject-group — see export_teacher_loso).
+    MIRepNet teacher must EA per subject-group — see finetune_teacher_loso).
 
     No randomness: the fold is fully determined by ``test_subject``.
     """

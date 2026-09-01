@@ -2,7 +2,7 @@
 
 Each held-out subject is evaluated by finetuning MIRepNet on all remaining
 subjects. EA is applied per subject before the mixed LOSO train set is passed to
-MIRepNet, matching ``scripts/export/export_teacher_loso.py`` and avoiding a
+MIRepNet, matching ``experiments/finetune/finetune_teacher_loso.py`` and avoiding a
 single transductive whitening covariance over multiple people.
 
 Example:

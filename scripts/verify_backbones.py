@@ -2,9 +2,9 @@
 weights + forwards, with zero dependence on the external upstream repo.
 
 Run each in its own conda env:
-    conda run -n mirepnet python scripts/check/verify_backbones.py --model mirepnet
-    conda run -n cbramod  python scripts/check/verify_backbones.py --model cbramod
-    conda run -n labram   python scripts/check/verify_backbones.py --model labram
+    conda run -n mirepnet python scripts/verify_backbones.py --model mirepnet
+    conda run -n cbramod  python scripts/verify_backbones.py --model cbramod
+    conda run -n labram   python scripts/verify_backbones.py --model labram
 """
 import argparse
 import os
@@ -12,7 +12,7 @@ import sys
 
 import numpy as np
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import config
 from models import get_adapter
