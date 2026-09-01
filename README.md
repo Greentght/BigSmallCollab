@@ -86,9 +86,8 @@ conda run -n mirepnet python scripts/check/smoke_test.py --models ifnet eegnet a
 `experiments/<line>/`，不要再新增到 `scripts/`。
 
 **`experiments/run.py` — config-driven 主入口**
-- `protocols.py` — within / LOSO cell 生成
-- `methods.py` — YAML condition 到 `collab.distill.distill_student` kwargs 的 registry
 - `run.py` — config -> cells -> conditions -> metrics CSV -> optional report
+- cell 生成在 `data.split`(`iter_cells`);condition → kwargs 的 registry 是 `run.py` 里的 `METHOD_REGISTRY`
 
 **`experiments/bigmodel/` — 大模型原生适配 & 调参**
 - `cbramod_adapt.py` · `labram_adapt.py` — 下游适配与调参驱动；CBraMod 支持 `--protocol loso`
@@ -123,8 +122,8 @@ conda run -n mirepnet python scripts/check/smoke_test.py --models ifnet eegnet a
 - `experiments/bidir/` — 双向互蒸馏 / CR-AMD / BD-EEG / feature-level mutual（全线判 null，留作复现）
 - `experiments/mask/run_wrong_sample.py` — wrong-sample 利用 E0-E5（closed；仅 E2 correct-only KD 存活）
 
-**`scripts/legacy/` — 早期一次性编排脚本**
-- `run_*.sh` — 各实验线的规范启动器（路径已指向 `experiments/`）
+**`scripts/legacy/` — 早期一次性编排脚本**（已归档到 tag `archive-legacy-scripts`）
+- `run_*.sh` — 各实验线的规范启动器；取回:`git checkout archive-legacy-scripts -- scripts/legacy`
 
 ## 范围
 

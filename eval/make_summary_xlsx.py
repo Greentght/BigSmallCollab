@@ -11,7 +11,7 @@ get a ``source`` column = its filename), then writes three sheets:
                condition acc% means side by side and their difference
 
 Usage:
-    python tools/make_summary_xlsx.py \
+    python eval/make_summary_xlsx.py \
         --hist 'results/metrics/*.csv' \
         --repro 'results/metrics_repro/*.csv' \
         [--out results/summary_repro.xlsx] [--n_boot 2000]
@@ -106,7 +106,7 @@ def _write(path, sheets):
 
 
 def main():
-    ap = argparse.ArgumentParser(prog='tools/make_summary_xlsx.py')
+    ap = argparse.ArgumentParser(prog='eval/make_summary_xlsx.py')
     ap.add_argument('--hist', default=None, help='glob of historical metrics CSVs')
     ap.add_argument('--repro', default=None, help='glob of re-run metrics CSVs')
     ap.add_argument('--out', default=None,

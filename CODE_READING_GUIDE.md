@@ -131,20 +131,20 @@ results/artifacts/<dataset>/<model>[|_loso]/<key>_<seed>_<split>.npz
 读任何 driver 的顺序:`parse_args/YAML → config → protocol/split → artifact/adapter → collab → eval.metrics → CSV`。
 
 - **`run.py`** = config-driven 主入口(矩阵实验优先 YAML):`python -m experiments.run configs/exp/<name>.yaml [--gpu N] [--seed S] [--report]`。
-  `protocols.py` 生成 (dataset×unit×seed) cell;`methods.py` 把 condition 名映射成
-  distill 参数(baseline/kd/feat/combo/proto/dkd + masked sugar)。
+  cell 生成在 `data.split`(iter_cells);condition → distill 参数映射在
+  `run.py` 的 METHOD_REGISTRY(baseline/kd/feat/combo/proto/dkd + masked sugar)。
 - **`distill/`** — 蒸馏实验:`run_distill.py` 是历史主入口(mask/dkd/eakd/adaptive/pearson
   各 flag 都在它身上);LOSO 版走 `run_loso_distill.py`、`run_loso_subject_oof_kd.py`。
 - **`bigmodel/`** — 大模型适配(`*_adapt.py`)与网格调参(`tune_*.py`,
   1-seed search + 3-seed confirm,断点续跑)。
-- **`bidir/` + `mask/`** — 负结果复现线,命令以 `scripts/legacy/run_*.sh` 为准。
+- **`bidir/` + `mask/`** — 负结果复现线,命令以 `scripts/legacy/run_*.sh` 为准(已归档到 tag `archive-legacy-scripts`,取回 `git checkout archive-legacy-scripts -- scripts/legacy`)。
 
-## 7. 评估层(eval/)与工具(tools/)
+## 7. 评估层(eval/)
 
 - `python -m eval 'results/metrics/*.csv' [--baseline X]` — 配对 Wilcoxon + Holm + CI。
   **小提升只看这个,不看 raw mean**(项目纪律:固定种子 + 被试级配对 + Holm 才能下结论)。
-- 重跑验收:`tools/compare_repro.py`(确定性家族逐行 bit-identical;审计家族 CI 内)。
-- 汇总:`tools/make_summary_xlsx.py --hist <glob> --repro <glob>` → `results/summary_*.xlsx`。
+- 重跑验收:`eval/compare_repro.py`(确定性家族逐行 bit-identical;审计家族 CI 内)。
+- 汇总:`eval/make_summary_xlsx.py --hist <glob> --repro <glob>` → `results/summary_*.xlsx`。
 
 ---
 
@@ -261,11 +261,11 @@ conda run -n mirepnet python experiments/distill/analyze_fewshot_pearson.py \
 ### 验收 / 对比 / 汇总(跑完后)
 
 ```bash
-python tools/compare_repro.py --hist 'results/metrics/<fam>_*.csv' \
+python eval/compare_repro.py --hist 'results/metrics/<fam>_*.csv' \
   --repro 'results/metrics_repro/<fam>_*.csv' --mode deterministic   # ✅ 家族:逐行 bit-identical
-python tools/compare_repro.py --hist '...' --repro '...' --mode ci --tol 0.5   # ❌ 家族:CI 内
+python eval/compare_repro.py --hist '...' --repro '...' --mode ci --tol 0.5   # ❌ 家族:CI 内
 python -m eval 'results/metrics_repro/<fam>_*.csv'                  # 配对统计报告
-python tools/make_summary_xlsx.py --hist 'results/metrics/*.csv' --repro 'results/metrics_repro/*.csv'
+python eval/make_summary_xlsx.py --hist 'results/metrics/*.csv' --repro 'results/metrics_repro/*.csv'
 ```
 
 ---
@@ -283,8 +283,8 @@ git checkout pre-consolidation -- experiments/fusion experiments/adapt eval/d0.p
 2. `configs/datasets/*.yaml` → `data/split.py` → `data/eeg_dataset.py`
 3. `models/base.py` → `models/__init__.py` → 一个小模型 adapter(`models/ifnet/adapter.py`)→ 一个大模型 adapter(`models/mirepnet/adapter.py`)
 4. `scripts/export/finetune_export.py` → `collab/artifacts.py`
-5. `experiments/run.py` + `protocols.py` + `methods.py` → `collab/distill.py`
-6. `eval/stats.py` → `tools/compare_repro.py`
+5. `experiments/run.py`(METHOD_REGISTRY)→ `data.split`(iter_cells)→ `collab/distill.py`
+6. `eval/stats.py` → `eval/compare_repro.py`
 
 ## 11. 最容易混淆的点
 

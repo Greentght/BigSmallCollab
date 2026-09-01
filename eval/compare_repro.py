@@ -11,9 +11,9 @@ Matches files by basename between the two globs, then per condition checks:
 Prints a per-condition table and exits 0 only if every check passed.
 
 Usage:
-    python tools/compare_repro.py --hist 'results/metrics/*.csv' \
+    python eval/compare_repro.py --hist 'results/metrics/*.csv' \
         --repro 'results/metrics_repro/*.csv' --mode deterministic
-    python tools/compare_repro.py --hist 'results/metrics/*.csv' \
+    python eval/compare_repro.py --hist 'results/metrics/*.csv' \
         --repro 'results/metrics_repro/*.csv' --mode ci --tol 0.5
 """
 import argparse
@@ -88,7 +88,7 @@ def check_ci(hist, repro, tol=0.5, n_boot=2000):
 
 
 def main():
-    ap = argparse.ArgumentParser(prog='tools/compare_repro.py')
+    ap = argparse.ArgumentParser(prog='eval/compare_repro.py')
     ap.add_argument('--hist', required=True, help='glob of historical CSVs')
     ap.add_argument('--repro', required=True, help='glob of re-run CSVs')
     ap.add_argument('--mode', choices=('deterministic', 'ci'),

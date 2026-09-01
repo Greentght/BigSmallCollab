@@ -4,6 +4,9 @@
 `results/metrics/*.csv` 对比,验证可复现性。本手册是权威记录;`scripts/legacy/run_*.sh`
 是各家族的**规范命令来源**(超参与当时收口实验一致),REPRO 阶段以它们为准。
 
+> ⚠️ `scripts/legacy/` 已归档到 tag `archive-legacy-scripts`;取回:
+> `git checkout archive-legacy-scripts -- scripts/legacy`。
+
 ---
 
 ## 0. 数据流总览
@@ -30,8 +33,8 @@
 
 统计:  python -m eval '<glob>'        → eval/stats.py: 种子先平均 → subject/fold 配对
                                         Wilcoxon + Holm + bootstrap CI
-对比:  tools/compare_repro.py         → 历史 vs 重跑(deterministic / ci 两档)
-汇总:  tools/make_summary_xlsx.py     → results/summary_*.xlsx
+对比:  eval/compare_repro.py         → 历史 vs 重跑(deterministic / ci 两档)
+汇总:  eval/make_summary_xlsx.py     → results/summary_*.xlsx
 ```
 
 要点:
@@ -77,7 +80,7 @@ REPRO_OUT=results/metrics_repro \
 setsid nice -n 19 conda run -n mirepnet python -m experiments.run \
   configs/exp/distill_kd_within.yaml --gpu 2 \
   > logs/repro_f1/smoke.log 2>&1 < /dev/null &
-python tools/compare_repro.py --hist 'results/metrics/distill_kd_within.csv' \
+python eval/compare_repro.py --hist 'results/metrics/distill_kd_within.csv' \
   --repro 'results/metrics_repro/distill_kd_within.csv' --mode deterministic
 ```
 
@@ -106,15 +109,15 @@ within / mirepnet_loso)→ 族 7(依赖 within 工件)→ 族 2/10 few-shot → 
 
 ```bash
 # ✅ 确定性家族:逐行 bit-identical
-python tools/compare_repro.py --hist 'results/metrics/<fam>_*.csv' \
+python eval/compare_repro.py --hist 'results/metrics/<fam>_*.csv' \
   --repro 'results/metrics_repro/<fam>_*.csv' --mode deterministic
 
 # ❌ 审计家族:逐 subject 配对差在 bootstrap CI 内(|mean|<=0.5pp 也放行)
-python tools/compare_repro.py --hist 'results/metrics/<fam>_*.csv' \
+python eval/compare_repro.py --hist 'results/metrics/<fam>_*.csv' \
   --repro 'results/metrics_repro/<fam>_*.csv' --mode ci --tol 0.5
 ```
 
-汇总: `python tools/make_summary_xlsx.py --hist 'results/metrics/*.csv' --repro 'results/metrics_repro/*.csv'`
+汇总: `python eval/make_summary_xlsx.py --hist 'results/metrics/*.csv' --repro 'results/metrics_repro/*.csv'`
 统计: `python -m eval 'results/metrics_repro/<fam>_*.csv'`(基线自动 = `*_base`)
 
 偏差清单 → `docs/repro_report.md`(结构:环境指纹 / bit-identical 表 / CI 内表 /
