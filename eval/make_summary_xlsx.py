@@ -4,16 +4,16 @@ Replaces the historical hand-made ``results/*_summary.xlsx`` files with
 in-repo code. Reads every metrics CSV matched by a glob (each file's rows
 get a ``source`` column = its filename), then writes three sheets:
 
-    by_cond  — per source x condition mean acc%/kappa (seeds+units pooled)
-    stats    — eval.stats.compare vs the auto-picked baseline (condition
+    by_method  — per source x method mean acc%/kappa (seeds+units pooled)
+    stats    — eval.stats.compare vs the auto-picked baseline (method
                ending in base/Base), one row per method, incl. Holm p
     diff     — when both --repro and --hist globs are given: per source x
-               condition acc% means side by side and their difference
+               method acc% means side by side and their difference
 
 Usage:
     python eval/make_summary_xlsx.py \
-        --hist 'results/metrics/*.csv' \
-        --repro 'results/metrics_repro/*.csv' \
+        --hist 'results/*.csv' \
+        --repro 'results_repro/*.csv' \
         [--out results/summary_repro.xlsx] [--n_boot 2000]
 
 Only basic row/column writes (no styling) so old openpyxl works; if xlsx
@@ -32,7 +32,6 @@ import pandas as pd
 from eval import stats as estats
 
 UNIT_COLS = ('subject', 'fold')
-COND_COLS = ('condition', 'group')
 
 
 def _load(pattern):
@@ -48,28 +47,28 @@ def _unit_col(df):
     return next(c for c in UNIT_COLS if c in df.columns)
 
 
-def _cond_col(df):
-    return next(c for c in COND_COLS if c in df.columns)
+def _method_col(df):
+    return estats._method_col(df)
 
 
-def by_cond(df):
-    cond = _cond_col(df)
+def by_method(df):
+    method = _method_col(df)
     cols = [c for c in ('acc', 'kappa') if c in df.columns]
-    return (df.groupby(['source', cond])[cols].mean()
+    return (df.groupby(['source', method])[cols].mean()
             .round(4).reset_index())
 
 
 def stats_sheet(df, n_boot=2000):
     """Per-source paired contrasts vs the auto-picked baseline."""
-    cond = _cond_col(df)
+    method = _method_col(df)
     unit = _unit_col(df)
     rows = []
     for source, sub in df.groupby('source'):
-        conds = list(sub[cond].unique())
-        base = next((c for c in conds if str(c).lower().endswith('base')), None)
-        if base is None or len(conds) < 2:
+        methods = list(sub[method].unique())
+        base = next((c for c in methods if str(c).lower().endswith('base')), None)
+        if base is None or len(methods) < 2:
             continue
-        res = estats.compare(sub, base, [c for c in conds if c != base],
+        res = estats.compare(sub, base, [c for c in methods if c != base],
                              metric='acc', n_boot=n_boot)
         for _, r in res.iterrows():
             row = dict(r.to_dict())
@@ -79,10 +78,10 @@ def stats_sheet(df, n_boot=2000):
 
 
 def diff_sheet(hist, repro):
-    h = by_cond(hist).rename(columns={'acc': 'acc_hist', 'kappa': 'kappa_hist'})
-    r = by_cond(repro).rename(columns={'acc': 'acc_repro', 'kappa': 'kappa_repro'})
-    cond = _cond_col(hist)
-    m = pd.merge(h, r, on=['source', cond], how='outer')
+    h = by_method(hist).rename(columns={'acc': 'acc_hist', 'kappa': 'kappa_hist'})
+    r = by_method(repro).rename(columns={'acc': 'acc_repro', 'kappa': 'kappa_repro'})
+    method = _method_col(hist)
+    m = pd.merge(h, r, on=['source', method], how='outer')
     m['acc_diff'] = (m['acc_repro'] - m['acc_hist']).round(4)
     if 'kappa_repro' in m and 'kappa_hist' in m:
         m['kappa_diff'] = (m['kappa_repro'] - m['kappa_hist']).round(4)
@@ -125,7 +124,7 @@ def main():
         repro = _load(a.repro)
     for label, df in (('hist', hist), ('repro', repro)):
         if df is not None:
-            sheets[f'by_cond_{label}'] = by_cond(df)
+            sheets[f'by_method_{label}'] = by_method(df)
             sheets[f'stats_{label}'] = stats_sheet(df, a.n_boot)
     if hist is not None and repro is not None:
         sheets['diff'] = diff_sheet(hist, repro)

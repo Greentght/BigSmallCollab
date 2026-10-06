@@ -1,9 +1,10 @@
-# BNCI2015001 2-class (feet / right_hand) — 13 ch, 12 subjects.
-# Native 512 Hz, resampled to 250 Hz by the loader; default session_A only
-# (override with env MI2015001_SESSION).
+# Dataset facts + shared split policy only.
+# Model-specific finetune hyperparameters live in configs/models/<model>.yaml.
+# BNCI2015001 2-class (feet / right_hand), 13 ch, 12 subjects.
+# Native 512 Hz, resampled to 250 Hz by the loader; default session_A only.
 num_classes: 2
 channels: 13
 num_subjects: 12
 sample_rate: 250
-val_split: 0.3        # TEST fraction: 70% calib / 30% test
+val_split: 0.7        
 seeds: [666, 667, 668]

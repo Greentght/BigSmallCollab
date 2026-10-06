@@ -1,0 +1,37 @@
+name: progressive_task_feature_logit_kd_pilot
+type: distill
+method: progressive_task_feature_logit_kd
+
+datasets:
+  - BNCI2014001
+  - BNCI2014004
+  - BNCI2015001
+  - AlexMI
+protocol: fewshot
+val_split: 0.7
+seed: 666
+
+pre_teacher: mirepnet
+ft_teacher: mirepnet
+student: ifnet
+artifact_root: results/artifacts
+output_dir: results/distill/progressive_task_feature_logit_kd_pilot
+
+epochs: 100
+prealign_epochs: 10
+optimizer: AdamW
+lr: 0.001
+weight_decay: 0.01
+batch_size: 16
+scheduler: CosineAnnealingLR
+lambda_pre: 1.0
+lambda_ft: 1.0
+temperature_kd: 2.0
+lam_kd: 0.5
+feature_eps: 1.0e-8
+drop_last: false
+model_selection: final_epoch
+
+conditions:
+  - TASK_FEAT_LOGIT_KD
+  - PREALIGN_THEN_TASK_FEAT_LOGIT_KD

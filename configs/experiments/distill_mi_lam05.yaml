@@ -1,0 +1,26 @@
+name: distill_mi_lam05
+type: distill
+method: mi
+
+# Isolated repeat of the completed distill_mi pilot with lam_mi=0.5.
+# Keep the original distill_mi (lam_mi=0.1) output untouched.
+datasets:
+  - BNCI2014001
+  - BNCI2014004
+  - BNCI2015001
+  - AlexMI
+
+protocols: [fewshot]
+seeds: null
+subjects: null
+include_baseline: true
+artifact_root: results/artifacts
+output_dir: results/distill
+fail_fast: false
+
+pairs:
+  - teacher: mirepnet
+    student: ifnet
+    params:
+      lam_mi: 0.5
+    grid: {}

@@ -6,14 +6,14 @@ we report, for the key contrasts, mean/median Delta acc%, 95% bootstrap CI,
 win count, paired Wilcoxon p, and Holm-corrected p across the contrasts.
 
     conda run -n mirepnet python experiments/distill/analyze_fewshot_pearson.py \
-        results/metrics/BNCI2014001-4_fewshot_pearson_mirepnet_to_ifnet.csv
+        results/BNCI2014001-4_fewshot_pearson_mirepnet_to_ifnet.csv
 """
 import sys
 import numpy as np
 import pandas as pd
 from scipy.stats import wilcoxon
 
-# (name, condition_a, condition_b) -> tests a - b
+# (name, method_a, method_b) -> tests a - b
 CONTRASTS = [
     ('Pearson  - base', 'Pearson', 'base'),
     ('KD       - base', 'KD', 'base'),
@@ -42,13 +42,13 @@ def holm(pvals):
 
 def analyze(csv):
     df = pd.read_csv(csv)
-    df['cond'] = df['condition'].str.replace(r'^[^_]+_', '', regex=True)
-    student = df['condition'].iloc[0].split('_')[0]
+    df['method_name'] = df['method'].str.replace(r'^[^_]+_', '', regex=True)
+    student = df['method'].iloc[0].split('_')[0]
     print(f"\n==== {csv}  (student={student}, "
           f"{df['subject'].nunique()} subjects, seeds={sorted(df['seed'].unique())}) ====")
     for shots, g in df.groupby('shots'):
         # per-subject mean over seeds
-        piv = g.groupby(['subject', 'cond'])['acc'].mean().unstack('cond')
+        piv = g.groupby(['subject', 'method_name'])['acc'].mean().unstack('method_name')
         means = piv.mean()
         print(f"\n--- shots={shots} (n_subj={len(piv)}) | mean acc%: "
               + ', '.join(f"{c}={means[c]:.2f}" for c in

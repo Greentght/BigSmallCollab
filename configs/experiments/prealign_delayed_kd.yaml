@@ -1,0 +1,38 @@
+name: prealign_delayed_kd_pilot
+type: distill
+method: prealign_delayed_kd
+
+# Subject-wise few-shot only: 30% train / 70% test.
+datasets:
+  - BNCI2014001
+  - BNCI2014004
+  - BNCI2015001
+  - AlexMI
+protocol: fewshot
+val_split: 0.7
+seed: 666
+
+pre_teacher: mirepnet
+ft_teacher: mirepnet
+student: ifnet
+artifact_root: results/artifacts
+output_dir: results/distill/prealign_delayed_kd_pilot
+
+epochs: 100
+prealign_epochs: 10
+optimizer: AdamW
+lr: 0.001
+weight_decay: 0.01
+batch_size: 16
+scheduler: CosineAnnealingLR
+lambda_general: 1.0
+temperature_kd: 2.0
+lam_kd: 0.5
+drop_last: false
+model_selection: final_epoch
+
+conditions:
+  - BASE_CE
+  - PREALIGN_ONLY
+  - DELAYED_KD
+  - PREALIGN_THEN_KD

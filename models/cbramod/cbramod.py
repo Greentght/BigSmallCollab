@@ -112,7 +112,8 @@ if __name__ == '__main__':
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     model = CBraMod(in_dim=200, out_dim=200, d_model=200, dim_feedforward=800, seq_len=30, n_layer=12,
                     nhead=8).to(device)
-    model.load_state_dict(torch.load('pretrained_weights/pretrained_weights.pth',
+    import config
+    model.load_state_dict(torch.load(config.weight_path('cbramod'),
                                      map_location=device))
     a = torch.randn((8, 16, 10, 200)).cuda()
     b = model(a)

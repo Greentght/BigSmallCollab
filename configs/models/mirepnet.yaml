@@ -1,10 +1,73 @@
 # MIRepNet foundation model; EA + 45ch pad. Env: mirepnet.
 env: mirepnet
 size: big
-epochs: 10
-lr: 0.001
-batch_size: 8
-weight_decay: 0.000001
 emb_size: 256
 depth: 6
-# pretrain: defaults to <MIRepNet>/weight/MIRepNet.pth
+
+# Model-specific finetune hyperparameters.
+# Merge order: defaults < dataset < protocol. Data splits/seeds stay in configs/datasets/.
+finetune:
+  defaults:
+    epochs: 10
+    lr: 0.001
+    batch_size: 8
+    weight_decay: 0.000001
+    optimizer: adam
+    momentum: 0.9
+  BNCI2014001:
+    fewshot:
+      epochs: 10
+      lr: 0.001
+      batch_size: 8
+      weight_decay: 0.000001
+    loso:
+      epochs: 10
+      lr: 0.001
+      batch_size: 8
+      weight_decay: 0.000001
+  BNCI2014001-4:
+    fewshot:
+      epochs: 20
+      lr: 0.001
+      batch_size: 8
+      weight_decay: 0.000001
+    loso:
+      epochs: 20
+      lr: 0.001
+      batch_size: 8   
+      weight_decay: 0.000001
+  BNCI2014004:
+    fewshot:
+      epochs: 10
+      lr: 0.001
+      batch_size: 8
+      weight_decay: 0.000001
+    loso:
+      epochs: 10
+      lr: 0.001
+      batch_size: 8
+      weight_decay: 0.000001
+  BNCI2015001:
+    fewshot:
+      epochs: 10
+      lr: 0.001
+      batch_size: 8
+      weight_decay: 0.000001
+    loso:
+      epochs: 10
+      lr: 0.001
+      batch_size: 8
+      weight_decay: 0.000001
+  AlexMI:
+    fewshot:
+      epochs: 10
+      lr: 0.001
+      batch_size: 8
+      weight_decay: 0.000001
+    loso:
+      epochs: 10
+      lr: 0.001
+      batch_size: 8
+      weight_decay: 0.000001
+
+# pretrain: defaults to /data1/llx/pre_weight/mirepnet.pth

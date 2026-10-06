@@ -1,0 +1,38 @@
+name: distill_seed666_three_ablation
+type: distill
+method: seed666_three_ablation
+
+datasets:
+  - BNCI2014001
+  - BNCI2014001-4
+  - BNCI2014004
+  - BNCI2015001
+  - AlexMI
+protocol: fewshot
+val_split: 0.7
+seed: 666
+teacher: mirepnet
+student: ifnet
+artifact_root: results/artifacts
+output_dir: results/distill/seed666_three_ablation
+main_csv: results/distill/seed666_three_ablation.csv
+epochs: 100
+optimizer: adamw
+lr: 0.001
+weight_decay: 0.01
+batch_size: 16
+scheduler: CosineAnnealingLR
+temperature_kd: 2.0
+lam_kd: 0.5
+temperature_mi: 1.0
+lam_mi: 0.1
+mi_eps: 1.0e-8
+prototype_epsilon: 1.0e-12
+drop_last: false
+model_selection: final_epoch
+conditions:
+  - BASE_CE
+  - KD_ALL
+  - WARMUP10
+  - KD_MI_ALL
+  - KD_PROTO

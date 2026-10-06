@@ -1,0 +1,69 @@
+protocol_id: loso_cbramod_0014_npy_source_control_20261006
+status: queued_waiting_for_nonzero_gpu
+purpose: Compare the existing NPY source against the MOABB-rebuilt source under the same CBraMod 001-4 reference-aligned LOSO pipeline.
+
+data:
+  dataset: BNCI2014001-4
+  legacy_dataset_directory: /data1/llx/BNCI2014001
+  legacy_session: session_T
+  reference_session: 0train
+  subjects: 9
+  trials: 2592
+  trial_mapping: data_cache/eegfm_alignment_v2/rebuilt/BNCI2014001-4/legacy_row_mapping.csv
+  mapping_policy: preserve_moabb_trial_uid_order_and_reference_class_map
+  npy_source_window: first_1000_samples_from_1001_sample_legacy_epochs
+  native_sampling_rate_hz: 250
+  legacy_unit: unknown_not_recorded
+  legacy_filter_history: unknown_not_recorded
+  spectral_evidence:
+    legacy_relative_power_8_30_hz: approximately_92_percent
+    correlation_to_moabb_after_local_8_30_hz_filter: 0.9931
+    relative_rms_to_moabb_after_local_8_30_hz_filter: 0.1151
+    std_ratio_npy_over_filtered_moabb: 1.0147
+    interpretation: strongly_supports_8_30_hz_filter_was_applied_before_or_during_npy_creation_but_exact_generator_not_located
+  source_filter_reapplied: false
+
+model: cbramod
+training:
+  epochs: 20
+  optimizer: adamw
+  learning_rate: 0.001
+  batch_size: 16
+  weight_decay: 0.1
+  head_dropout: 0.5
+  label_smoothing: 0.0
+  warmup_epochs: 5
+  minimum_learning_rate: 0.000001
+  learning_rate_update: epoch_end_cumulative_global_step_reference_table
+  pretrained_checkpoint_sha256: 0792cb808c14e6b7a2bb2ce1dff379bc47bc54c49a779825bdfeb33bf8157178
+
+model_input:
+  resample: MNE_direct_250_to_200_hz
+  length_seconds: 4
+  bandpass_hz: [0.3, 75]
+  notch_hz: 60
+  notch_q: 30
+  common_average_reference: true
+  euclidean_alignment: false
+  scale_divisor: 1.0
+  shape: [22, 4, 200]
+  same_as_moabb_profile_except_source_array: true
+
+evaluation:
+  split: leave_one_subject_out
+  seeds: [0, 1, 2]
+  seed_stream: match_reference_aligned_run
+  folds_per_seed: 9
+  total_training_units: 27
+  final_epoch_only: true
+  outer_test_used_for_selection: false
+
+execution:
+  allowed_physical_gpus: [1, 2, 3, 4, 5, 6, 7, 8, 9]
+  prohibited_physical_gpus: [0]
+  max_concurrent_seed_workers: 3
+  minimum_free_memory_mib: 10000
+  maximum_gpu_utilization_percent: 40
+  wait_for_gpu: true
+  output_profile: reference_aligned_npy
+  input_profile: reference_aligned_npy

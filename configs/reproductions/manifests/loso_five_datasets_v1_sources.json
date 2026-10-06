@@ -1,0 +1,248 @@
+{
+  "code_files": {
+    "config.py": "8d51a8aa6106cf40181dac22dc59b954aa33c0203b702195ba6bcde0c6e8fe47",
+    "configs/datasets/AlexMI.yaml": "0225ea54c2567b6815bac6b6e81eea29b514eb0f71352865754b204402d92b20",
+    "configs/datasets/BNCI2014001-4.yaml": "04e713d4fbe35ea5841f1bf28ac413ddec1dae452b2a8fe47e004cf2d5b697ea",
+    "configs/datasets/BNCI2014001.yaml": "7dbddd23f24c7d9d3134ddafdda9b91ba7e83012ec76396cf65a3155a12a751c",
+    "configs/datasets/BNCI2014004.yaml": "4d3cdfbdcf5fa9d830696e05eeec233e6a5b09c6082804c444fc1171846ac7bb",
+    "configs/datasets/BNCI2015001.yaml": "f15aff624582fcd75b8b5bec95decbfc827a294969292a45769a2a38510cb98c",
+    "configs/models/cbramod.yaml": "cd5d574bfa6ac08b60a52f3b630719079128dc8399cc884b334beaebf88f888f",
+    "configs/models/mirepnet.yaml": "e956d8aa7029fe956022c97293af319c9517fdae040af170dc2cc4d8af180d97",
+    "data/__init__.py": "a4e5e1911b6380efb166790723d03286f9f01613c1ecc7256c688d5570aebe15",
+    "data/channels.py": "2b40446eab6a76464e7da91572d332641c8cf1c6853bfe0894b412dfc099a1fa",
+    "data/eeg_dataset.py": "0da1862a09e6c51d49de45435e9216b3eed1ff22ddde4baaf66a56cea4d3ea5e",
+    "data/preproc.py": "83480c4daa5611364436c31f29cf46ae55a7364c0be979e4501d1ba525ff8118",
+    "data/split.py": "d42b375f0a1cc61c32edb4f284fb2d7725f4e09ce9297872fc250ffdd2a63f27",
+    "experiments/finetune/run_loso004_reproduction.py": "56079dceb6ce4476ee6c7224f5f17983d2ac76740492284b739b7c8ed75e11e0",
+    "experiments/finetune/run_loso_five_datasets.py": "9bb7f2ab13158a8ed90966d1149a493e9a445566c3f1360d080216a41422f724",
+    "experiments/finetune/run_loso_five_datasets_suite.sh": "a1df55883c08085694fff17dbc453be1b2f921ad5318f915c205f9ad838b322a",
+    "models/cbramod/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "models/cbramod/adapter.py": "9228690c032ec711f5dbbfbca59bd75dd8b9247a008011d15d0ae79df44147a5",
+    "models/cbramod/cbramod.py": "c869f6137dec21cc79d54eb6aded053f2cc087b08c53239d812863e04be65e38",
+    "models/cbramod/criss_cross_transformer.py": "90e90b8c98ca7eb543c44e32afc29674d3f71cb090692ad9f82db3a43edf334c",
+    "models/mirepnet/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "models/mirepnet/adapter.py": "673cb8cbc6e37a81ecc6122fabb3d49d3ad7a51c88f4fbc4b77a62d770c44d8f",
+    "models/mirepnet/lora.py": "5594dcb42ed6ff95e07feb76600653c21c7609477f8ceaac198735ab050ad2f3",
+    "models/mirepnet/mlm.py": "82ef54f166a050a0300b9300c73388daa6707216ad438c60105d0accd083933c",
+    "models/mirepnet/mmd.py": "e06e8a9e94b5a59fe87fc2a1f0bb41a1c85146d9c8e3bda145959d8cea9bc4cd"
+  },
+  "completed_004_source_and_weight_hash_checks": "passed_for_all_54_cells",
+  "created": "2026-10-01",
+  "environment_snapshot_status": "captured_in_each_formal_cell_manifest",
+  "manifests": {
+    "fold_manifest": {
+      "path": "docs/loso_five_datasets_folds.csv",
+      "sha256": "1253fff623c2b6a01ad686cc8607d2dc5e8e413fbb4e5c03df7e3f0ece54fadc"
+    },
+    "outer_task_folds": 47,
+    "trial_manifest": {
+      "path": "configs/reproductions/manifests/loso_five_datasets_v1_trials.csv",
+      "sha256": "d6a5a10bafd3ea7eb9f4ae68f9930f197f556e491042bc27f19aa28f16fedff6"
+    },
+    "trial_rows": 8008,
+    "unique_source_trials": 6712
+  },
+  "pretrained_weights": {
+    "cbramod": {
+      "bytes": 19775842,
+      "path": "/data1/llx/pre_weight/cbramod.pth",
+      "sha256": "0792cb808c14e6b7a2bb2ce1dff379bc47bc54c49a779825bdfeb33bf8157178"
+    },
+    "mirepnet": {
+      "bytes": 26993983,
+      "path": "/data1/llx/pre_weight/mirepnet.pth",
+      "sha256": "432288958007e344a5a84a9ffe9d0e5e5c0cb616aef86c85522375a3f4da9aaf"
+    }
+  },
+  "protocol_id": "loso_five_settings_canonical4s_v1",
+  "reference_files": {
+    "/home/lixinli/EEG-FM-Benchmark/README.md": "1aa011b18baca9b818f305dba224d71b59321e0fc2d74ef871c427bd8eb4784d",
+    "/home/lixinli/EEG-FM-Benchmark/config/BNCI2014004.json": "8313db1f76e1c4e8fa7114f875f209dfbab47fd0dd04eb906747a9ee3275cab3",
+    "/home/lixinli/EEG-FM-Benchmark/config/BNCI2015001.json": "570d2bffcba520624b8bc54098a537739751fea2a2799ba7834a71d0b6cbd7a0"
+  },
+  "sources": {
+    "AlexMI": {
+      "channel_order_provenance": "declared_by_loader_not_embedded_in_npy",
+      "channels_from_data_channels_py": [
+        "FPZ",
+        "F7",
+        "F3",
+        "FZ",
+        "F4",
+        "F8",
+        "T7",
+        "C3",
+        "CZ",
+        "C4",
+        "T8",
+        "P7",
+        "P3",
+        "PZ",
+        "P4",
+        "P8"
+      ],
+      "dtype": "float64",
+      "epoch_origin_status": "cached_epoch_start_with_full_event_time_provenance_missing",
+      "files": {
+        "X.npy": {
+          "bytes": 94433408,
+          "path": "/data1/llx/AlexMI/X.npy",
+          "sha256": "b50a0856bbb6e24d5e22d06531e1d41d3b232374640ba0ebcb7a418ff602b9a9"
+        },
+        "labels.npy": {
+          "bytes": 19328,
+          "path": "/data1/llx/AlexMI/labels.npy",
+          "sha256": "7d309a8bc2f7c16de8cff7ade2facb715c8cca01c4c3a81a77c5b92325e70c00"
+        },
+        "meta.csv": {
+          "bytes": 4711,
+          "path": "/data1/llx/AlexMI/meta.csv",
+          "sha256": "8352024a9d4a3631f633ef5ad8548a137409b8001e196b938e60f0f52d403e9a"
+        }
+      },
+      "filter_history_status": "not_fully_documented",
+      "fs_hz_from_loader_declaration": 512,
+      "shape": [
+        480,
+        16,
+        1537
+      ],
+      "unit_status": "microvolt_scale_supported_but_not_fully_proven_by_generation_record"
+    },
+    "BNCI2014001": {
+      "channel_order_provenance": "declared_by_loader_not_embedded_in_npy",
+      "channels_from_data_channels_py": [
+        "FZ",
+        "FC3",
+        "FC1",
+        "FCZ",
+        "FC2",
+        "FC4",
+        "C5",
+        "C3",
+        "C1",
+        "CZ",
+        "C2",
+        "C4",
+        "C6",
+        "CP3",
+        "CP1",
+        "CPZ",
+        "CP2",
+        "CP4",
+        "P1",
+        "PZ",
+        "P2",
+        "POZ"
+      ],
+      "dtype": "float64",
+      "epoch_origin_status": "cached_epoch_start_with_full_event_time_provenance_missing",
+      "files": {
+        "X.npy": {
+          "bytes": 913296512,
+          "path": "/data1/llx/BNCI2014001/X.npy",
+          "sha256": "d6425fc2ae9d1d1ec3184e51fd1b70346b88d497beebd1d2332624eebad3baac"
+        },
+        "labels.npy": {
+          "bytes": 663680,
+          "path": "/data1/llx/BNCI2014001/labels.npy",
+          "sha256": "8f48b564beef5f734320eff5914ccd2723493d04612bb50ade52b4e01c0fbf7d"
+        },
+        "meta.csv": {
+          "bytes": 123328,
+          "path": "/data1/llx/BNCI2014001/meta.csv",
+          "sha256": "77636352c1067cd34c8040c96a58d42cdc7aa38ec71302236f8ec1d91c26b77c"
+        }
+      },
+      "filter_history_status": "not_fully_documented",
+      "fs_hz_from_loader_declaration": 250,
+      "shape": [
+        5184,
+        22,
+        1001
+      ],
+      "unit_status": "microvolt_scale_supported_but_not_fully_proven_by_generation_record"
+    },
+    "BNCI2014004": {
+      "channel_order_provenance": "declared_by_loader_not_embedded_in_npy",
+      "channels_from_data_channels_py": [
+        "C3",
+        "CZ",
+        "C4"
+      ],
+      "dtype": "float64",
+      "epoch_origin_status": "cached_epoch_start_with_full_event_time_provenance_missing",
+      "files": {
+        "X.npy": {
+          "bytes": 176196608,
+          "path": "/data1/llx/BNCI2014004/X.npy",
+          "sha256": "b2cbd8759e8cb44da9096b9631025ec5708338d25caf36270c5584318a55e477"
+        },
+        "labels.npy": {
+          "bytes": 834688,
+          "path": "/data1/llx/BNCI2014004/labels.npy",
+          "sha256": "1af2f5a8ead30cc3d3bc13eb4346335211353e7dc8d902c5f2b4cf30af8e7ec6"
+        },
+        "meta004.csv": {
+          "bytes": 155392,
+          "path": "/data1/llx/BNCI2014004/meta004.csv",
+          "sha256": "752e7fe73931cbea89460c55e6f89752fc83cdb333efee6878312e0395aa6b37"
+        }
+      },
+      "filter_history_status": "not_fully_documented",
+      "fs_hz_from_loader_declaration": 250,
+      "shape": [
+        6520,
+        3,
+        1126
+      ],
+      "unit_status": "microvolt_scale_supported_but_not_fully_proven_by_generation_record"
+    },
+    "BNCI2015001": {
+      "channel_order_provenance": "declared_by_loader_not_embedded_in_npy",
+      "channels_from_data_channels_py": [
+        "FC3",
+        "FCZ",
+        "FC4",
+        "C5",
+        "C3",
+        "C1",
+        "CZ",
+        "C2",
+        "C4",
+        "C6",
+        "CP3",
+        "CPZ",
+        "CP4"
+      ],
+      "dtype": "float64",
+      "epoch_origin_status": "cached_epoch_start_with_full_event_time_provenance_missing",
+      "files": {
+        "X.npy": {
+          "bytes": 1491526528,
+          "path": "/data1/llx/BNCI2015001/X.npy",
+          "sha256": "4e1a63b20aae254fa42c0338ddcaecfe2bcef843eb4bc7faa1859d3aeca715a1"
+        },
+        "labels.npy": {
+          "bytes": 716928,
+          "path": "/data1/llx/BNCI2015001/labels.npy",
+          "sha256": "926ad90b4cffec690b511d549ee1fc4dd1ea58123fdd17e7c82a829c8098c7b5"
+        },
+        "meta.csv": {
+          "bytes": 134912,
+          "path": "/data1/llx/BNCI2015001/meta.csv",
+          "sha256": "23512474f4ecfbc54919af9dbc3abd68f0b10aad7b4eeecb7069c10b759e95c5"
+        }
+      },
+      "filter_history_status": "not_fully_documented",
+      "fs_hz_from_loader_declaration": 512,
+      "shape": [
+        5600,
+        13,
+        2561
+      ],
+      "unit_status": "microvolt_scale_supported_but_not_fully_proven_by_generation_record"
+    }
+  },
+  "spec_sha256": "c26f85182bb07b43240581ff5c632657dee2efc20c78c257006418f14856da8c"
+}

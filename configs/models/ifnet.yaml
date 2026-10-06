@@ -1,7 +1,68 @@
 # IFNet small specialist (B,C,T). Env: mirepnet.
 env: mirepnet
 size: small
-epochs: 100
-lr: 0.001
-batch_size: 16
-weight_decay: 0.01
+
+# Model-specific finetune hyperparameters.
+# Merge order: defaults < dataset < protocol. Data splits/seeds stay in configs/datasets/.
+finetune:
+  defaults:
+    epochs: 100
+    lr: 0.001
+    batch_size: 16
+    weight_decay: 0.01
+    use_filter_bank: True
+  BNCI2014001:
+    fewshot:
+      epochs: 100
+      lr: 0.001
+      batch_size: 16
+      weight_decay: 0.01
+    loso:
+      epochs: 100
+      lr: 0.001
+      batch_size: 16
+      weight_decay: 0.01
+  BNCI2014001-4:
+    fewshot:
+      epochs: 100
+      lr: 0.001
+      batch_size: 16
+      weight_decay: 0.01
+    loso:
+      epochs: 100
+      lr: 0.001
+      batch_size: 16
+      weight_decay: 0.01
+  BNCI2014004:
+    fewshot:
+      epochs: 100
+      lr: 0.001
+      batch_size: 16
+      weight_decay: 0.01
+    loso:
+      epochs: 100
+      lr: 0.001
+      batch_size: 16
+      weight_decay: 0.01
+  BNCI2015001:
+    fewshot:
+      epochs: 100
+      lr: 0.001
+      batch_size: 16
+      weight_decay: 0.01
+    loso:
+      epochs: 100
+      lr: 0.001
+      batch_size: 16
+      weight_decay: 0.01
+  AlexMI:
+    fewshot:
+      epochs: 100
+      lr: 0.001
+      batch_size: 16
+      weight_decay: 0.01
+    loso:
+      epochs: 100
+      lr: 0.001
+      batch_size: 16
+      weight_decay: 0.01

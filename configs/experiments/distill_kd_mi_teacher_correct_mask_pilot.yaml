@@ -1,0 +1,34 @@
+name: distill_kd_mi_teacher_correct_mask_pilot
+type: distill
+method: kd_mi_teacher_correct_mask_pilot
+
+# Fixed one-seed subject-wise few-shot pilot.
+datasets:
+  - BNCI2014001
+  - BNCI2014004
+  - BNCI2015001
+  - AlexMI
+protocol: fewshot
+val_split: 0.7       # repository convention: test fraction (30% train)
+seed: 666
+teacher: mirepnet
+student: ifnet
+artifact_root: results/artifacts
+output_dir: results/distill/kd_mi_teacher_correct_mask_pilot
+epochs: 100
+optimizer: adamw
+lr: 0.001
+weight_decay: 0.01
+batch_size: 16
+scheduler: CosineAnnealingLR
+temperature_kd: 2.0
+lam_kd: 0.5
+temperature_mi: 1.0
+lam_mi: 0.1
+mi_eps: 1.0e-8
+drop_last: false
+model_selection: final_epoch
+conditions:
+  - CE_TCORRECT_MASK
+  - KD_MI_ALL
+  - KD_MI_TCORRECT_MASK

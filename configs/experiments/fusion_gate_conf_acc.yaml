@@ -1,0 +1,40 @@
+name: fusion_gate_conf_acc
+type: fusion
+method: gate_conf_acc
+
+datasets:
+  - BNCI2014001-4
+  - BNCI2014004
+  - BNCI2015001
+  - AlexMI
+
+protocols: [fewshot, loso]
+seeds: null
+subjects: null
+
+include_controls: true
+artifact_root: results/artifacts
+output_dir: results/fusion
+fail_fast: false
+
+pairs:
+  - big: mirepnet
+    small: ifnet
+    params: {alpha: 1.0, beta: 1.0}
+    grid: {}
+  - big: mirepnet
+    small: eegnet
+    params: {alpha: 1.0, beta: 1.0}
+    grid: {}
+  - big: mirepnet
+    small: adfcnn
+    params: {alpha: 1.0, beta: 1.0}
+    grid: {}
+  - big: cbramod
+    small: ifnet
+    params: {alpha: 1.0, beta: 1.0}
+    grid: {}
+  - big: cbramod
+    small: eegnet
+    params: {alpha: 1.0, beta: 1.0}
+    grid: {}

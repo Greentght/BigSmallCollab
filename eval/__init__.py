@@ -5,10 +5,10 @@ every ``analyze_*`` script (see PROGRESS.md and the [[fix-seeds-for-small-gains]
 memory): aggregate seeds -> per-subject mean, paired Wilcoxon across subjects,
 Holm-Bonferroni over the contrast family, fixed-seed bootstrap CI, and acc%-first
 reporting. Consume the long-form metrics CSVs written by the run scripts
-(columns: ``dataset, subject|fold, seed, condition|group, acc, kappa, ...``).
+(columns: ``dataset, subject|fold, seed, method, acc, kappa, ...``).
 
     from eval import report_contrasts
-    df = load_metrics('results/metrics/BNCI2014004_maskablation_*_to_eegnet.csv')
+    df = load_metrics('results/BNCI2014004_maskablation_*_to_eegnet.csv')
     report_contrasts(df, baseline='eegnet_base',
                      methods=['eegnet_KD_all', 'eegnet_KD_masked'])
 """

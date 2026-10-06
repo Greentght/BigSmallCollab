@@ -1,483 +1,762 @@
-"""Offline KD + feature-align: distill a cached (frozen) teacher into a student.
+"""Unified big-to-small distillation runner.
 
-Run in the STUDENT's conda env (small models -> mirepnet). The teacher's
-train-split artifact (feats + logits) must already exist — exported earlier via
-finetune.py in the teacher's own env. The big teacher is never loaded here.
+Runs CE baseline and selected distillation methods from cached teacher
+artifacts. The teacher is never imported here; this script should run in the
+student environment, usually ``mirepnet`` for the small CNNs.
 
-    conda run -n mirepnet python experiments/distill/run_distill.py \
-        --dataset BNCI2014004 --teacher cbramod --student ifnet \
-        --lam_kd 0.5 --lam_feat 0.5
+Default methods:
+  Base      : student CE only
+  KD_all    : CE + logits KD on all train/support samples
+  KD_masked : CE + logits KD only where teacher is correct on train/support
+  MMD       : CE + feature-distribution MMD
+  KD_MMD    : CE + logits KD + feature-distribution MMD
+  CE_MI     : CE + class-joint probability mutual-information pilot
 
-Trains two conditions per (subject, seed): the plain student (lam=0) baseline and
-the distilled student, and writes acc/kappa to
-results/metrics/<dataset>_distill_<teacher>_to_<student>.csv.
+All teacher artifacts must contain sample_uid and split_policy metadata.
 """
 import argparse
+from contextlib import redirect_stderr, redirect_stdout
+import csv
+import hashlib
+import json
 import os
 import sys
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 import numpy as np
-import pandas as pd
 import torch
+import torch.nn.functional as F
 
-from collab.distill import distill_student
+from collab import artifacts
+from collab.distill import distill_student, probability_mi_loss
+from collab.seed import set_seed as _set_seed
 import config
 import data
-from collab import artifacts
+from data import split as split_utils
 from eval import metrics
-from models import get_adapter
+from models import BIG_MODELS, SMALL_MODELS, get_adapter
+from sklearn.metrics import balanced_accuracy_score
 
 
-def parse_args():
-    p = argparse.ArgumentParser()
-    p.add_argument('--dataset', default='BNCI2014004')
-    p.add_argument('--teacher', required=True)
-    p.add_argument('--student', required=True)
-    p.add_argument('--lam_kd', type=float, default=0.5)
-    p.add_argument('--lam_feat', type=float, default=0.5)
-    p.add_argument('--temperature', type=float, default=2.0)
-    p.add_argument('--teacher_correct_only', dest='teacher_correct_only',
-                   action='store_true', default=True,
-                   help='mask KD/feat align to teacher-correct samples (default)')
-    p.add_argument('--no_teacher_correct_only', dest='teacher_correct_only',
-                   action='store_false',
-                   help='align on all samples (legacy behaviour)')
-    p.add_argument('--mask_ablation', action='store_true',
-                   help='run base + {KD,Combo} x {all,masked} in one pass')
-    p.add_argument('--adaptive', action='store_true',
-                   help='run base + {KD,Combo} x {all,masked,mc} in one pass; '
-                        'mc = MC-dropout entropy weight from <subj>_<seed>_train_mc.npz')
-    p.add_argument('--dkd_ablation', action='store_true',
-                   help='decoupled-KD (logits only): base / KD_all / KD_masked / '
-                        'DKD_all / DKD_tmask (teacher-wrong -> drop TCKD, keep NCKD)')
-    p.add_argument('--dkd_alpha', type=float, default=1.0, help='TCKD weight')
-    p.add_argument('--dkd_beta', type=float, default=1.0, help='NCKD weight')
-    p.add_argument('--proto_ablation', action='store_true',
-                   help='class-prototype alignment: base / KD / GlobalFeat / '
-                        'Proto / Proto_w (class-reliability + margin weighted)')
-    p.add_argument('--lam_proto', type=float, default=0.5)
-    p.add_argument('--rel_delta', type=float, default=0.0, help='class-reliability margin delta')
-    p.add_argument('--rel_tau', type=float, default=0.1, help='class-reliability temperature')
-    p.add_argument('--margin_gamma', type=float, default=0.0, help='sample prototype-margin threshold')
-    p.add_argument('--margin_tau', type=float, default=0.1, help='sample prototype-margin temperature')
-    p.add_argument('--relational_ablation', action='store_true',
-                   help='relational KD: base / SampleCos / SimFull / IntraInter / ProtoSim '
-                        '(batch B x B similarity, class-balanced sampling)')
-    p.add_argument('--lam_sim', type=float, default=0.5)
-    p.add_argument('--lam_intra', type=float, default=0.5)
-    p.add_argument('--lam_inter', type=float, default=0.5)
-    p.add_argument('--fewshot_pearson', action='store_true',
-                   help='few-shot big->small KD with the Pearson logit-distance '
-                        'regularizer (L_inter): base / KD / Pearson / KD+Pearson, '
-                        'subsampling --shots per class from the teacher train pool')
-    p.add_argument('--shots', type=int, nargs='+', default=[5, 10, 20],
-                   help='few-shot: number of labeled trials PER CLASS')
-    p.add_argument('--lam_pearson', type=float, default=0.5,
-                   help='weight of the Pearson logit-distance term L_inter')
-    p.add_argument('--rel_conds', default=None,
-                   help='comma list to restrict relational conditions, e.g. '
-                        'base,IntraOnly,InterOnly,IntraInter')
-    p.add_argument('--subjects', type=int, nargs='+', default=None)
+DEFAULT_METHODS = ('Base', 'KD_all', 'KD_masked', 'MMD', 'KD_MMD')
+METHOD_LABELS = {
+    'Base': 'Base',
+    'KD_all': 'Vanilla KD',
+    'KD_masked': 'KD masked',
+    'MMD': 'MMD',
+    'KD_MMD': 'KD + MMD',
+    'CE_MI': 'CE+MI',
+}
+METHOD_ALIASES = {
+    'all': DEFAULT_METHODS,
+    'base': ('Base',),
+    'ce': ('Base',),
+    'kd': ('KD_all',),
+    'kd_all': ('KD_all',),
+    'kd-masked': ('KD_masked',),
+    'kd_masked': ('KD_masked',),
+    'mmd': ('MMD',),
+    'kd_mmd': ('KD_MMD',),
+    'kd-mmd': ('KD_MMD',),
+    # The probability-MI pilot is a fixed three-condition bundle.  Keep the
+    # internal method names stable for config-driven dispatch.
+    'mi': ('Base', 'KD_all', 'CE_MI'),
+    'ce_mi': ('CE_MI',),
+    'ce-mi': ('CE_MI',),
+}
+BASE_FIELDS = ['subject', 'seed', 'method', 'acc', 'kappa', 'n_test', 'lam_mi']
+
+
+class _Tee:
+    def __init__(self, *streams):
+        self.streams = streams
+
+    def write(self, data_):
+        for stream in self.streams:
+            stream.write(data_)
+        return len(data_)
+
+    def flush(self):
+        for stream in self.streams:
+            stream.flush()
+
+
+def parse_args(argv=None):
+    p = argparse.ArgumentParser(epilog='Legacy direct matrix flags are deprecated; use --config configs/experiments/<name>.yaml')
+    p.add_argument('--dataset', default=None,
+                   help='single dataset; kept for backward-compatible commands')
+    p.add_argument('--datasets', nargs='+', default=None)
+    p.add_argument('--teacher', default=None,
+                   help='single teacher; kept for backward-compatible commands')
+    p.add_argument('--teachers', nargs='+', default=None)
+    p.add_argument('--student', default=None,
+                   help='single student; kept for backward-compatible commands')
+    p.add_argument('--students', nargs='+', default=None)
+    p.add_argument('--teacher_artifact', default=None,
+                   help='override cached teacher artifact dir; only valid with one teacher')
+    p.add_argument('--protocol', choices=['fewshot', 'within', 'loso'], default='fewshot')
+    p.add_argument('--subjects', '--keys', dest='keys', type=int, nargs='+', default=None,
+                   help='zero-based subjects/folds; default all')
     p.add_argument('--seeds', type=int, nargs='+', default=None)
+    p.add_argument('--train_percentage', type=float, default=None,
+                   help='fewshot train fraction; overrides dataset val_split')
+    p.add_argument('--val_split', type=float, default=None,
+                   help='fewshot test fraction; default from dataset config')
+    p.add_argument('--methods', nargs='+', default=['all'],
+                   help='all, Base, KD_all, KD_masked, MMD, KD_MMD, mi/CE_MI')
+    p.add_argument('--lam_kd', type=float, default=0.5)
+    p.add_argument('--lam_mi', type=float, default=0.1,
+                   help='pilot probability-MI weight (CE_MI only)')
+    p.add_argument('--lam_mmd', type=float, default=0.5)
+    p.add_argument('--temperature', type=float, default=2.0)
+    p.add_argument('--mmd_sigmas', type=float, nargs='+', default=[0.5, 1.0, 2.0, 4.0])
+    p.add_argument('--no_mmd_normalize', dest='mmd_normalize', action='store_false',
+                   default=True)
+    p.add_argument('--mmd_class_conditional', action='store_true')
+    p.add_argument('--epochs', type=int, default=None,
+                   help='override student config epochs')
+    p.add_argument('--lr', type=float, default=None,
+                   help='override student config lr')
+    p.add_argument('--weight_decay', type=float, default=None,
+                   help='override student config weight_decay')
+    p.add_argument('--batch_size', type=int, default=None,
+                   help='override student config batch_size')
     p.add_argument('--gpu', type=int, default=None)
+    p.add_argument('--artifact_root', default=artifacts.ARTIFACT_ROOT)
     p.add_argument('--out_csv', default=None)
-    return p.parse_args()
+    p.add_argument('--log_file', default=None)
+    p.add_argument('--fail_fast', action='store_true')
+    return p.parse_args(argv)
 
 
-def _sigmoid(x):
-    return 1.0 / (1.0 + np.exp(-x))
+def _resolve_list(plural, singular, default):
+    if plural is not None:
+        return list(plural)
+    if singular is not None:
+        return [singular]
+    return list(default)
 
 
-def _prototypes(feats, y, nc):
-    """teacher class means (nc, D)."""
-    M = np.zeros((nc, feats.shape[1]), np.float32)
-    for c in range(nc):
-        m = y == c
-        if m.any():
-            M[c] = feats[m].mean(0)
-    return M
+def _validate_names(teachers, students):
+    bad_teachers = [t for t in teachers if t not in BIG_MODELS]
+    bad_students = [s for s in students if s not in SMALL_MODELS]
+    if bad_teachers:
+        raise ValueError(f'unknown teacher(s) {bad_teachers}; expected {BIG_MODELS}')
+    if bad_students:
+        raise ValueError(f'unknown student(s) {bad_students}; expected {SMALL_MODELS}')
 
 
-def _proto_margins(feats, M, y):
-    """per-sample teacher prototype margin: cos(f_i,M_{y_i}) - max_{k!=y} cos."""
-    fn = feats / (np.linalg.norm(feats, axis=1, keepdims=True) + 1e-8)
-    Mn = M / (np.linalg.norm(M, axis=1, keepdims=True) + 1e-8)
-    cs = fn @ Mn.T                                    # (N, nc)
-    own = cs[np.arange(len(y)), y]
-    other = cs.copy(); other[np.arange(len(y)), y] = -np.inf
-    return (own - other.max(1)).astype(np.float32)
+def _parse_methods(values):
+    methods = []
+    for raw in values:
+        key = raw.strip()
+        alias = METHOD_ALIASES.get(key.lower())
+        if alias is None:
+            valid = sorted(set(DEFAULT_METHODS) | set(METHOD_ALIASES))
+            raise ValueError(f'unknown method {raw!r}; expected one of {valid}')
+        for method in alias:
+            if method not in methods:
+                methods.append(method)
+    return methods
 
 
-_per_class = metrics.per_class   # per-class breakdown (shared, core.metrics)
+def _teacher_artifact_name(teacher, protocol, override=None):
+    if override is not None:
+        return override
+    return teacher if protocol == 'fewshot' else f'{teacher}_loso'
 
 
-def run_proto_ablation(a, scfg, subjects, seeds, val_split, nc, device, out_csv):
-    """base / KD / GlobalFeat / Proto / Proto_w. Records overall + per-class."""
-    def make_student():
-        acfg = dict(scfg)
-        return acfg
-    rows = []
-    for seed in seeds:
-        for subj in subjects:
-            try:
-                tch = artifacts.load(a.dataset, a.teacher, subj, seed, 'train')
-            except FileNotFoundError as e:
-                print(f'[miss teacher] S{subj} seed{seed}: {e}'); continue
-            X_tr, y_tr, X_te, y_te = data.subject_split(
-                a.dataset, subj, val_split=val_split, seed=seed)
-            assert np.array_equal(tch['y'], y_tr), 'teacher rows misaligned'
-
-            # teacher-side, cached & static: prototypes, per-class reliability, margins
-            M = _prototypes(tch['feats'], y_tr, nc)
-            tp = tch['logits'].argmax(1)
-            Rt = np.array([(tp[y_tr == c] == c).mean() if (y_tr == c).any() else 0.0
-                           for c in range(nc)], np.float32)
-            margins = _proto_margins(tch['feats'], M, y_tr)
-
-            common = dict(epochs=scfg.get('epochs', 50), lr=scfg.get('lr', 1e-3),
-                          weight_decay=scfg.get('weight_decay', 0.01),
-                          batch_size=scfg.get('batch_size', 16),
-                          temperature=a.temperature)
-
-            def adapter():
-                acfg = dict(scfg); acfg.update(
-                    in_channels=X_tr.shape[1], samples=X_tr.shape[2],
-                    dataset_name=a.dataset)
-                return get_adapter(a.student, device=device, **acfg)
-
-            # base (2-pass): capture train preds -> student per-class reliability R_c^S
-            te_pred, tr_pred = distill_student(
-                adapter(), nc, X_tr, y_tr, tch['feats'], tch['logits'], X_te,
-                lam_kd=0.0, lam_feat=0.0, teacher_correct_only=False,
-                return_train_preds=True, **common)
-            Rs = np.array([(tr_pred[y_tr == c] == c).mean() if (y_tr == c).any() else 0.0
-                           for c in range(nc)], np.float32)
-            wc = _sigmoid((Rt - Rs - a.rel_delta) / a.rel_tau)          # (nc,)
-            w_sample = (wc[y_tr] * _sigmoid((margins - a.margin_gamma) / a.margin_tau)
-                        ).astype(np.float32)
-
-            lp = a.lam_proto
-            conds = {
-                'base':       dict(lam_kd=0.0, lam_feat=0.0, teacher_correct_only=False),
-                'KD':         dict(lam_kd=a.lam_kd, lam_feat=0.0, teacher_correct_only=False),
-                'GlobalFeat': dict(lam_kd=0.0, lam_feat=lp, teacher_correct_only=False),
-                'Proto':      dict(lam_kd=0.0, lam_feat=lp, feat_proto=True,
-                                   teacher_correct_only=False),
-                'Proto_w':    dict(lam_kd=0.0, lam_feat=lp, feat_proto=True,
-                                   sample_weight=w_sample),
-            }
-            for cond, kw in conds.items():
-                preds = (te_pred if cond == 'base' else distill_student(
-                    adapter(), nc, X_tr, y_tr, tch['feats'], tch['logits'], X_te,
-                    **kw, **common))
-                m = metrics.evaluate(y_te, preds)
-                row = dict(dataset=a.dataset, subject=subj, seed=seed,
-                           condition=f'{a.student}_{cond}',
-                           acc=m['acc'], kappa=m['kappa'])
-                row.update(_per_class(y_te, preds, nc))
-                rows.append(row)
-                print(f"S{subj} seed{seed} {a.student}_{cond} | acc={m['acc']} "
-                      f"kappa={m['kappa']} f1={row['macro_f1']}", flush=True)
-
-    if not rows:
-        print('No teacher artifacts found.'); return
-    df = pd.DataFrame(rows)
-    df.to_csv(out_csv, index=False)
-    print(f'\nWrote {out_csv}')
-    print(df.groupby('condition')[['acc', 'kappa', 'macro_f1']].mean().round(3))
+def _expected_split_policy(protocol):
+    if protocol == 'fewshot':
+        return split_utils.FEWSHOT_SPLIT_POLICY
+    if protocol == 'loso':
+        return split_utils.LOSO_SPLIT_POLICY
+    raise ValueError(f'unsupported protocol {protocol!r}')
 
 
-def run_relational_ablation(a, scfg, subjects, seeds, val_split, nc, device, out_csv):
-    """base / SampleCos / SimFull / IntraInter / ProtoSim. Class-balanced
-    sampling for ALL conditions so only the loss differs. Records per-class."""
-    lp = a.lam_proto
-    conds = {
-        'base':       dict(lam_kd=0.0, lam_feat=0.0),
-        'VanillaKD':  dict(lam_kd=a.lam_kd, lam_feat=0.0),
-        'ProtoOnly':  dict(lam_kd=0.0, lam_feat=lp, feat_proto=True),
-        'KDProto':    dict(lam_kd=a.lam_kd, lam_feat=lp, feat_proto=True),
-        'SampleCos':  dict(lam_kd=0.0, lam_feat=lp),
-        'SimFull':    dict(lam_kd=0.0, lam_feat=0.0,
-                           relational=dict(mode='sim', lam_sim=a.lam_sim)),
-        'IntraInter': dict(lam_kd=0.0, lam_feat=0.0,
-                           relational=dict(mode='intra_inter',
-                                           lam_intra=a.lam_intra, lam_inter=a.lam_inter)),
-        'IntraOnly':  dict(lam_kd=0.0, lam_feat=0.0,
-                           relational=dict(mode='intra_inter',
-                                           lam_intra=a.lam_intra, lam_inter=0.0)),
-        'InterOnly':  dict(lam_kd=0.0, lam_feat=0.0,
-                           relational=dict(mode='intra_inter',
-                                           lam_intra=0.0, lam_inter=a.lam_inter)),
-        'ProtoSim':   dict(lam_kd=0.0, lam_feat=lp, feat_proto=True,
-                           relational=dict(mode='sim', lam_sim=a.lam_sim)),
-        # EA-KD (真 EA-KD: w=1/2 H_T(1+H_S/logC), 温度 T'=ea_temp, 高教师熵=高价值)
-        'EA_KD':         dict(lam_kd=a.lam_kd, lam_feat=0.0, ea_kd=True),
-        'CorrectMaskKD': dict(lam_kd=a.lam_kd, lam_feat=0.0, weight_src='mask'),
-        'CorrectMaskEA': dict(lam_kd=a.lam_kd, lam_feat=0.0, ea_kd=True, weight_src='mask'),
-        # Combo = KD + 逐样本 feat-align; EA_Combo = EA 权重同时作用于 KD 与 feat
-        'Combo':         dict(lam_kd=a.lam_kd, lam_feat=lp),
-        'EA_Combo':      dict(lam_kd=a.lam_kd, lam_feat=lp, ea_kd=True),
-    }
-    if a.rel_conds:
-        keep = set(a.rel_conds.split(','))
-        conds = {k: v for k, v in conds.items() if k in keep}
-    rows = []
-    for seed in seeds:
-        for subj in subjects:
-            try:
-                tch = artifacts.load(a.dataset, a.teacher, subj, seed, 'train')
-            except FileNotFoundError as e:
-                print(f'[miss teacher] S{subj} seed{seed}: {e}'); continue
-            X_tr, y_tr, X_te, y_te = data.subject_split(
-                a.dataset, subj, val_split=val_split, seed=seed)
-            assert np.array_equal(tch['y'], y_tr), 'teacher rows misaligned'
-            common = dict(epochs=scfg.get('epochs', 50), lr=scfg.get('lr', 1e-3),
-                          weight_decay=scfg.get('weight_decay', 0.01),
-                          batch_size=scfg.get('batch_size', 16),
-                          temperature=a.temperature, teacher_correct_only=False,
-                          balanced_batch=True, seed=seed)
-            t_mask = (tch['logits'].argmax(1) == y_tr).astype(np.float32)
-            for cond, kw0 in conds.items():
-                kw = dict(kw0)
-                if kw.pop('weight_src', None) == 'mask':
-                    kw['sample_weight'] = t_mask
-                acfg = dict(scfg); acfg.update(
-                    in_channels=X_tr.shape[1], samples=X_tr.shape[2],
-                    dataset_name=a.dataset)
-                student = get_adapter(a.student, device=device, **acfg)
-                preds = distill_student(
-                    student, nc, X_tr, y_tr, tch['feats'], tch['logits'], X_te,
-                    **kw, **common)
-                m = metrics.evaluate(y_te, preds)
-                row = dict(dataset=a.dataset, subject=subj, seed=seed,
-                           condition=f'{a.student}_{cond}',
-                           acc=m['acc'], kappa=m['kappa'])
-                row.update(_per_class(y_te, preds, nc))
-                rows.append(row)
-                print(f"S{subj} seed{seed} {a.student}_{cond} | acc={m['acc']} "
-                      f"kappa={m['kappa']} f1={row['macro_f1']}", flush=True)
-    if not rows:
-        print('No teacher artifacts found.'); return
-    df = pd.DataFrame(rows); df.to_csv(out_csv, index=False)
-    print(f'\nWrote {out_csv}')
-    print(df.groupby('condition')[['acc', 'kappa', 'macro_f1']].mean().round(3))
-
-
-def _fewshot_idx(y_tr, n_shot, nc, seed):
-    """Pick n_shot indices per class from the train pool (seeded). If a class has
-    fewer than n_shot samples, take all of them."""
-    rng = np.random.RandomState(seed)
-    idx = []
-    for c in range(nc):
-        pool = np.where(y_tr == c)[0]
-        k = min(n_shot, len(pool))
-        idx += list(rng.choice(pool, k, replace=False))
-    rng.shuffle(idx)
-    return np.array(sorted(idx))
-
-
-def run_fewshot_pearson(a, scfg, subjects, seeds, val_split, nc, device, out_csv):
-    """Few-shot big->small distillation with the Pearson logit-distance term.
-
-    The teacher artifact is cached at the standard 70%-train split; we subsample
-    ``--shots`` labelled trials per class as the student's few-shot calibration
-    set (teacher logits/feats stay row-aligned), and evaluate on the full 30%
-    test split. Conditions per (shots, subject, seed):
-      base       - student only (no teacher)
-      KD         - vanilla logit KD (KL @ T)
-      Pearson    - only L_inter = mean_i (1 - corr(s_logits_i, t_logits_i))
-      KD+Pearson - KD + L_inter (regularizer on top of KD)
-    """
-    conds = {
-        'base':       dict(lam_kd=0.0, lam_feat=0.0),
-        'KD':         dict(lam_kd=a.lam_kd, lam_feat=0.0),
-        'Pearson':    dict(lam_kd=0.0, lam_feat=0.0,
-                           pearson=dict(lam=a.lam_pearson)),
-        'KD+Pearson': dict(lam_kd=a.lam_kd, lam_feat=0.0,
-                           pearson=dict(lam=a.lam_pearson)),
-    }
-    if nc == 2:
-        print('[warn] C=2: Pearson over 2 logits is degenerate (d_p in {0,2}); '
-              'results only sanity-check the plumbing.', flush=True)
-    rows = []
-    for n_shot in a.shots:
-        for seed in seeds:
-            for subj in subjects:
-                try:
-                    tch = artifacts.load(a.dataset, a.teacher, subj, seed, 'train')
-                except FileNotFoundError as e:
-                    print(f'[miss teacher] S{subj} seed{seed}: {e}'); continue
-                X_tr, y_tr, X_te, y_te = data.subject_split(
-                    a.dataset, subj, val_split=val_split, seed=seed)
-                assert np.array_equal(tch['y'], y_tr), 'teacher rows misaligned'
-
-                sel = _fewshot_idx(y_tr, n_shot, nc, seed)
-                Xs, ys = X_tr[sel], y_tr[sel]
-                fts, lts = tch['feats'][sel], tch['logits'][sel]
-                common = dict(epochs=scfg.get('epochs', 50), lr=scfg.get('lr', 1e-3),
-                              weight_decay=scfg.get('weight_decay', 0.01),
-                              batch_size=scfg.get('batch_size', 16),
-                              temperature=a.temperature, teacher_correct_only=False,
-                              balanced_batch=True, seed=seed)
-                for cond, kw in conds.items():
-                    acfg = dict(scfg); acfg.update(
-                        in_channels=X_tr.shape[1], samples=X_tr.shape[2],
-                        dataset_name=a.dataset)
-                    student = get_adapter(a.student, device=device, **acfg)
-                    preds = distill_student(
-                        student, nc, Xs, ys, fts, lts, X_te, **kw, **common)
-                    m = metrics.evaluate(y_te, preds)
-                    row = dict(dataset=a.dataset, subject=subj, seed=seed,
-                               shots=n_shot, n_train=len(sel),
-                               condition=f'{a.student}_{cond}',
-                               acc=m['acc'], kappa=m['kappa'])
-                    row.update(_per_class(y_te, preds, nc))
-                    rows.append(row)
-                    print(f"shots{n_shot} S{subj} seed{seed} {a.student}_{cond} | "
-                          f"acc={m['acc']} kappa={m['kappa']}", flush=True)
-    if not rows:
-        print('No teacher artifacts found.'); return
-    df = pd.DataFrame(rows); df.to_csv(out_csv, index=False)
-    print(f'\nWrote {out_csv}')
-    print(df.groupby(['shots', 'condition'])[['acc', 'kappa']].mean().round(3))
-
-
-def main():
-    # thread cap: shared box discipline (default 4, setdefault keeps pre-set env)
+def _set_thread_defaults():
     os.environ.setdefault('OMP_NUM_THREADS', '4')
     os.environ.setdefault('MKL_NUM_THREADS', '4')
     os.environ.setdefault('OPENBLAS_NUM_THREADS', '4')
     os.environ.setdefault('NUMEXPR_NUM_THREADS', '4')
     torch.set_num_threads(int(os.environ.get('TORCH_NUM_THREADS', '4')))
-    a = parse_args()
-    dcfg = config.load_dataset_config(a.dataset)
-    scfg = config.load_model_config(a.student)
-    subjects = a.subjects or list(range(dcfg['num_subjects']))
-    seeds = a.seeds or dcfg['seeds']
-    val_split = dcfg['val_split']
-    nc = dcfg['num_classes']
-    device = (f'cuda:{a.gpu}' if a.gpu is not None and torch.cuda.is_available()
-              else 'cpu')
 
-    out_csv = a.out_csv or os.path.join(
-        os.environ.get('REPRO_OUT',
-                       os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-                                    'results', 'metrics')),
-        f'{a.dataset}_distill_{a.teacher}_to_{a.student}.csv')
-    os.makedirs(os.path.dirname(out_csv), exist_ok=True)
 
-    if a.proto_ablation:
-        return run_proto_ablation(a, scfg, subjects, seeds, val_split, nc,
-                                  device, out_csv)
-    if a.relational_ablation:
-        return run_relational_ablation(a, scfg, subjects, seeds, val_split, nc,
-                                       device, out_csv)
-    if a.fewshot_pearson:
-        return run_fewshot_pearson(a, scfg, subjects, seeds, val_split, nc,
-                                   device, out_csv)
+def _sha256_file(path, chunk_size=1024 * 1024):
+    digest = hashlib.sha256()
+    with open(path, 'rb') as handle:
+        while True:
+            block = handle.read(chunk_size)
+            if not block:
+                break
+            digest.update(block)
+    return digest.hexdigest()
 
-    # each condition = (lam_kd, lam_feat, weight_mode). weight_mode selects the
-    # per-sample alignment weight: 'all'=1 / 'masked'=1[teacher_correct] /
-    # 'mc'=1-H_mc/logC (MC-dropout entropy). Irrelevant when both lams are 0.
-    s = a.student
-    if a.adaptive:
-        conditions = {
-            f'{s}_base':         (0.0, 0.0, 'all'),
-            f'{s}_KD_all':       (a.lam_kd, 0.0, 'all'),
-            f'{s}_KD_masked':    (a.lam_kd, 0.0, 'masked'),
-            f'{s}_KD_mc':        (a.lam_kd, 0.0, 'mc'),
-            f'{s}_Combo_all':    (a.lam_kd, a.lam_feat, 'all'),
-            f'{s}_Combo_masked': (a.lam_kd, a.lam_feat, 'masked'),
-            f'{s}_Combo_mc':     (a.lam_kd, a.lam_feat, 'mc'),
-        }
-    elif a.dkd_ablation:
-        conditions = {
-            f'{s}_base':        (0.0, 0.0, 'all'),
-            f'{s}_KD_all':      (a.lam_kd, 0.0, 'all'),
-            f'{s}_KD_masked':   (a.lam_kd, 0.0, 'masked'),
-            f'{s}_DKD_all':     (a.lam_kd, 0.0, 'dkd_all'),
-            f'{s}_DKD_tmask':   (a.lam_kd, 0.0, 'dkd_tmask'),
-        }
-    elif a.mask_ablation:
-        conditions = {
-            f'{s}_base':         (0.0, 0.0, 'all'),
-            f'{s}_KD_all':       (a.lam_kd, 0.0, 'all'),
-            f'{s}_KD_masked':    (a.lam_kd, 0.0, 'masked'),
-            f'{s}_Combo_all':    (a.lam_kd, a.lam_feat, 'all'),
-            f'{s}_Combo_masked': (a.lam_kd, a.lam_feat, 'masked'),
-        }
+
+def _sha256_array(value):
+    array = np.asarray(value)
+    digest = hashlib.sha256()
+    digest.update(str(array.dtype).encode('utf-8'))
+    digest.update(str(tuple(array.shape)).encode('utf-8'))
+    digest.update(np.ascontiguousarray(array).tobytes())
+    return digest.hexdigest()
+
+
+def _sha256_uid_split(uid_tr, uid_te):
+    digest = hashlib.sha256()
+    for name, value in (('train', uid_tr), ('test', uid_te)):
+        digest.update(name.encode('utf-8'))
+        digest.update(np.asarray(value, dtype=np.int64).tobytes())
+    return digest.hexdigest()
+
+
+def _sha256_state_dict(state):
+    digest = hashlib.sha256()
+    for key in sorted(state):
+        digest.update(str(key).encode('utf-8'))
+        value = state[key]
+        if torch.is_tensor(value):
+            array = value.detach().cpu().numpy()
+            digest.update(str(array.dtype).encode('utf-8'))
+            digest.update(str(tuple(array.shape)).encode('utf-8'))
+            digest.update(np.ascontiguousarray(array).tobytes())
+        else:
+            digest.update(repr(value).encode('utf-8'))
+    return digest.hexdigest()
+
+
+def _combined_hash(values):
+    digest = hashlib.sha256()
+    for value in values:
+        digest.update(str(value).encode('utf-8'))
+        digest.update(b'\n')
+    return digest.hexdigest()
+
+
+def _artifact_info(path):
+    stat = os.stat(path)
+    return {
+        'path': os.path.abspath(path),
+        'size': int(stat.st_size),
+        'mtime': float(stat.st_mtime),
+        'sha256': _sha256_file(path),
+    }
+
+
+def _finite_metric(value):
+    try:
+        return bool(np.isfinite(float(value)))
+    except (TypeError, ValueError):
+        return False
+
+
+def _final_train_mi_and_agreement(teacher_logits, student_logits, student_preds):
+    teacher_logits = np.asarray(teacher_logits)
+    student_logits = np.asarray(student_logits)
+    teacher_prob = F.softmax(torch.as_tensor(teacher_logits, dtype=torch.float32), dim=1)
+    student_prob = F.softmax(torch.as_tensor(student_logits, dtype=torch.float32), dim=1)
+    full_mi = float((-probability_mi_loss(teacher_prob, student_prob)).item())
+    teacher_pred = teacher_logits.argmax(axis=1)
+    student_pred = np.asarray(student_preds)
+    return {
+        'full_train_mi': full_mi,
+        'teacher_student_prediction_agreement': float(
+            (teacher_pred == student_pred).mean() * 100.0),
+        'mean_abs_probability_diff': float(
+            np.abs(teacher_prob.numpy() - student_prob.numpy()).mean()),
+    }
+
+
+def _session_default(dataset):
+    return {
+        'BNCI2014001': 'sessionT',
+        'BNCI2014004': 'session3',
+        'BNCI2015001': 'session_A (loader default)',
+        'AlexMI': 'canonical subject block (loader default)',
+    }.get(dataset, 'loader default')
+
+
+def _device(gpu):
+    if gpu is not None and torch.cuda.is_available():
+        torch.cuda.set_device(gpu)
+        return f'cuda:{gpu}'
+    return 'cpu'
+
+
+def _split_cell(dataset, protocol, key, seed, val_split, train_percentage):
+    if protocol == 'fewshot':
+        if train_percentage is not None:
+            if not 0.0 < train_percentage < 1.0:
+                raise ValueError('--train_percentage must be in (0, 1)')
+            val_split = 1.0 - float(train_percentage)
+        return data.subject_split(
+            dataset, key, val_split=val_split, seed=seed, return_uid=True) + (None,)
+    X_tr, y_tr, subj_tr, X_te, y_te, uid_tr, uid_te = data.loso_split(
+        dataset, key, return_uid=True)
+    return X_tr, y_tr, X_te, y_te, uid_tr, uid_te, subj_tr
+
+
+def _check_teacher(tch, y_tr, uid_tr, expected_policy, context):
+    uid_ref = np.asarray(uid_tr, dtype=np.int64)
+    if uid_ref.ndim != 2 or uid_ref.shape[1] != 2:
+        raise ValueError(f'{context}: current train sample_uid must have shape (N, 2)')
+    if len({tuple(row) for row in uid_ref.tolist()}) != len(uid_ref):
+        raise ValueError(f'{context}: current train sample_uid is not unique')
+    if 'sample_uid' not in tch:
+        raise ValueError(f'{context}: teacher artifact missing sample_uid; regenerate artifacts')
+    uid_teacher = np.asarray(tch['sample_uid'], dtype=np.int64)
+    if uid_teacher.ndim != 2 or uid_teacher.shape[1] != 2:
+        raise ValueError(f'{context}: teacher sample_uid must have shape (N, 2)')
+    if len({tuple(row) for row in uid_teacher.tolist()}) != len(uid_teacher):
+        raise ValueError(f'{context}: teacher sample_uid is not unique')
+    if set(map(tuple, uid_teacher.tolist())) != set(map(tuple, uid_ref.tolist())):
+        raise ValueError(f'{context}: teacher/train UID sets differ; refusing an inner join')
+    order = np.asarray(
+        [dict((tuple(row), index) for index, row in enumerate(uid_teacher.tolist()))[
+            tuple(row)] for row in uid_ref.tolist()],
+        dtype=np.int64)
+    reordered = not np.array_equal(uid_teacher, uid_ref)
+    for name in ('logits', 'feats', 'y'):
+        if name not in tch:
+            raise ValueError(f'{context}: teacher artifact missing {name}')
+        array = np.asarray(tch[name])
+        if array.ndim == 0 or len(array) != len(uid_teacher):
+            raise ValueError(f'{context}: teacher {name} first dimension is misaligned')
+        if name != 'y' and not np.isfinite(array).all():
+            raise ValueError(f'{context}: teacher {name} contains NaN/Inf')
+        tch[name] = array[order]
+    tch['sample_uid'] = uid_teacher[order]
+    labels = np.asarray(tch['y'], dtype=np.int64)
+    if not np.array_equal(labels, np.asarray(y_tr, dtype=np.int64)):
+        raise ValueError(f'{context}: teacher labels disagree after UID alignment')
+    policy = tch.get('split_policy')
+    if policy is None:
+        raise ValueError(f'{context}: teacher artifact missing split_policy; regenerate artifacts')
+    if policy != expected_policy:
+        raise ValueError(
+            f'{context}: split_policy={policy!r}, expected {expected_policy!r}')
+    return {
+        'status': 'pass',
+        'uid_set_match': True,
+        'reordered': bool(reordered),
+        'labels_match': True,
+    }
+
+
+def _load_teacher(dataset, artifact_name, key, seed, y_tr, uid_tr,
+                  expected_policy, root):
+    tch = artifacts.load(dataset, artifact_name, key, seed, 'train', root=root)
+    alignment = _check_teacher(
+        tch, y_tr, uid_tr, expected_policy,
+        f'{dataset} {artifact_name} key={key} seed={seed}')
+    path = artifacts.artifact_path(dataset, artifact_name, key, seed, 'train', root)
+    tch['_uid_alignment'] = alignment
+    tch['_artifact_info'] = _artifact_info(path)
+    return tch
+
+
+def _teacher_acc(tch, y_tr):
+    return float((tch['logits'].argmax(1) == y_tr).mean() * 100.0)
+
+
+def _student_runtime_cfg(student, dataset, protocol, args, X_tr):
+    cfg = config.load_model_config(student, dataset, protocol)
+    for key in ('epochs', 'lr', 'weight_decay', 'batch_size'):
+        value = getattr(args, key)
+        if value is not None:
+            cfg[key] = value
+    cfg.update(in_channels=X_tr.shape[1], samples=X_tr.shape[2], dataset_name=dataset)
+    return cfg
+
+
+def _method_kwargs(method, args, tch, y_tr):
+    base = dict(
+        temperature=args.temperature,
+        lam_kd=0.0,
+        lam_mi=0.0,
+        lam_feat=0.0,
+        lam_mmd=0.0,
+        probability_mi=False,
+        teacher_correct_only=False,
+        mmd_sigmas=tuple(args.mmd_sigmas),
+        mmd_normalize=args.mmd_normalize,
+        mmd_class_conditional=args.mmd_class_conditional,
+    )
+    weight_mode = 'none'
+    if method == 'Base':
+        return base, weight_mode
+    if method == 'KD_all':
+        base['lam_kd'] = args.lam_kd
+        weight_mode = 'all'
+    elif method == 'KD_masked':
+        base['lam_kd'] = args.lam_kd
+        base['sample_weight'] = (tch['logits'].argmax(1) == y_tr).astype(np.float32)
+        weight_mode = 'teacher_correct'
+    elif method == 'MMD':
+        base['lam_mmd'] = args.lam_mmd
+        weight_mode = 'all'
+    elif method == 'KD_MMD':
+        base['lam_kd'] = args.lam_kd
+        base['lam_mmd'] = args.lam_mmd
+        weight_mode = 'all'
+    elif method == 'CE_MI':
+        base['lam_mi'] = args.lam_mi
+        base['probability_mi'] = True
+        weight_mode = 'none'
     else:
-        mode = 'masked' if a.teacher_correct_only else 'all'
-        conditions = {
-            f'{s}_base': (0.0, 0.0, mode),
-            f'{s}_KD<-{a.teacher}': (a.lam_kd, a.lam_feat, mode),
-        }
+        raise ValueError(f'unknown method {method!r}')
+    return base, weight_mode
 
-    rows = []
-    for seed in seeds:
-        for subj in subjects:
-            try:
-                tch = artifacts.load(a.dataset, a.teacher, subj, seed, 'train')
-            except FileNotFoundError as e:
-                print(f'[miss teacher] S{subj} seed{seed}: {e}'); continue
 
-            X_tr, y_tr, X_te, y_te = data.subject_split(
-                a.dataset, subj, val_split=val_split, seed=seed)
-            assert np.array_equal(tch['y'], y_tr), (
-                f'teacher train rows misaligned for S{subj} seed{seed}')
+def _run_method(args, dataset, protocol, teacher, student, teacher_artifact,
+                   key, seed, method, X_tr, y_tr, X_te, y_te, subj_tr, tch,
+                   nc, device, initial_state_dict=None, uid_tr=None,
+                   uid_te=None, return_details=False):
+    scfg = _student_runtime_cfg(student, dataset, protocol, args, X_tr)
+    adapter = get_adapter(student, device=device, **scfg)
+    kw, weight_mode = _method_kwargs(method, args, tch, y_tr)
+    kw.update(
+        epochs=scfg.get('epochs', 50),
+        lr=scfg.get('lr', 1e-3),
+        weight_decay=scfg.get('weight_decay', 0.01),
+        batch_size=scfg.get('batch_size', 16),
+        seed=seed,
+        subject_ids=subj_tr,
+        balanced_batch=(protocol == 'loso' and subj_tr is not None),
+    )
+    # Only feature-alignment methods receive cached teacher features.  Base,
+    # vanilla KD and CE+MI are logits/label paths and must not touch feats.
+    teacher_feats = tch['feats'] if method in {'MMD', 'KD_MMD'} else None
+    teacher_logits = tch['logits'] if method != 'Base' else None
+    if initial_state_dict is not None:
+        kw['initial_state_dict'] = initial_state_dict
+    if uid_tr is not None:
+        kw['sample_uid'] = uid_tr
+    if return_details:
+        preds, details = distill_student(
+            adapter, nc, X_tr, y_tr, teacher_feats, teacher_logits, X_te,
+            return_training_details=True, **kw)
+        mi_history = details['full_train_mi_history']
+    elif method == 'CE_MI':
+        preds, mi_history = distill_student(
+            adapter, nc, X_tr, y_tr, teacher_feats, teacher_logits, X_te,
+            return_mi_history=True, **kw)
+        details = None
+    else:
+        preds = distill_student(
+            adapter, nc, X_tr, y_tr, teacher_feats, teacher_logits, X_te, **kw)
+        mi_history = []
+        details = None
+    m = metrics.evaluate(y_te, preds)
+    test_balanced_accuracy = float(balanced_accuracy_score(y_te, preds) * 100.0)
+    train_logits = details['train_logits'] if details is not None else None
+    train_preds = details['train_preds'] if details is not None else None
+    final_diagnostics = {}
+    if train_logits is not None:
+        final_diagnostics = _final_train_mi_and_agreement(
+            tch['logits'], train_logits, train_preds)
+    history = details['training_history'] if details is not None else []
+    last_history = history[-1] if history else {}
+    prediction_counts = np.bincount(
+        np.asarray(preds, dtype=np.int64), minlength=int(nc)).tolist()
+    metric_values = [m['acc'], m['kappa'], test_balanced_accuracy]
+    metrics_finite = all(_finite_metric(value) for value in metric_values)
+    batch_order_hashes = details['batch_order_hashes'] if details is not None else []
+    initial_hash = (_sha256_state_dict(initial_state_dict)
+                    if initial_state_dict is not None else '')
+    train_uid_hash = _sha256_array(uid_tr) if uid_tr is not None else ''
+    test_uid_hash = _sha256_array(uid_te) if uid_te is not None else ''
+    row = {
+        'dataset': dataset,
+        'subject': int(key) + 1,
+        'key': int(key),
+        'session': _session_default(dataset),
+        'protocol': protocol,
+        'teacher': teacher,
+        'student': student,
+        'teacher_artifact': teacher_artifact,
+        'seed': int(seed),
+        'method': method,
+        'condition_label': METHOD_LABELS.get(method, method),
+        'acc': m['acc'],
+        'test_accuracy': m['acc'],
+        'test_balanced_accuracy': round(test_balanced_accuracy, 4),
+        'kappa': m['kappa'],
+        'test_kappa': m['kappa'],
+        'n_train': int(len(y_tr)),
+        'n_test': int(len(y_te)),
+        'train_count': int(len(y_tr)),
+        'test_count': int(len(y_te)),
+        'num_classes': int(nc),
+        'teacher_train_acc_pct': round(_teacher_acc(tch, y_tr), 2),
+        'teacher_train_uid_alignment': json.dumps(
+            tch.get('_uid_alignment', {}), sort_keys=True),
+        'teacher_artifact_path': tch.get('_artifact_info', {}).get('path', ''),
+        'teacher_artifact_sha256': tch.get('_artifact_info', {}).get('sha256', ''),
+        'train_uid_hash': train_uid_hash,
+        'test_uid_hash': test_uid_hash,
+        'split_uid_hash': _sha256_uid_split(uid_tr, uid_te)
+        if uid_tr is not None and uid_te is not None else '',
+        'initial_state_hash': initial_hash,
+        'batch_order_hash': _combined_hash(batch_order_hashes)
+        if batch_order_hashes else '',
+        'batch_order_hashes': json.dumps(batch_order_hashes),
+        'lam_kd': kw['lam_kd'],
+        'lam_mi': kw['lam_mi'],
+        'lam_mmd': kw['lam_mmd'],
+        'temperature': args.temperature,
+        'weight_mode': weight_mode,
+        'student_epochs': kw['epochs'],
+        'student_lr': kw['lr'],
+        'student_weight_decay': kw['weight_decay'],
+        'student_batch_size': kw['batch_size'],
+        'mmd_sigmas': ' '.join(str(x) for x in args.mmd_sigmas),
+        'mmd_normalize': bool(args.mmd_normalize),
+        'mmd_class_conditional': bool(args.mmd_class_conditional),
+        'optimizer': str(scfg.get('optimizer', 'adamw')).lower(),
+        'scheduler': 'CosineAnnealingLR',
+        'preprocessing': json.dumps({
+            'use_filter_bank': bool(scfg.get('use_filter_bank', False)),
+            'in_channels': int(X_tr.shape[1]),
+            'samples': int(X_tr.shape[2]),
+        }, sort_keys=True),
+        'final_train_loss': last_history.get('total_loss', ''),
+        'final_train_accuracy': last_history.get('train_accuracy', ''),
+        'final_ce_loss': last_history.get('ce_loss', ''),
+        'final_mi_loss': last_history.get('mi_loss', ''),
+        'full_train_mi': final_diagnostics.get('full_train_mi', ''),
+        'full_train_mi_last': (mi_history[-1] if mi_history else
+                               final_diagnostics.get('full_train_mi', '')),
+        'full_train_mi_history': ' '.join(str(value) for value in mi_history),
+        'teacher_student_prediction_agreement': final_diagnostics.get(
+            'teacher_student_prediction_agreement', ''),
+        'mean_abs_probability_diff': final_diagnostics.get(
+            'mean_abs_probability_diff', ''),
+        'predicted_class_counts': json.dumps(prediction_counts),
+        'collapse_flag': bool(len(np.unique(preds)) < 2),
+        'failure_status': 'complete' if metrics_finite else 'invalid_metrics',
+        'failure_reason': '' if metrics_finite else 'non-finite evaluation metric',
+    }
+    if return_details:
+        return row, details
+    return row
 
-            # precompute per-sample alignment weights shared by all conditions
-            w_all = np.ones(len(y_tr), dtype=np.float32)
-            w_masked = (tch['logits'].argmax(1) == y_tr).astype(np.float32)
-            w_mc = None
-            if a.adaptive:
-                mcp = os.path.join(os.path.dirname(artifacts.artifact_path(
-                    a.dataset, a.teacher, subj, seed, 'train')),
-                    f'{subj}_{seed}_train_mc.npz')
-                d = np.load(mcp)
-                assert np.array_equal(d['y'], y_tr), (
-                    f'MC sidecar rows misaligned for S{subj} seed{seed}')
-                logC = np.log(nc)
-                w_mc = np.clip(1.0 - d['pred_entropy'] / logC, 0.0, 1.0).astype(np.float32)
-            weights = {'all': w_all, 'masked': w_masked, 'mc': w_mc}
 
-            correct = (tch['logits'].argmax(1) == y_tr).astype(np.float32)
+def _capture_initial_state(args, dataset, student, X_tr, nc, device, seed):
+    """Build one deterministic student initialization for a fold.
 
-            for cond, (lk, lf, mode) in conditions.items():
-                acfg = dict(scfg)
-                acfg.update(in_channels=X_tr.shape[1], samples=X_tr.shape[2],
-                            dataset_name=a.dataset)
-                student = get_adapter(a.student, device=device, **acfg)
-                kw = dict(lam_kd=lk, lam_feat=lf, temperature=a.temperature,
-                          epochs=scfg.get('epochs', 50), lr=scfg.get('lr', 1e-3),
-                          weight_decay=scfg.get('weight_decay', 0.01),
-                          batch_size=scfg.get('batch_size', 16))
-                if mode.startswith('dkd'):
-                    # DKD: NCKD always on; TCKD gated by teacher correctness.
-                    wt = correct if mode == 'dkd_tmask' else np.ones_like(correct)
-                    kw.update(dkd=True, w_target=wt,
-                              w_nontarget=np.ones_like(correct),
-                              dkd_alpha=a.dkd_alpha, dkd_beta=a.dkd_beta)
-                else:
-                    kw['sample_weight'] = weights[mode]
-                preds = distill_student(
-                    student, nc, X_tr, y_tr, tch['feats'], tch['logits'], X_te, **kw)
-                m = metrics.evaluate(y_te, preds)
-                rows.append(dict(dataset=a.dataset, subject=subj, seed=seed,
-                                 condition=cond, acc=m['acc'], kappa=m['kappa'],
-                                 lam_kd=lk, lam_feat=lf, weight_mode=mode))
-                print(f"S{subj} seed{seed} {cond} | acc={m['acc']} "
-                      f"kappa={m['kappa']}", flush=True)
+    The returned CPU tensors are loaded into every Base/KD_all/CE_MI run for
+    that fold, so condition differences cannot be attributed to initialization
+    drift.  This helper never writes a checkpoint.
+    """
+    _set_seed(seed)
+    scfg = _student_runtime_cfg(student, dataset, 'fewshot', args, X_tr)
+    adapter = get_adapter(student, device=device, **scfg)
+    model = adapter.build(int(nc))
+    state = {key: value.detach().cpu().clone()
+             for key, value in model.state_dict().items()}
+    del model, adapter
+    if device != 'cpu':
+        torch.cuda.empty_cache()
+    return state
 
+
+def _write_csv(path, rows):
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    with open(path, 'w', newline='') as f:
+        writer = csv.DictWriter(f, fieldnames=BASE_FIELDS)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow({k: row.get(k, '') for k in BASE_FIELDS})
+
+
+def _default_out_csv(args, datasets, teachers, students, protocol):
+    if args.out_csv:
+        return args.out_csv
+    out_dir = os.environ.get(
+        'REPRO_OUT',
+        os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+                     'results'),
+    )
+    if len(datasets) == len(teachers) == len(students) == 1:
+        name = f'{datasets[0]}_{protocol}_distill_{teachers[0]}_to_{students[0]}.csv'
+    else:
+        name = f'{protocol}_distill_matrix.csv'
+    return os.path.join(out_dir, name)
+
+
+def _write_outputs(out_csv, rows, protocol, explicit_out, multi_combo):
+    """Write one six-column result CSV per dataset/teacher/student cell."""
+    combos = {}
+    for row in rows:
+        combo = (row['dataset'], row['teacher'], row['student'])
+        combos.setdefault(combo, []).append(row)
+    if not multi_combo:
+        _write_csv(out_csv, rows)
+        return [(out_csv, len(rows))]
+
+    out_dir = os.path.dirname(os.path.abspath(out_csv))
+    stem, ext = os.path.splitext(os.path.basename(out_csv))
+    ext = ext or '.csv'
+    paths = []
+    for dataset, teacher, student in sorted(combos):
+        if explicit_out:
+            path = os.path.join(
+                out_dir,
+                f'{stem}_{dataset}_{protocol}_{teacher}_to_{student}{ext}',
+            )
+        else:
+            path = os.path.join(
+                out_dir,
+                f'{dataset}_{protocol}_distill_{teacher}_to_{student}.csv',
+            )
+        _write_csv(path, combos[(dataset, teacher, student)])
+        paths.append((path, len(combos[(dataset, teacher, student)])))
+    return paths
+
+
+def _print_summary(rows):
     if not rows:
-        print('No teacher artifacts found.'); return
-    df = pd.DataFrame(rows)
-    df.to_csv(out_csv, index=False)
-    print(f'\nWrote {out_csv}')
-    print(df.groupby('condition')[['acc', 'kappa']].mean().round(3))
+        print('[summary] no rows produced', flush=True)
+        return
+    print('[summary]', flush=True)
+    for method in (*DEFAULT_METHODS, 'CE_MI'):
+        vals = [float(r['acc']) for r in rows if r['method'] == method]
+        kappas = [float(r['kappa']) for r in rows if r['method'] == method]
+        if not vals:
+            continue
+        a = np.asarray(vals, dtype=np.float64)
+        k = np.asarray(kappas, dtype=np.float64)
+        std = a.std(ddof=1) if len(a) > 1 else 0.0
+        print(
+            f'  {METHOD_LABELS.get(method, method)} [{method}]: '
+            f'n={len(a)} acc={a.mean():.2f} +/- {std:.2f} '
+            f'kappa={k.mean():.4f}',
+            flush=True,
+        )
 
 
-if __name__ == '__main__':
-    main()
+def _run(args):
+    _set_thread_defaults()
+    protocol = data.canonical_protocol(args.protocol)
+    methods = _parse_methods(args.methods)
+    if 'CE_MI' in methods:
+        if protocol != 'fewshot':
+            raise ValueError('CE_MI is subject-wise fewshot only; non-fewshot protocols are forbidden')
+        if args.keys is not None:
+            raise ValueError('CE_MI requires all subjects; do not pass --subjects/--keys')
+    datasets = _resolve_list(args.datasets, args.dataset, ['BNCI2014004'])
+    teachers = _resolve_list(args.teachers, args.teacher, ['mirepnet'])
+    students = _resolve_list(args.students, args.student, ['ifnet'])
+    _validate_names(teachers, students)
+    if args.teacher_artifact is not None and len(teachers) != 1:
+        raise ValueError('--teacher_artifact is only valid with one teacher')
+    if args.val_split is not None and args.train_percentage is not None:
+        raise ValueError('pass only one of --val_split or --train_percentage')
+
+    device = _device(args.gpu)
+    expected_policy = _expected_split_policy(protocol)
+    out_csv = _default_out_csv(args, datasets, teachers, students, protocol)
+    print(
+        f'[distill] datasets={datasets} teachers={teachers} students={students} '
+        f'protocol={protocol} methods={methods} device={device}',
+        flush=True,
+    )
+    print(
+        f'[artifacts] root={args.artifact_root} require_uid=True '
+        f'require_split_policy=True expected_policy={expected_policy}',
+        flush=True,
+    )
+
+    rows, errors = [], []
+    for dataset in datasets:
+        dcfg = config.load_dataset_config(dataset)
+        keys = args.keys if args.keys is not None else list(range(dcfg['num_subjects']))
+        seeds = args.seeds if args.seeds is not None else dcfg['seeds']
+        nc = int(dcfg['num_classes'])
+        val_split = args.val_split if args.val_split is not None else dcfg['val_split']
+        for teacher in teachers:
+            teacher_artifact = _teacher_artifact_name(
+                teacher, protocol, override=args.teacher_artifact)
+            for student in students:
+                for seed in seeds:
+                    for key in keys:
+                        try:
+                            X_tr, y_tr, X_te, y_te, uid_tr, _uid_te, subj_tr = _split_cell(
+                                dataset, protocol, key, seed, val_split, args.train_percentage)
+                            tch = _load_teacher(
+                                dataset, teacher_artifact, key, seed, y_tr, uid_tr,
+                                expected_policy, args.artifact_root)
+                            initial_state_dict = None
+                            if 'CE_MI' in methods:
+                                # Keep the three MI conditions on one exact
+                                # initialization for this subject/seed cell.
+                                initial_state_dict = _capture_initial_state(
+                                    args, dataset, student, X_tr, nc, device, seed)
+                            for method in methods:
+                                method_kwargs = {}
+                                if initial_state_dict is not None:
+                                    method_kwargs['initial_state_dict'] = initial_state_dict
+                                row = _run_method(
+                                    args, dataset, protocol, teacher, student,
+                                    teacher_artifact, key, seed, method,
+                                    X_tr, y_tr, X_te, y_te, subj_tr, tch,
+                                    nc, device,
+                                    **method_kwargs)
+                                rows.append(row)
+                                print(
+                                    f'[{dataset}] {teacher}->{student} key={key} '
+                                    f'seed={seed} {method} acc={row["acc"]} '
+                                    f'kappa={row["kappa"]}',
+                                    flush=True,
+                                )
+                                if device != 'cpu':
+                                    torch.cuda.empty_cache()
+                        except Exception as e:  # noqa: BLE001 - keep filling matrix
+                            msg = (f'{dataset} {teacher_artifact}->{student} '
+                                   f'key={key} seed={seed}: {e}')
+                            errors.append(msg)
+                            print(f'[ERR] {msg}', flush=True)
+                            if args.fail_fast:
+                                raise
+
+    if rows:
+        multi_combo = not (len(datasets) == len(teachers) == len(students) == 1)
+        written = _write_outputs(
+            out_csv, rows, protocol, explicit_out=args.out_csv is not None,
+            multi_combo=multi_combo)
+        if len(written) == 1:
+            print(f'\nWrote {written[0][0]} rows={written[0][1]}', flush=True)
+        else:
+            for path, count in written:
+                print(f'Wrote {path} rows={count}', flush=True)
+    else:
+        print('\nNo rows produced.', flush=True)
+    _print_summary(rows)
+    if errors:
+        print(f'[errors] {len(errors)} cells failed', flush=True)
+    print('Done.', flush=True)
+    return 1 if errors and not rows else 0
+
+
+def main(argv=None):
+    args = parse_args(argv)
+    if not args.log_file:
+        return _run(args)
+    os.makedirs(os.path.dirname(os.path.abspath(args.log_file)), exist_ok=True)
+    with open(args.log_file, 'w', buffering=1) as log_f:
+        tee_out = _Tee(sys.stdout, log_f)
+        tee_err = _Tee(sys.stderr, log_f)
+        with redirect_stdout(tee_out), redirect_stderr(tee_err):
+            print(f'[log] writing stdout/stderr to {args.log_file}', flush=True)
+            return _run(args)
+
+
+if __name__ == "__main__":
+    if any(arg == "--config" or arg.startswith("--config=")
+           for arg in sys.argv[1:]):
+        from experiments.distill.config_runner import main as config_main
+        raise SystemExit(config_main())
+    raise SystemExit(main())

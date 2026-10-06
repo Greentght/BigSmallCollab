@@ -1,10 +1,141 @@
-# CBraMod foundation-model teacher
+# CBraMod foundation-model teacher. Env: cbramod.
 env: cbramod
 size: big
-epochs: 50
-lr: 0.0001
-batch_size: 64
-weight_decay: 0.05
-dropout: 0.1
-scale: 1.0
-label_smoothing: 0.1
+
+# Model-specific finetune hyperparameters.
+# Merge order: defaults < dataset < protocol. Data splits/seeds stay in configs/datasets/.
+finetune:
+  defaults:
+    epochs: 50
+    lr: 0.0001
+    batch_size: 64
+    weight_decay: 0.05
+    dropout: 0.1
+    scale: 1
+    label_smoothing: 0.1
+    target_fs: 200
+    l_freq: null
+    h_freq: null
+    notch_freq: null
+    norm_method: null
+    apply_EA: false
+    warmup_epochs: 0
+    min_lr: 0.0
+  BNCI2014001:
+    fewshot:
+      epochs: 20
+      lr: 0.001
+      batch_size: 16
+      weight_decay: 0.1
+      dropout: 0.5
+      scale: 1
+      label_smoothing: 0.0
+      target_fs: 200
+      l_freq: 0.3
+      h_freq: 75.0
+      notch_freq: 60.0
+      norm_method: car
+      apply_EA: false
+      warmup_epochs: 5
+      min_lr: 0.000001
+    loso:
+      epochs: 50
+      lr: 0.0001
+      batch_size: 64
+      weight_decay: 0.05
+      dropout: 0.1
+      scale: 1
+      label_smoothing: 0.1
+  BNCI2014001-4:
+    fewshot:
+      epochs: 20
+      lr: 0.0003
+      batch_size: 16
+      weight_decay: 0.1
+      dropout: 0.5
+      scale: 1
+      label_smoothing: 0.0
+      target_fs: 200
+      l_freq: 0.3
+      h_freq: 75.0
+      notch_freq: 60.0
+      norm_method: car
+      apply_EA: false
+      warmup_epochs: 5
+      min_lr: 0.000001
+    loso:
+      epochs: 50
+      lr: 0.0001
+      batch_size: 64
+      weight_decay: 0.05
+      dropout: 0.1
+      scale: 1
+      label_smoothing: 0.1
+  BNCI2014004:
+    fewshot:
+      epochs: 20
+      lr: 0.001
+      batch_size: 16
+      weight_decay: 0.01
+      dropout: 0.5
+      scale: 1
+      label_smoothing: 0.0
+      target_fs: 200
+      l_freq: 0.3
+      h_freq: 75.0
+      notch_freq: 60.0
+      apply_EA: false
+      warmup_epochs: 5
+      min_lr: 0.000001
+    loso:
+      epochs: 50
+      lr: 0.0001
+      batch_size: 64
+      weight_decay: 0.05
+      dropout: 0.1
+      scale: 1
+      label_smoothing: 0.1
+  BNCI2015001:
+    fewshot:
+      epochs: 20
+      lr: 0.001
+      batch_size: 8
+      weight_decay: 0.01
+      dropout: 0.5
+      scale: 1
+      label_smoothing: 0.0
+      target_fs: 200
+      l_freq: 0.3
+      h_freq: 75.0
+      notch_freq: 60.0
+      norm_method: car
+      apply_EA: false
+      warmup_epochs: 5
+      min_lr: 0.000001
+    loso:
+      epochs: 50
+      lr: 0.0001
+      batch_size: 64
+      weight_decay: 0.05
+      dropout: 0.1
+      scale: 1
+      label_smoothing: 0.1
+  AlexMI:
+    fewshot:
+      epochs: 50
+      lr: 0.0001
+      batch_size: 64
+      weight_decay: 0.05
+      dropout: 0.1
+      scale: 1
+      label_smoothing: 0.1
+    loso:
+      epochs: 50
+      lr: 0.0001
+      batch_size: 64
+      weight_decay: 0.05
+      dropout: 0.1
+      scale: 1
+      label_smoothing: 0.1
+
+# pretrain: defaults to /data1/llx/pre_weight/cbramod.pth

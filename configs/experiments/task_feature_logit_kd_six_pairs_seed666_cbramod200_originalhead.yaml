@@ -1,0 +1,35 @@
+name: task_feature_logit_kd_six_pairs_seed666_cbramod200_originalhead
+type: distill
+method: task_feature_logit_kd_six_pairs_corrected_cbramod_original_head
+datasets:
+  - BNCI2014001
+  - BNCI2014004
+  - BNCI2015001
+  - AlexMI
+protocol: fewshot
+val_split: 0.7
+seed: 666
+teachers:
+  - mirepnet
+  - cbramod
+students:
+  - ifnet
+  - eegnet
+  - adfcnn
+output_dir: results/distill/task_feature_logit_kd_six_pairs_seed666_cbramod200_originalhead
+artifact_root: results/distill/task_feature_logit_kd_six_pairs_seed666_cbramod200_originalhead/teacher_artifacts
+epochs: 100
+warmup_epochs: 10
+scheduler: CosineAnnealingLR
+temperature_kd: 2.0
+lam_kd: 0.5
+lam_feature: 1.0
+feature_eps: 1.0e-8
+drop_last: false
+model_selection: final_epoch
+cbramod_teacher_feature_head: original_mlp_200
+cbramod_teacher_feature_dim: 200
+conditions:
+  - BASE_CE
+  - DELAYED_LOGIT_KD
+  - TASK_FEAT_LOGIT_KD

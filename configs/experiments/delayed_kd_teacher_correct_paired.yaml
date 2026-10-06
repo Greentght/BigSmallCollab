@@ -1,0 +1,34 @@
+name: delayed_kd_teacher_correct_paired
+type: distill
+method: delayed_kd_teacher_correct_paired
+
+# Fixed 38-cell few-shot experiment; repository val_split is test fraction.
+datasets:
+  - BNCI2014001
+  - BNCI2014004
+  - BNCI2015001
+  - AlexMI
+protocol: fewshot
+val_split: 0.7
+seed: 666
+teacher: mirepnet
+student: ifnet
+artifact_root: results/artifacts
+output_dir: results/distill/delayed_kd_teacher_correct_paired
+
+epochs: 100
+warmup_epochs: 10
+optimizer: AdamW
+lr: 0.001
+weight_decay: 0.01
+batch_size: 16
+scheduler: CosineAnnealingLR
+temperature_kd: 2.0
+lam_kd: 0.5
+drop_last: false
+model_selection: final_epoch
+num_threads: 1
+
+conditions:
+  - DELAYED_KD_ALL
+  - DELAYED_KD_TCORRECT

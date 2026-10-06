@@ -1,10 +1,10 @@
 """Config-driven experiment runner.
 
-    python -m experiments.run configs/exp/<name>.yaml [--gpu 0] [--report]
+    Legacy runner only; new distill/fusion work must use run_distill.py or run_fusion.py with --config configs/experiments/<name>.yaml.
 
 Walks (dataset x unit x seed x condition), consumes cached teacher artifacts,
 trains the student via ``collab.distill.distill_student``, and writes a long-form
-metrics CSV (``results/metrics/<name>.csv``) that the ``eval`` layer consumes.
+metrics CSV (``results/<name>.csv``) that the ``eval`` layer consumes.
 With ``--report`` (or a ``report:`` block) it prints the paired-stats report.
 
 Must run in the STUDENT's conda env; the teacher is never built here — its
@@ -12,8 +12,8 @@ train-split artifact (feats+logits) must already exist (exported once in the
 teacher's env via ``experiments/finetune/finetune.py``). Conditions with no teacher
 signal (all methods reduce to lam=0) run even without an artifact.
 
-YAML schema (see configs/exp/*.yaml):
-    name:      str                    # -> results/metrics/<name>.csv
+YAML schema below is legacy and is kept only for historical reproduction; current configs live in configs/experiments/.
+    name:      str                    # -> results/<name>.csv
     protocol:  fewshot | loso             # within accepted as a legacy alias
     datasets:  [str, ...]
     teacher:   str | null             # cached-artifact model name (null = none)
@@ -26,8 +26,10 @@ YAML schema (see configs/exp/*.yaml):
     report:    {baseline: str, metrics: [acc, kappa]}   # optional auto-eval
 """
 import argparse
+from contextlib import redirect_stderr, redirect_stdout
 import os
 import sys
+import traceback
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -44,6 +46,20 @@ from eval import metrics
 from models import get_adapter
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+class _Tee:
+    def __init__(self, *streams):
+        self.streams = streams
+
+    def write(self, data):
+        for stream in self.streams:
+            stream.write(data)
+        return len(data)
+
+    def flush(self):
+        for stream in self.streams:
+            stream.flush()
 
 
 METHOD_REGISTRY = {
@@ -142,23 +158,13 @@ def run_dataset(cfg, dataset, device):
     return rows
 
 
-def main():
+def _run(a):
     # thread cap: shared box discipline (default 4, setdefault keeps pre-set env)
     os.environ.setdefault('OMP_NUM_THREADS', '4')
     os.environ.setdefault('MKL_NUM_THREADS', '4')
     os.environ.setdefault('OPENBLAS_NUM_THREADS', '4')
     os.environ.setdefault('NUMEXPR_NUM_THREADS', '4')
     torch.set_num_threads(int(os.environ.get('TORCH_NUM_THREADS', '4')))
-
-    ap = argparse.ArgumentParser(prog='python -m experiments.run')
-    ap.add_argument('config', help='path to experiment YAML')
-    ap.add_argument('--gpu', type=int, default=None)
-    ap.add_argument('--seed', type=int, default=None,
-                    help='process-level seed set once before the run loop '
-                         '(default: leave global RNG untouched — historical behavior)')
-    ap.add_argument('--report', action='store_true',
-                    help='print the eval paired-stats report after running')
-    a = ap.parse_args()
 
     if a.seed is not None:
         from collab.seed import set_seed
@@ -176,7 +182,7 @@ def main():
         print('No rows produced (missing teacher artifacts?).'); return
 
     out_csv = os.path.join(os.environ.get('REPRO_OUT',
-                                          os.path.join(_ROOT, 'results', 'metrics')),
+                                          os.path.join(_ROOT, 'results')),
                            f"{cfg['name']}.csv")
     os.makedirs(os.path.dirname(out_csv), exist_ok=True)
     df = pd.DataFrame(rows)
@@ -196,6 +202,39 @@ def main():
             report_contrasts(df[df.dataset == ds], baseline=base,
                              methods=methods_list,
                              metrics=tuple(rep.get('metrics', ['acc', 'kappa'])))
+
+
+def parse_args(argv=None):
+    ap = argparse.ArgumentParser(prog='python -m experiments.run')
+    ap.add_argument('config', help='path to experiment YAML')
+    ap.add_argument('--gpu', type=int, default=None)
+    ap.add_argument('--seed', type=int, default=None,
+                    help='process-level seed set once before the run loop '
+                         '(default: leave global RNG untouched — historical behavior)')
+    ap.add_argument('--report', action='store_true',
+                    help='print the eval paired-stats report after running')
+    ap.add_argument('--log_file', default=None,
+                    help='optional file that receives a copy of stdout/stderr')
+    return ap.parse_args(argv)
+
+
+def main(argv=None):
+    a = parse_args(argv)
+    if not a.log_file:
+        _run(a)
+        return
+
+    os.makedirs(os.path.dirname(os.path.abspath(a.log_file)), exist_ok=True)
+    with open(a.log_file, 'w', buffering=1) as log_f:
+        tee_out = _Tee(sys.stdout, log_f)
+        tee_err = _Tee(sys.stderr, log_f)
+        with redirect_stdout(tee_out), redirect_stderr(tee_err):
+            print(f'[log] writing stdout/stderr to {a.log_file}', flush=True)
+            try:
+                _run(a)
+            except Exception:
+                traceback.print_exc()
+                raise SystemExit(1)
 
 
 if __name__ == '__main__':

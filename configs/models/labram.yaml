@@ -1,9 +1,80 @@
-# LaBraM foundation model; 250->200Hz, (ch,4,200) patches, input_chans. Env: labram.
+# LaBraM foundation model; 250->200Hz, (ch,4,200) patches. Env: labram.
 env: labram
 size: big
-epochs: 50
-lr: 0.0005
-batch_size: 32
-weight_decay: 0.05
-scale: 100.0
-# pretrain: defaults to <LaBraM>/checkpoints/labram-base.pth
+
+# Model-specific finetune hyperparameters.
+# Merge order: defaults < dataset < protocol. Data splits/seeds stay in configs/datasets/.
+finetune:
+  defaults:
+    epochs: 50
+    lr: 0.0005
+    batch_size: 32
+    weight_decay: 0.05
+    scale: 100
+  BNCI2014001:
+    fewshot:
+      epochs: 50
+      lr: 0.0005
+      batch_size: 32
+      weight_decay: 0.05
+      scale: 100
+    loso:
+      epochs: 50
+      lr: 0.0005
+      batch_size: 32
+      weight_decay: 0.05
+      scale: 100
+  BNCI2014001-4:
+    fewshot:
+      epochs: 50
+      lr: 0.0005
+      batch_size: 32
+      weight_decay: 0.05
+      scale: 100
+    loso:
+      epochs: 50
+      lr: 0.0005
+      batch_size: 32
+      weight_decay: 0.05
+      scale: 100
+  BNCI2014004:
+    fewshot:
+      epochs: 50
+      lr: 0.0005
+      batch_size: 32
+      weight_decay: 0.05
+      scale: 100
+    loso:
+      epochs: 50
+      lr: 0.0005
+      batch_size: 32
+      weight_decay: 0.05
+      scale: 100
+  BNCI2015001:
+    fewshot:
+      epochs: 50
+      lr: 0.0005
+      batch_size: 32
+      weight_decay: 0.05
+      scale: 100
+    loso:
+      epochs: 50
+      lr: 0.0005
+      batch_size: 32
+      weight_decay: 0.05
+      scale: 100
+  AlexMI:
+    fewshot:
+      epochs: 50
+      lr: 0.0005
+      batch_size: 32
+      weight_decay: 0.05
+      scale: 100
+    loso:
+      epochs: 50
+      lr: 0.0005
+      batch_size: 32
+      weight_decay: 0.05
+      scale: 100
+
+# pretrain: defaults to /data1/llx/pre_weight/labram-base.pth

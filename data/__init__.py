@@ -9,12 +9,14 @@ The split API is re-exported here so callers do ``import data; data.subject_spli
 """
 from .split import (
     Cell, canonical_protocol, fewshot_cells, get_cells, iter_cells, loso_cells,
-    subject_split, loso_split, load_subject_raw, split_indices_with_val_ratio,
-    within_cells,
+    subject_split, loso_split, load_subject_raw,
+    split_indices_with_val_ratio, split_indices_by_label_ordered,
+    subject_split_ordered_fewshot, within_cells,
 )
 
 __all__ = [
     'Cell', 'canonical_protocol', 'fewshot_cells', 'get_cells', 'iter_cells',
     'loso_cells', 'subject_split', 'loso_split', 'load_subject_raw',
-    'split_indices_with_val_ratio', 'within_cells',
+    'split_indices_with_val_ratio', 'split_indices_by_label_ordered',
+    'subject_split_ordered_fewshot', 'within_cells',
 ]

@@ -1,7 +1,9 @@
-# BNCI2014001 (BCI IV 2a) full 4-class — 22 ch, 4-class, 9 subjects, 250 Hz.
+# Dataset facts + shared split policy only.
+# Model-specific finetune hyperparameters live in configs/models/<model>.yaml.
+# BNCI2014001 (BCI IV 2a) full 4-class, 22 ch, 9 subjects, 250 Hz.
 num_classes: 4
 channels: 22
 num_subjects: 9
 sample_rate: 250
-val_split: 0.3        # TEST fraction: 70% calib / 30% test
+val_split: 0.7        # TEST fraction: 70% calib / 30% test
 seeds: [666, 667, 668]

@@ -1,0 +1,30 @@
+name: distill_mi
+type: distill
+method: mi
+
+# This pilot is intentionally subject-wise few-shot only.  null subjects means
+# every configured subject; only subject-wise expansion is permitted for method=mi.
+datasets:
+  - BNCI2014001
+  - BNCI2014004
+  - BNCI2015001
+  - AlexMI
+
+protocols: [fewshot]
+seeds: null
+subjects: null
+
+# The loader always expands this method to Base, KD_all and CE_MI.
+include_baseline: true
+artifact_root: results/artifacts
+output_dir: results/distill
+fail_fast: false
+
+pairs:
+  - teacher: mirepnet
+    student: ifnet
+    params:
+      # No reference-paper value is configured in this repository; this is a
+      # fixed pilot weight and must not be selected from test performance.
+      lam_mi: 0.1
+    grid: {}

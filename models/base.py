@@ -49,17 +49,32 @@ class ModelAdapter(ABC):
         """Plain CE finetune on the calibration split. Returns the model.
 
         Hyperparameters come from ``self.cfg`` (epochs, lr, weight_decay,
-        batch_size); sensible defaults match the MIRepNet kappa-track scripts.
+        batch_size, optimizer); sensible defaults preserve the shared adapter
+        behavior unless a model config overrides them.
         """
         epochs = self.cfg.get('epochs', 50)
         lr = self.cfg.get('lr', 1e-3)
         wd = self.cfg.get('weight_decay', 1e-4)
         bs = self.cfg.get('batch_size', 32)
+        optimizer_name = str(
+            self.cfg.get('optimizer', self.cfg.get('optimizer_type', 'adamw'))
+        ).lower()
+        momentum = self.cfg.get('momentum', 0.9)
 
         Xp = self.preprocess(X_tr)
         y = torch.as_tensor(y_tr, dtype=torch.long)
         loader = DataLoader(TensorDataset(Xp, y), batch_size=bs, shuffle=True)
-        opt = optim.AdamW(model.parameters(), lr=lr, weight_decay=wd)
+        if optimizer_name == 'adam':
+            opt = optim.Adam(model.parameters(), lr=lr, weight_decay=wd)
+        elif optimizer_name == 'adamw':
+            opt = optim.AdamW(model.parameters(), lr=lr, weight_decay=wd)
+        elif optimizer_name == 'sgd':
+            opt = optim.SGD(model.parameters(), lr=lr, weight_decay=wd,
+                            momentum=momentum)
+        else:
+            raise ValueError(
+                f"Unsupported optimizer {optimizer_name!r}; expected "
+                "'adam', 'adamw', or 'sgd'.")
         sched = optim.lr_scheduler.CosineAnnealingLR(opt, T_max=epochs)
         crit = nn.CrossEntropyLoss()
         model.train()

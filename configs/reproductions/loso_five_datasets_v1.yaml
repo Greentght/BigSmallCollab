@@ -1,0 +1,288 @@
+# Experiment specification. This file is a plan; the existing YAML experiment
+# dispatcher does not yet consume this schema.
+spec_version: 1
+kind: loso_reproduction_plan
+protocol_id: loso_five_settings_canonical4s_v1
+created: '2026-10-01'
+status: planned
+execution:
+  runner_status: implemented_preflight_passed_formal_execution_started
+  output_template: results/reproductions/loso_five_settings_canonical4s_v1/{dataset}/{model}/{recipe}/subject_{subject:02d}/seed_{seed}
+  trial_manifest: configs/reproductions/manifests/loso_five_datasets_v1_trials.csv
+  source_snapshot: configs/reproductions/manifests/loso_five_datasets_v1_sources.json
+  fold_manifest: docs/loso_five_datasets_folds.csv
+
+protocol:
+  seeds: [666, 667, 668]
+  split: leave_one_subject_out
+  train_scope: all_selected_trials_of_other_subjects
+  test_scope: all_selected_trials_of_held_out_subject
+  split_rng: none
+  validation: none_for_fixed_recipe_baseline
+  selection: fixed_final_epoch
+  test_evaluation: once_after_training
+  target_label_calibration: false
+  initialization: same_pretrained_checkpoint_fresh_for_each_fold_seed
+  scope: frozen_current_cache_reproduction
+  provenance_policy: record_unknown_unit_filter_and_epoch_origin_fields_as_unknown
+  source_uid: [source_dataset, raw_cache_row]
+  legacy_uid: [zero_based_subject, selected_trial_within_subject]
+  subject_sampling: uniform_trial_shuffle_without_subject_balancing
+
+datasets:
+  BNCI2014001:
+    source_dataset: BNCI2014001
+    source_shape: [5184, 22, 1001]
+    source_fs_hz: 250
+    selected_session: session_T
+    loader_data_mode: sessionT
+    classes: {left_hand: 0, right_hand: 1}
+    native_channels: 22
+    subjects: 9
+    selected_trials: 1296
+    per_subject_trials: [144, 144, 144, 144, 144, 144, 144, 144, 144]
+    window: first_1000_source_samples
+    canonical_shape: [22, 1000]
+    canonical_fs_hz: 250
+    measured_window_seconds: 4
+    synthetic_padding_seconds: 0
+    folds: {train_trials: 1152, test_trials: 144}
+  BNCI2014001-4:
+    source_dataset: BNCI2014001
+    source_shape: [5184, 22, 1001]
+    source_fs_hz: 250
+    selected_session: session_T
+    loader_data_mode: sessionT
+    classes: {feet: 0, left_hand: 1, right_hand: 2, tongue: 3}
+    native_channels: 22
+    subjects: 9
+    selected_trials: 2592
+    per_subject_trials: [288, 288, 288, 288, 288, 288, 288, 288, 288]
+    window: first_1000_source_samples
+    canonical_shape: [22, 1000]
+    canonical_fs_hz: 250
+    measured_window_seconds: 4
+    synthetic_padding_seconds: 0
+    folds: {train_trials: 2304, test_trials: 288}
+  BNCI2014004:
+    source_dataset: BNCI2014004
+    source_shape: [6520, 3, 1126]
+    source_fs_hz: 250
+    selected_session: session_3
+    loader_data_mode: session3
+    benchmark_session_alias: 3test
+    classes: {left_hand: 0, right_hand: 1}
+    native_channels: 3
+    subjects: 9
+    selected_trials: 1400
+    per_subject_trials: [160, 120, 160, 160, 160, 160, 160, 160, 160]
+    window: first_1000_source_samples
+    canonical_shape: [3, 1000]
+    canonical_fs_hz: 250
+    measured_window_seconds: 4
+    synthetic_padding_seconds: 0
+    folds:
+      subject_2: {train_trials: 1280, test_trials: 120}
+      other_subjects: {train_trials: 1240, test_trials: 160}
+  BNCI2015001:
+    source_dataset: BNCI2015001
+    source_shape: [5600, 13, 2561]
+    source_fs_hz: 512
+    selected_session: session_A
+    locked_environment: {MI2015001_SESSION: session_A}
+    classes: {feet: 0, right_hand: 1}
+    native_channels: 13
+    subjects: 12
+    selected_trials: 2400
+    per_subject_trials: [200, 200, 200, 200, 200, 200, 200, 200, 200, 200, 200, 200]
+    window: scipy_signal_resample_512_to_250_then_first_1000_samples
+    canonical_shape: [13, 1000]
+    canonical_fs_hz: 250
+    measured_window_seconds: 4
+    synthetic_padding_seconds: 0
+    folds: {train_trials: 2200, test_trials: 200}
+  AlexMI:
+    source_dataset: AlexMI
+    source_shape: [480, 16, 1537]
+    source_fs_hz: 512
+    selected_session: '0'
+    selected_run: '0'
+    classes: {feet: 0, right_hand: 1}
+    dropped_labels: [rest]
+    native_channels: 16
+    subjects: 8
+    selected_trials: 320
+    per_subject_trials: [40, 40, 40, 40, 40, 40, 40, 40]
+    window: mne_resample_up125_down256_take750_then_repeat_first250
+    canonical_shape: [16, 1000]
+    canonical_fs_hz: 250
+    measured_window_seconds: 3
+    synthetic_padding_seconds: 1
+    window_label: 3s_plus_1s_repeat
+    folds: {train_trials: 280, test_trials: 40}
+
+main_recipes:
+  mirepnet:
+    name: project_loso_mi8_30_subject_ea_idw45
+    parameter_source: configs/models/mirepnet.yaml::finetune.<dataset>.loso
+    optimizer: adam
+    lr: 0.001
+    batch_size: 8
+    weight_decay: 0.000001
+    label_smoothing: 0.0
+    epochs: {BNCI2014001: 10, BNCI2014001-4: 20, BNCI2014004: 10, BNCI2015001: 10, AlexMI: 10}
+    trainable_scope: all_parameters
+    lr_schedule: cosine_annealing_per_epoch
+    warmup_epochs: 0
+    min_lr: 0.0
+    preprocessing:
+      order: [canonical_window, bandpass_8_30, per_subject_ea, idw_45_channels]
+      bandpass: {implementation: data.preproc.bandpass, order: 4, zero_phase: true, low_hz: 8, high_hz: 30}
+      ea_training: separately_for_each_source_subject
+      ea_test: entire_unlabeled_held_out_subject_pool
+      evaluation_regime: transductive_loso
+      channel_mapping: inverse_distance_using_data_channels_artificial_2d_positions
+      channel_mapping_implementation: data.preproc.pad_missing_channels_diff
+      input_shape: [B, 45, 1000]
+      adapter_skip_preprocess: true
+  cbramod:
+    name: project_loso_filtered_native4s_flatten
+    parameter_source: configs/models/cbramod.yaml::finetune.<dataset>.loso
+    preprocessing_source: explicit_protocol_override_matching_completed_004_runner
+    optimizer: adamw
+    optimizer_eps: 1.0e-8
+    lr: 0.0001
+    batch_size: 64
+    weight_decay: 0.05
+    dropout: 0.1
+    label_smoothing: 0.1
+    epochs: 50
+    trainable_scope: all_parameters
+    lr_schedule: cosine_annealing_per_epoch
+    warmup_epochs: 0
+    min_lr: 0.0
+    head: flatten_dropout_linear
+    preprocessing:
+      order: [canonical_window, resample_to_200, bandpass_0_3_75, notch_60, native_channel_patchify]
+      target_fs_hz: 200
+      bandpass: {implementation: data.preproc.bandpass, order: 4, zero_phase: true, low_hz: 0.3, high_hz: 75}
+      notch: {implementation: data.preproc.notch, frequency_hz: 60, Q: 30, zero_phase: true}
+      apply_EA: false
+      norm_method: null
+      scale: 1.0
+      input_shape: [B, C_native, 4, 200]
+
+optional_cbramod_reference_recipe:
+  name: eegfm_full_recipe_transferred_to_loso4s
+  status: supplementary_fixed_recipe_comparison
+  seeds: [666, 667, 668]
+  original_task: fewshot_30_percent
+  task_transfer: train_on_all_source_subject_trials_under_same_outer_loso_folds
+  window_override: retain_main_canonical4s_for_selected_datasets
+  optimizer: adamw
+  optimizer_eps: 1.0e-8
+  epochs: 20
+  lr: 0.001
+  dropout: 0.5
+  label_smoothing: 0.0
+  trainable_scope: all_parameters
+  head: flatten_dropout_linear
+  lr_schedule: linear_warmup_then_cosine_applied_before_each_optimizer_step
+  warmup_epochs: 5
+  start_warmup_lr: 0.0
+  min_lr: 0.000001
+  common_signal_filters: same_as_main_cbramod
+  apply_EA: false
+  per_dataset:
+    BNCI2014001:
+      source: /home/lixinli/EEG-FM-Benchmark/README.md::BNCI2014001_full
+      source_status: four_class_reference_transferred_to_binary_subset
+      batch_size: 16
+      weight_decay: 0.1
+      norm_method: car
+    BNCI2014001-4:
+      source: /home/lixinli/EEG-FM-Benchmark/README.md::BNCI2014001_full
+      source_status: benchmark_readme_reference
+      batch_size: 16
+      weight_decay: 0.1
+      norm_method: car
+      note: README_lr_1e_3_not_current_project_fewshot_lr_3e_4
+    BNCI2014004:
+      source: /home/lixinli/EEG-FM-Benchmark/config/BNCI2014004.json::CBraMod.full
+      source_status: benchmark_json_reference
+      batch_size: 16
+      weight_decay: 0.01
+      norm_method: null
+      source_window_seconds: 5
+      effective_window_seconds: 4
+    BNCI2015001:
+      source: /home/lixinli/EEG-FM-Benchmark/config/BNCI2015001.json::CBraMod.full
+      source_status: benchmark_json_reference
+      batch_size: 8
+      weight_decay: 0.01
+      norm_method: car
+  absent_reference_recipe: [AlexMI]
+  interpretation: complete_recipe_comparison_including_CAR_changes_not_optimizer_only_ablation
+
+workload:
+  outer_task_folds: 47
+  main_models: 2
+  main_seeds: 3
+  main_fold_seed_cells: 282
+  completed_main_004_cells_eligible_for_conditional_reuse: 54
+  remaining_main_cells_if_004_reused: 228
+  optional_cbramod_reference_cells: 117
+  main_plus_optional_cells: 399
+  remaining_main_plus_optional_if_004_reused: 345
+
+reuse:
+  condition: same_source_hashes_trial_order_pretrained_hashes_preprocessing_training_schedule_and_head
+  legacy_record_policy: preserve_existing_004_evidence_and_flag_missing_train_history_or_historical_environment_without_fabrication
+  completed_main_004:
+    root: results/reproductions/loso_benchmark_session3_4s_v1
+    models: [mirepnet, cbramod]
+    seeds: [666, 667, 668]
+    cells: 54
+  historical_004_reference:
+    root: results/reproductions/loso_eegfm_cbfull_session3_4s_v1
+    model: cbramod
+    seeds: [0, 1, 2]
+    cells: 27
+    use: historical_unpaired_sensitivity_result
+  cache_rebuild_policy: new_protocol_version_and_rerun_004_if_source_or_transform_changes
+
+reporting:
+  primary_metrics: [accuracy, balanced_accuracy, cohen_kappa]
+  additional_metrics: [macro_f1, confusion_matrix]
+  optional_auroc:
+    binary: positive_class_1
+    multiclass: macro_one_vs_rest_probabilities
+  primary_aggregation: equal_subject_mean_per_seed_then_mean_and_sample_std_across_seeds
+  paired_model_comparison: same_dataset_subject_and_seed
+  optional_significance_unit: subject_after_averaging_seeds_within_subject
+  dataset_pooling: no_independent_sample_claim_for_001_and_001_4_overlap
+  artifact_requirements_scope: newly_trained_cells_with_explicit_legacy_exceptions_for_imported_004
+  artifact_requirements:
+    - source_and_code_and_environment_snapshot
+    - resolved_model_config
+    - train_and_test_subjects_and_source_uids
+    - pretrained_checkpoint_sha256
+    - train_history_with_actual_learning_rates
+    - final_checkpoint
+    - test_labels_predictions_logits_probabilities_and_features
+    - test_metrics_and_summary_csv_json
+  resume_requirement: validate_completed_cell_manifest_before_skip_and_summarize_all_manifest_seeds
+
+memory_fallback:
+  trigger: documented_out_of_memory_during_batch_size_preflight
+  policy: separately_recorded_microbatch_and_gradient_accumulation_implementation_version
+  loss_weighting: actual_samples_in_each_effective_batch_including_the_last_partial_batch
+  optimizer_and_step_lr_updates: once_per_effective_batch
+  numerical_equivalence: not_guaranteed_due_to_dropout_rng_order_and_floating_point_accumulation
+
+future_tuning:
+  policy: only_source_subject_validation_inside_each_outer_fold
+  training_subjects: 7_of_8_for_9_subject_datasets_10_of_11_for_12_subject_dataset_6_of_7_for_8_subject_dataset
+  validation_subjects: one_source_subject_or_inner_subject_loso
+  final_training: fresh_initialization_on_all_outer_source_subjects_after_selection
+  reporting: separate_nested_tuned_recipe_from_fixed_recipe_baseline

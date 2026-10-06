@@ -1,20 +1,20 @@
 """Compare re-run metrics CSVs against their historical ground truth.
 
-Matches files by basename between the two globs, then per condition checks:
+Matches files by basename between the two globs, then per method checks:
 
     deterministic  — historical rows are bit-reproducible: per (unit, seed,
-                     condition) the acc% must match exactly (max abs diff == 0)
+                     method) the acc% must match exactly (max abs diff == 0)
     ci             — historically nondeterministic lines: unit is paired and
                      the mean per-unit diff (repro - hist) must fall inside
                      the bootstrap CI; PASS iff CI covers 0 or |mean| <= tol
 
-Prints a per-condition table and exits 0 only if every check passed.
+Prints a per-method table and exits 0 only if every check passed.
 
 Usage:
-    python eval/compare_repro.py --hist 'results/metrics/*.csv' \
-        --repro 'results/metrics_repro/*.csv' --mode deterministic
-    python eval/compare_repro.py --hist 'results/metrics/*.csv' \
-        --repro 'results/metrics_repro/*.csv' --mode ci --tol 0.5
+    python eval/compare_repro.py --hist 'results/*.csv' \
+        --repro 'results_repro/*.csv' --mode deterministic
+    python eval/compare_repro.py --hist 'results/*.csv' \
+        --repro 'results_repro/*.csv' --mode ci --tol 0.5
 """
 import argparse
 import glob
@@ -29,7 +29,6 @@ import pandas as pd
 from eval import stats as estats
 
 UNIT_COLS = ('subject', 'fold')
-COND_COLS = ('condition', 'group')
 
 
 def _norm_name(b):
@@ -58,13 +57,12 @@ def _match_files(hist_pat, repro_pat):
 
 def _cols(df):
     unit = next(c for c in UNIT_COLS if c in df.columns)
-    cond = next(c for c in COND_COLS if c in df.columns)
-    return unit, cond
+    return unit, estats._method_col(df)
 
 
 def check_deterministic(hist, repro):
-    unit, cond = _cols(hist)
-    keys = [unit, 'seed', cond] if 'seed' in hist.columns else [unit, cond]
+    unit, method_col = _cols(hist)
+    keys = [unit, 'seed', method_col] if 'seed' in hist.columns else [unit, method_col]
     m = pd.merge(hist, repro, on=keys, suffixes=('_h', '_r'), how='outer')
     n_rows = len(m)
     m['acc_diff'] = (m['acc_r'] - m['acc_h']).abs()
@@ -73,11 +71,11 @@ def check_deterministic(hist, repro):
 
 
 def check_ci(hist, repro, tol=0.5, n_boot=2000):
-    unit, cond = _cols(hist)
+    unit, method_col = _cols(hist)
     # seeds -> per-unit mean first (project discipline), then pair units
     def agg(d):
-        return d.groupby([unit, cond], as_index=False)['acc'].mean()
-    m = pd.merge(agg(hist), agg(repro), on=[unit, cond],
+        return d.groupby([unit, method_col], as_index=False)['acc'].mean()
+    m = pd.merge(agg(hist), agg(repro), on=[unit, method_col],
                  suffixes=('_h', '_r'))
     diff = (m['acc_r'] - m['acc_h']).values
     n_units = len(diff)
@@ -103,17 +101,17 @@ def main():
     rows, all_ok = [], True
     for name, (hf, rf) in matched.items():
         hist, repro = pd.read_csv(hf), pd.read_csv(rf)
-        unit, cond = _cols(hist)
-        for c in sorted(set(hist[cond]) & set(repro[cond])):
-            h, r = hist[hist[cond] == c], repro[repro[cond] == c]
+        unit, method_col = _cols(hist)
+        for c in sorted(set(hist[method_col]) & set(repro[method_col])):
+            h, r = hist[hist[method_col] == c], repro[repro[method_col] == c]
             if a.mode == 'deterministic':
                 max_diff, n_rows = check_deterministic(h, r)
                 ok = max_diff == 0.0
-                row = dict(file=name, condition=c, n_rows=n_rows,
+                row = dict(file=name, method=c, n_rows=n_rows,
                            max_acc_diff=max_diff, verdict='PASS' if ok else 'FAIL')
             else:
                 mean_diff, lo, hi, ok, n_units = check_ci(h, r, a.tol, a.n_boot)
-                row = dict(file=name, condition=c, n_units=n_units,
+                row = dict(file=name, method=c, n_units=n_units,
                            mean_diff=round(mean_diff, 4),
                            ci_low=round(lo, 4), ci_high=round(hi, 4),
                            verdict='PASS' if ok else 'FAIL')

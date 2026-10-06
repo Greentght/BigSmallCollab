@@ -1,0 +1,25 @@
+name: distill_0014_stage4_prealign_delayed_kd_supplement
+type: distill
+method: prealign_delayed_kd
+datasets: [BNCI2014001-4]
+protocol: fewshot
+val_split: 0.7
+seed: 666
+pre_teacher: mirepnet
+ft_teacher: mirepnet
+student: ifnet
+artifact_root: results/artifacts
+output_dir: results/distill/bnci2014001_4_supplement/stage4_prealign_delayed_kd
+epochs: 100
+prealign_epochs: 10
+optimizer: AdamW
+lr: 0.001
+weight_decay: 0.01
+batch_size: 16
+scheduler: CosineAnnealingLR
+lambda_general: 1.0
+temperature_kd: 2.0
+lam_kd: 0.5
+drop_last: false
+model_selection: final_epoch
+conditions: [BASE_CE, PREALIGN_ONLY, DELAYED_KD, PREALIGN_THEN_KD]

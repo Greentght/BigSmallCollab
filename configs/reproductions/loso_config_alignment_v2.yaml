@@ -1,0 +1,348 @@
+# Executable configuration for run_loso_config_alignment.py.
+spec_version: 2
+kind: loso_config_alignment_plan
+protocol_id: loso_config_alignment_v2
+created: '2026-10-05'
+status: executing
+execution_enabled: true
+runner_status: implemented
+audit: docs/loso_reproduction_audit_20261005.md
+plan: docs/loso_config_alignment_plan.md
+
+scope:
+  primary_models: [cbramod, eegnet]
+  primary_datasets: [BNCI2014001-4, BNCI2014004, BNCI2015001]
+  primary_dataset_folds: 30
+  extension_datasets: [BNCI2014001, AlexMI]
+  later_model_audit: [mirepnet, ifnet, adfcnn]
+  kd_reexecution: separate_plan_after_baseline_acceptance
+
+reference:
+  root: /home/lixinli/EEG-FM-Benchmark
+  commit_sha: null  # resolve and freeze before implementation/execution
+  file_sha256: null
+  paper_cbramod_cross_hyperparameters_confirmed: false
+  paper_generation_environment_confirmed: false
+  record_parser_defaults: true
+  record_json_intended_booleans: true
+  record_literal_cli_effective_booleans: true
+  chosen_boolean_policy: intended_typed_values
+  literal_false_cli_branch: parse_audit_only_not_automatically_executed
+  known_literal_false_effects:
+    class_weights: true
+    filter_bias_and_bn: true
+    use_weight_decay_schedule: true
+    use_grad_clipping: true
+    apply_EA: true
+
+environment:
+  isolated_data_generation: true
+  pin_before_rebuilding: [python, moabb, mne, scipy, numpy, torch]
+  resolved_versions: null
+  original_author_versions: unresolved
+  source_math_dtype: float64
+  model_tensor_dtype: float32
+
+data:
+  cache_root: data_cache/eegfm_alignment_v2
+  unit: microvolts_after_moabb_conversion_verified_and_recorded
+  uid_fields: [raw_file_identity, subject, session, run, event_sample_or_verified_ordinal, class_name]
+  record_fields: [native_fs, epoch_tmin, epoch_tmax, event_sample, channel_order, unit, filter_chain, raw_file_sha256]
+  map_to_legacy_raw_rows: true
+  pairing_requires_verified_one_to_one_identity: true
+  if_pairing_is_ambiguous: mark_unpaired_and_do_not_claim_same_trials
+  datasets:
+    BNCI2014001-4:
+      source_dataset: BNCI2014001
+      native_fs: 250
+      source_filter: {low_hz: 0.1, high_hz: 75}
+      reference_session: 0train
+      legacy_session: session_T
+      source_window_rule: reference_moabb_epoch_then_first_1000_samples
+      channels: 22
+      classes: 4
+      reference_label_map: {left_hand: 0, right_hand: 1, feet: 2, tongue: 3}
+      bridge_legacy_label_map: {feet: 0, left_hand: 1, right_hand: 2, tongue: 3}
+      subjects: 9
+      trials: 2592
+      trials_per_subject: 288
+      epoch_tmin: null
+      epoch_tmax: null
+    BNCI2014004:
+      native_fs: 250
+      source_filter: {low_hz: 0, high_hz: 120}
+      reference_session: 3test
+      legacy_session: session_3
+      source_window_rule: preserve_full_reference_epoch_approximately_4_5_seconds
+      channels: 3
+      classes: 2
+      reference_label_map: {left_hand: 0, right_hand: 1}
+      bridge_legacy_label_map: {left_hand: 0, right_hand: 1}
+      subjects: 9
+      trials: 1400
+      trials_per_subject: [160, 120, 160, 160, 160, 160, 160, 160, 160]
+      epoch_tmin: null
+      epoch_tmax: null
+    BNCI2015001:
+      native_fs: 512
+      source_filter: {low_hz: 0.1, high_hz: 75}
+      reference_session: 0A
+      legacy_session: session_A
+      source_window_rule: preserve_native_epoch_approximately_5_seconds
+      channels: 13
+      classes: 2
+      reference_label_map: {right_hand: 0, feet: 1}
+      bridge_legacy_label_map: {feet: 0, right_hand: 1}
+      subjects: 12
+      trials: 2400
+      trials_per_subject: 200
+      epoch_tmin: null
+      epoch_tmax: null
+
+protocol:
+  split: leave_one_subject_out
+  train_scope: all_selected_trials_of_source_subjects
+  test_scope: all_selected_trials_of_held_out_subject
+  evaluation: once_after_fixed_final_epoch
+  selection_for_fixed_profiles: none
+  target_labels_used_for_training_or_hyperparameter_selection: false
+  metrics: [accuracy, balanced_accuracy, kappa, macro_f1]
+  aggregation: subject_equal_mean_within_seed_then_seed_mean_and_sample_std
+  record_sample_weighted_metrics_separately: true
+
+source_bridge:
+  scope: [BNCI2014001-4]
+  models: [cbramod, eegnet]
+  inputs: [legacy_cache, rebuilt_reference_source_through_same_legacy_pipeline]
+  seeds: [666]
+  seed_scope: independent_fold
+  same_initialization_and_batches_within_input_pair: true
+  label_encoding: bridge_legacy_label_map
+  train_both_input_variants_if_complete_reuse_fingerprint_unavailable: true
+  preserved_profiles:
+    cbramod: eegfm_full_recipe_transferred_to_loso4s
+    eegnet: scratch_supervised_loso_v1
+  legacy_profiles:
+    cbramod:
+      source: current_project_optional_reference_recipe
+      optimizer: adamw
+      lr: 0.001
+      weight_decay: 0.1
+      batch_size: 16
+      epochs: 20
+      head_dropout: 0.5
+      label_smoothing: 0.0
+      target_fs: 200
+      bandpass_hz: [0.3, 75]
+      notch_hz: 60
+      normalization: car
+      apply_ea: false
+      duration_seconds: 4
+      lr_schedule: step_table_warmup_cosine
+      lr_schedule_update: epoch_end_after_global_step_increment
+    eegnet:
+      source: current_project_scratch_supervised_loso_v1
+      optimizer: adamw
+      lr: 0.001
+      weight_decay: 0.0001
+      batch_size: 32
+      epochs: 100
+      dropout: 0.25
+      label_smoothing: 0.0
+      target_fs: 250
+      model_frequency_filter: none_in_current_adapter
+      apply_ea: false
+      normalization: none
+      duration_seconds: 4
+      lr_schedule: epoch_cosine
+  change_scope: source_generation_chain_only
+  full_training_units_budget: 36
+
+reference_aligned:
+  output_profile: documented_reference_loso
+  seeds: [0, 1, 2]
+  seed_scope: reference_seed_stream_across_ordered_folds
+  seed_scope_alignment_claim: initialization_scope_and_subject_order_only
+  account_for_reference_initial_unused_model_build: true
+  reference_per_epoch_test_loader_rng_consumption: audit_before_claiming_random_trajectory_equivalence
+  random_trajectory_equivalence: unresolved_until_preflight
+  if_random_trajectory_cannot_be_matched: record_difference_and_keep_final_only_evaluation
+  parallel_axes: [dataset, model, seed]
+  label_encoding: reference_label_map
+  preprocessing_order: [resample_to_model_fs, trim_or_repeat_pad, butterworth_bandpass_filtfilt, notch_filtfilt, optional_ea, optional_car, float32_tensor]
+  resample: mne_reference_method_direct_from_native_source_fs
+  bandpass_order: 4
+  notch_q: 30
+  apply_ea: false
+  scale_divisor: 1.0
+  shuffle: true
+  drop_last: false
+  dataloader_workers: 0
+  optimizer_eps: 1.0e-8
+  optimizer_betas: [0.9, 0.999]
+  label_smoothing: 0.0
+  layer_decay: 1.0
+  exclude_bias_norm_from_weight_decay: false
+  weight_decay_schedule: false
+  gradient_clipping: false
+  lr_schedule:
+    generator: reference_step_table_linear_warmup_then_cosine
+    apply: epoch_end_using_cumulative_global_step
+    first_epoch_lr: base_lr
+    warmup_epochs: 5
+    min_lr: 0.000001
+    start_warmup_lr: 0.0
+  models:
+    eegnet:
+      parameter_source: /home/lixinli/EEG-FM-Benchmark/README.md::EEGNet_Cross_BNCI2014001
+      source_task: Cross
+      explicitly_corresponding_dataset: BNCI2014001-4
+      transferred_to: [BNCI2014004, BNCI2015001]
+      paper_exact_run_args_confirmed: false
+      initialization: fresh_random_reference_architecture
+      architecture: {F1: 8, D: 2, F2: 16, temporal_kernel: 64, separable_kernel: 16, pooling: [4, 8], padding: reference_asymmetric}
+      avoid_train_dummy_forward: true
+      add_max_norm_constraint: false
+      optimizer: adam
+      lr: 0.001
+      weight_decay: 0.01
+      batch_size: 32
+      epochs: 100
+      dropout: 0.5
+      class_weights: from_source_train_labels
+      target_fs: 250
+      bandpass_hz: [8, 32]
+      notch_hz: 60
+      normalization: car
+      duration_seconds: 5
+      duration_evidence: current_parser_default_not_explicit_readme_flag
+      duration_note_0014: four_seconds_source_plus_repeat_first_second
+    cbramod:
+      source_task: Fewshot
+      target_task: Cross
+      evidence_level: documented_fewshot_recipe_transferred_to_loso
+      paper_loso_hyperparameters_confirmed: false
+      initialization: fresh_verified_pretrained_checkpoint_each_fold
+      pretrained_sha256_verified_against_author_file: null
+      architecture: {d_model: 200, layers: 12, patch_samples: 200, readout: flatten, channel_mode: native}
+      trainable_scope: all_learnable_parameters
+      classifier_dimension: channels_times_actual_patch_count_times_200
+      optimizer: adamw
+      lr: 0.001
+      epochs: 20
+      head_dropout: 0.5
+      label_smoothing: 0.0
+      class_weights: false
+      target_fs: 200
+      bandpass_hz: [0.3, 75]
+      notch_hz: 60
+      per_dataset:
+        BNCI2014001-4:
+          parameter_source: /home/lixinli/EEG-FM-Benchmark/README.md::CBraMod_Fewshot_full_BNCI2014001
+          batch_size: 16
+          weight_decay: 0.1
+          normalization: car
+          duration_seconds: 4
+        BNCI2014004:
+          parameter_source: /home/lixinli/EEG-FM-Benchmark/config/BNCI2014004.json::CBraMod.full
+          batch_size: 16
+          weight_decay: 0.01
+          normalization: null
+          duration_seconds: 5
+          padding_rule: repeat_from_epoch_start_as_reference
+        BNCI2015001:
+          parameter_source: /home/lixinli/EEG-FM-Benchmark/config/BNCI2015001.json::CBraMod.full
+          batch_size: 8
+          weight_decay: 0.01
+          normalization: car
+          duration_seconds: 4
+  full_training_units: 180
+
+optional_scheduler_diagnostic:
+  enabled: false
+  datasets: [BNCI2014001-4]
+  models: [cbramod]
+  seeds: [0]
+  seed_scope: independent_fold_paired
+  variants: [epoch_end_global_step_table, before_optimizer_step]
+  other_parameters: fixed_reference_aligned_cbramod
+  selection_from_outer_test: prohibited
+  maximum_training_units: 18
+
+optional_source_validation:
+  enabled: false
+  datasets: [BNCI2014001-4]
+  models: [cbramod]
+  profile: source_validated_loso
+  nesting: per_outer_fold_excluding_outer_test_subject
+  inner_subject_validation_folds: 3
+  inner_subject_selection: first_three_source_subject_ids_in_sorted_order_recorded_before_training
+  tuning_seeds: [0]
+  candidates:
+    lr: [0.0001, 0.0003, 0.001]
+    epochs: [20, 50]
+  weight_decay_dropout_and_scheduler: fixed_before_search
+  candidates_independently_initialized: true
+  selection_metric: equal_subject_mean_balanced_accuracy_on_inner_validation
+  tie_break: lower_lr_then_fewer_epochs
+  final_refit: fresh_initialization_all_outer_source_subjects
+  final_seeds: [0, 1, 2]
+  internal_training_units: 162
+  final_training_units: 27
+
+optional_common4s:
+  enabled: false
+  profile: aligned_common4s_for_future_kd
+  input_source: rebuilt_reference_source
+  datasets: [BNCI2014001-4, BNCI2014004, BNCI2015001]
+  models: [cbramod, eegnet]
+  seeds: [666, 667, 668]
+  seed_scope: independent_fold
+  duration_seconds: 4
+  lr_schedule_apply: before_optimizer_step
+  other_parameters: reference_aligned_unless_source_validated_configuration_predeclared
+  own_ce_baselines_required: true
+  preserve_initial_state_and_batch_rng_for_kd: true
+  comparison_to_reference_group: multiple_protocol_changes_not_a_single_factor_ablation
+  maximum_training_units_before_exact_reuse: 180
+
+implementation_requirements:
+  - variable_duration_and_patch_count_in_data_model_and_runner
+  - explicit_eegnet_dropout_filter_car_and_reference_padding
+  - native_sample_rate_direct_resampling_in_reference_profiles
+  - selectable_reference_epoch_end_and_corrected_step_lr_updates
+  - typed_booleans_and_saved_resolved_arguments
+  - profile_specific_rng_behavior_and_initialization_evidence
+  - complete_code_config_input_checkpoint_hashes
+  - separate_output_profiles_and_no_stale_cache_reuse
+  - dataset_id_based_excel_export_and_duration_padding_labels
+
+acceptance:
+  source_metadata_and_trial_mapping_verified: required
+  no_train_test_subject_overlap: required
+  reference_wrapper_input_logits_and_lr_trace_compared: required
+  compare_at_fixed_dtype_and_environment: required
+  numeric_tolerance: {rtol: 0.00001, atol: 0.000001}
+  all_expected_epochs_and_cells_present: required
+  final_test_predictions_and_metrics_saved: required
+  optimizer_coverage_and_backbone_update_evidence: required
+  reaching_paper_accuracy: not_an_acceptance_condition
+
+future_kd_dependencies:
+  baseline_acceptance_before_kd: true
+  teacher_export: source_training_uids_only
+  cache_key_fields: [source_sha256, trial_uid_hash, class_map, window, preprocessing, checkpoint_sha256, feature_mode, seed]
+  changed_teacher_or_input_invalidates_old_teacher_cache: true
+  use_new_matching_ce_baseline: true
+  five_second_feature_shapes_separate_from_four_second_main_protocol: true
+
+execution_plan:
+  autostart: false
+  exclude_physical_gpus: [0]
+  allocate_after_checking_available_resources: true
+  phases: [freeze_evidence, rebuild_source, source_bridge_0014, reference_aligned_baselines]
+  first_round_full_training_units: 216
+  preflight_short_jobs: counted_separately
+  wall_time_estimate: after_measured_pilot_only
+  timing_categories: [data_processing, model_training, teacher_export, queue_wait, total_wall_time]
+  output_root: results/reproductions/loso_config_alignment_v2

@@ -6,8 +6,8 @@ Holm correction + a confidence interval**, never from comparing raw means or a
 small-sample probe. This module makes that the default, so a new experiment gets
 it from one call instead of re-implementing ``analyze_*.py`` each time.
 
-Data model: long-form rows, one per (unit, seed, condition):
-    dataset, subject|fold, seed, condition|group, acc, kappa, [extra...]
+Data model: long-form rows, one per (unit, seed, method):
+    dataset, subject|fold, seed, method, acc, kappa, [extra...]
 The **pairing unit** is the subject (``subject`` in within-subject CSVs, ``fold``
 in LOSO CSVs); seeds are averaged into a per-unit mean first (a subject is one
 paired observation, not one-per-seed — that would fake-inflate n). ``acc`` is
@@ -20,7 +20,6 @@ import pandas as pd
 from scipy.stats import wilcoxon
 
 UNIT_COLS = ('subject', 'fold')          # whichever is present = pairing unit
-COND_COLS = ('condition', 'group')       # whichever is present = method label
 
 
 def load_metrics(pattern):
@@ -36,6 +35,10 @@ def _pick(df, names, kind):
         if n in df.columns:
             return n
     raise KeyError(f'no {kind} column in {list(df.columns)} (looked for {names})')
+
+
+def _method_col(df):
+    return _pick(df, ('method',), 'method')
 
 
 def holm(pairs):
@@ -64,7 +67,7 @@ def _bootstrap_ci(diff, n_boot=10000, alpha=0.05, seed=0):
 
 
 def paired_stats(df, method, baseline, metric='acc', unit_col=None,
-                 cond_col=None, seed_col='seed', n_boot=10000, ci_seed=0):
+                 method_col=None, seed_col='seed', n_boot=10000, ci_seed=0):
     """One paired contrast ``method`` vs ``baseline`` on ``metric``.
 
     Averages seeds -> per-unit mean, pairs on the shared units, and returns a dict:
@@ -73,10 +76,10 @@ def paired_stats(df, method, baseline, metric='acc', unit_col=None,
     mean delta). ``delta`` is in the metric's units (acc = percentage points).
     """
     unit_col = unit_col or _pick(df, UNIT_COLS, 'unit')
-    cond_col = cond_col or _pick(df, COND_COLS, 'condition')
-    sub = df[df[cond_col].isin([method, baseline])]
-    piv = (sub.groupby([unit_col, cond_col])[metric].mean()
-           .unstack(cond_col))
+    method_col = method_col or _method_col(df)
+    sub = df[df[method_col].isin([method, baseline])]
+    piv = (sub.groupby([unit_col, method_col])[metric].mean()
+           .unstack(method_col))
     if method not in piv.columns or baseline not in piv.columns:
         raise KeyError(f'{method!r} or {baseline!r} not in {list(piv.columns)}')
     piv = piv.dropna(subset=[method, baseline])
@@ -98,12 +101,12 @@ def paired_stats(df, method, baseline, metric='acc', unit_col=None,
     }
 
 
-def compare(df, baseline, methods, metric='acc', unit_col=None, cond_col=None,
+def compare(df, baseline, methods, metric='acc', unit_col=None, method_col=None,
             seed_col='seed', n_boot=10000, ci_seed=0):
     """Run a family of contrasts ``methods`` vs ``baseline`` on one ``metric`` and
     apply Holm across the family. Returns a tidy DataFrame (one row per method)
     with an added ``holm_p`` column, sorted by the raw p-value."""
-    rows = [paired_stats(df, m, baseline, metric, unit_col, cond_col, seed_col,
+    rows = [paired_stats(df, m, baseline, metric, unit_col, method_col, seed_col,
                          n_boot, ci_seed) for m in methods]
     adj = holm([(r['method'], r['pvalue']) for r in rows])
     for r in rows:
@@ -113,16 +116,16 @@ def compare(df, baseline, methods, metric='acc', unit_col=None, cond_col=None,
             .reset_index(drop=True))
 
 
-def summarize(df, metrics=('acc', 'kappa'), cond_col=None, unit_col=None):
-    """Per-condition mean of each metric (seeds and units pooled). Returns a
-    DataFrame indexed by condition; acc stays in percent."""
-    cond_col = cond_col or _pick(df, COND_COLS, 'condition')
+def summarize(df, metrics=('acc', 'kappa'), method_col=None, unit_col=None):
+    """Per-method mean of each metric (seeds and units pooled). Returns a
+    DataFrame indexed by method; acc stays in percent."""
+    method_col = method_col or _method_col(df)
     cols = [m for m in metrics if m in df.columns]
-    return df.groupby(cond_col)[cols].mean().round(4)
+    return df.groupby(method_col)[cols].mean().round(4)
 
 
 def report_contrasts(df, baseline, methods, metrics=('acc', 'kappa'),
-                     unit_col=None, cond_col=None, seed_col='seed',
+                     unit_col=None, method_col=None, seed_col='seed',
                      n_boot=10000, ci_seed=0, star=(0.05, 0.10)):
     """Print the full model-selection report and return
     ``{metric: compare(...) DataFrame}``.
@@ -132,19 +135,19 @@ def report_contrasts(df, baseline, methods, metrics=('acc', 'kappa'),
     ``.`` marks Holm<star[1]. acc deltas are percentage points.
     """
     unit_col = unit_col or _pick(df, UNIT_COLS, 'unit')
-    cond_col = cond_col or _pick(df, COND_COLS, 'condition')
+    method_col = method_col or _method_col(df)
     n_units = df[unit_col].nunique()
     seeds = sorted(df[seed_col].unique()) if seed_col in df.columns else []
     print(f'== units({unit_col})={n_units}  seeds={seeds}  '
           f'baseline={baseline} ==')
-    print('\nPer-condition mean:')
-    print(summarize(df, metrics, cond_col).to_string(), '\n')
+    print('\nPer-method mean:')
+    print(summarize(df, metrics, method_col).to_string(), '\n')
 
     out = {}
     for metric in metrics:
         if metric not in df.columns:
             continue
-        res = compare(df, baseline, methods, metric, unit_col, cond_col,
+        res = compare(df, baseline, methods, metric, unit_col, method_col,
                       seed_col, n_boot, ci_seed)
         out[metric] = res
         unit = 'pp' if metric == 'acc' else ''

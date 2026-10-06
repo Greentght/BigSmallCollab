@@ -1,0 +1,40 @@
+name: fusion_avg_prob
+type: fusion
+method: avg_prob
+
+datasets:
+  - BNCI2014001-4
+  - BNCI2014004
+  - BNCI2015001
+  - AlexMI
+
+protocols: [fewshot, loso]
+seeds: null
+subjects: null
+
+include_controls: true
+artifact_root: results/artifacts
+output_dir: results/fusion
+fail_fast: false
+
+pairs:
+  - big: mirepnet
+    small: ifnet
+    params: {big_temperature: 1.0, small_temperature: 1.0, big_weight: 0.5}
+    grid: {big_weight: [0.3, 0.5, 0.7]}
+  - big: mirepnet
+    small: eegnet
+    params: {big_temperature: 1.5, small_temperature: 1.0, big_weight: 0.5}
+    grid: {big_weight: [0.4, 0.5, 0.6]}
+  - big: mirepnet
+    small: adfcnn
+    params: {big_temperature: 1.0, small_temperature: 1.0, big_weight: 0.5}
+    grid: {big_weight: [0.3, 0.5, 0.7]}
+  - big: cbramod
+    small: ifnet
+    params: {big_temperature: 1.0, small_temperature: 1.0, big_weight: 0.5}
+    grid: {big_weight: [0.3, 0.5, 0.7]}
+  - big: cbramod
+    small: eegnet
+    params: {big_temperature: 1.5, small_temperature: 1.0, big_weight: 0.3}
+    grid: {big_weight: [0.2, 0.3, 0.4]}

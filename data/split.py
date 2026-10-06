@@ -27,6 +27,9 @@ _imported = False
 
 Cell = namedtuple('Cell', 'unit seed X_tr y_tr X_te y_te subj_ids')
 _PROTOCOL_ALIASES = {'within': 'fewshot'}
+FEWSHOT_SPLIT_POLICY = 'fewshot_stratified_random'
+ORDERED_FEWSHOT_SPLIT_POLICY = 'fewshot_ordered_by_label'
+LOSO_SPLIT_POLICY = 'loso'
 
 
 def canonical_protocol(protocol):
@@ -60,6 +63,13 @@ def _ensure_imports():
     _imported = True
 
 
+def sample_uids(subject, trial_indices):
+    """Build stable sample keys as (subject_id, trial_idx_within_subject)."""
+    trial_indices = np.asarray(trial_indices, dtype=np.int64)
+    subject_ids = np.full(len(trial_indices), int(subject), dtype=np.int64)
+    return np.column_stack((subject_ids, trial_indices))
+
+
 def split_indices_with_val_ratio(all_indices, labels, val_split, seed):
     """Stratified calibration/test split — bit-identical to MIRepNet's helper
     (``utils/utils.py``). ``val_split`` is the TEST fraction."""
@@ -74,6 +84,45 @@ def split_indices_with_val_ratio(all_indices, labels, val_split, seed):
         return [], list(all_indices)
     return train_test_split(all_indices, test_size=val_split,
                             random_state=seed, stratify=labels)
+
+
+def split_indices_by_label_ordered(all_indices, labels, train_percentage):
+    """Benchmark-style few-shot split: first train_percentage per class.
+
+    ``all_indices`` and ``labels`` must be in raw trial order. Returned train/test
+    indices also preserve that original order, matching boolean-mask selection.
+    """
+    train_percentage = float(train_percentage)
+    if train_percentage <= 0.0 or train_percentage >= 1.0:
+        raise ValueError('train_percentage must be in (0, 1)')
+    all_indices = np.asarray(all_indices)
+    labels = np.asarray(labels)
+    train_mask = np.zeros(len(all_indices), dtype=bool)
+    test_mask = np.zeros(len(all_indices), dtype=bool)
+    for label in np.unique(labels):
+        label_positions = np.where(labels == label)[0]
+        train_size = max(1, int(len(label_positions) * train_percentage))
+        train_mask[label_positions[:train_size]] = True
+        test_mask[label_positions[train_size:]] = True
+    return list(all_indices[train_mask]), list(all_indices[test_mask])
+
+
+def subject_split_ordered_fewshot(dataset_name, subject, train_percentage=0.3,
+                                  data_mode=None, return_uid=False):
+    """Per-subject classification few-shot split in benchmark order.
+
+    For each class, the first ``train_percentage`` trials in the original loaded
+    order become calibration data; the rest become test data. No split RNG is used.
+    """
+    _ensure_imports()
+    X, y = load_subject_raw(dataset_name, subject, data_mode=data_mode)
+    idx = np.arange(len(y))
+    idx_tr, idx_te = split_indices_by_label_ordered(
+        idx, y, train_percentage=train_percentage)
+    if return_uid:
+        return (X[idx_tr], y[idx_tr], X[idx_te], y[idx_te],
+                sample_uids(subject, idx_tr), sample_uids(subject, idx_te))
+    return X[idx_tr], y[idx_tr], X[idx_te], y[idx_te]
 
 
 def load_subject_raw(dataset_name, subject, data_mode=None):
@@ -93,7 +142,8 @@ def load_subject_raw(dataset_name, subject, data_mode=None):
     return X, y
 
 
-def loso_split(dataset_name, test_subject, num_subjects=None, data_mode=None):
+def loso_split(dataset_name, test_subject, num_subjects=None, data_mode=None,
+               return_uid=False):
     """Leave-One-Subject-Out fold: all subjects except ``test_subject`` form the
     train set, ``test_subject`` is the test set. Returns
     ``(X_tr, y_tr, subj_tr, X_te, y_te)`` where ``subj_tr`` is the per-trial
@@ -106,20 +156,25 @@ def loso_split(dataset_name, test_subject, num_subjects=None, data_mode=None):
     _ensure_imports()
     if num_subjects is None:
         num_subjects = config.load_dataset_config(dataset_name)['num_subjects']
-    Xtr, ytr, subj = [], [], []
+    Xtr, ytr, subj, uid_tr = [], [], [], []
     for s in range(num_subjects):
         X, y = load_subject_raw(dataset_name, s, data_mode=data_mode)
+        uid = sample_uids(s, np.arange(len(y)))
         if s == test_subject:
-            Xte, yte = X, y
+            Xte, yte, uid_te = X, y, uid
         else:
             Xtr.append(X); ytr.append(y)
             subj.append(np.full(len(y), s, dtype=np.int64))
-    return (np.concatenate(Xtr), np.concatenate(ytr), np.concatenate(subj),
-            Xte, yte)
+            uid_tr.append(uid)
+    out = (np.concatenate(Xtr), np.concatenate(ytr), np.concatenate(subj),
+           Xte, yte)
+    if return_uid:
+        out = out + (np.concatenate(uid_tr), uid_te)
+    return out
 
 
 def subject_split(dataset_name, subject, val_split=0.3, seed=666,
-                  data_mode=None):
+                  data_mode=None, return_uid=False):
     """Deterministic per-subject calibration/test split.
 
     Returns ``(X_tr, y_tr, X_te, y_te)`` as numpy arrays. ``val_split`` is the
@@ -131,6 +186,9 @@ def subject_split(dataset_name, subject, val_split=0.3, seed=666,
     X, y = load_subject_raw(dataset_name, subject, data_mode=data_mode)
     idx = list(range(len(y)))
     idx_tr, idx_te = split_indices_with_val_ratio(idx, y, val_split, seed)
+    if return_uid:
+        return (X[idx_tr], y[idx_tr], X[idx_te], y[idx_te],
+                sample_uids(subject, idx_tr), sample_uids(subject, idx_te))
     return X[idx_tr], y[idx_tr], X[idx_te], y[idx_te]
 
 

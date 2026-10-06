@@ -1,0 +1,45 @@
+name: distill_kd_masked
+type: distill
+method: kd_masked
+
+datasets:
+  - BNCI2014001
+  - BNCI2014001-4
+  - BNCI2014004
+  - BNCI2015001
+  - AlexMI
+
+protocols: [fewshot, loso]
+seeds: null
+subjects: null
+
+include_baseline: true
+artifact_root: results/artifacts
+output_dir: results/distill
+fail_fast: false
+
+pairs:
+  - teacher: mirepnet
+    student: ifnet
+    params: {temperature: 2.0, lam_kd: 0.5}
+    grid: {}
+  - teacher: mirepnet
+    student: eegnet
+    params: {temperature: 3.0, lam_kd: 0.3}
+    grid: {}
+  - teacher: mirepnet
+    student: adfcnn
+    params: {temperature: 2.0, lam_kd: 0.4}
+    grid: {}
+  - teacher: cbramod
+    student: ifnet
+    params: {temperature: 1.0, lam_kd: 0.25}
+    grid: {}
+  - teacher: cbramod
+    student: eegnet
+    params: {temperature: 2.0, lam_kd: 0.2}
+    grid: {}
+  - teacher: cbramod
+    student: adfcnn
+    params: {temperature: 2.0, lam_kd: 0.3}
+    grid: {}

@@ -5,9 +5,10 @@ Same interface as ResidualEEGNet:
     logits = model(x)              # x: (B, C, T) or (B, 1, C, T)
     feat, logits = model(x, return_features=True)
 
-Note: IFNet expects filter-bank input. If use_filter_bank=True (default),
-      it applies 2-band bandpass filtering internally, doubling channel count.
-      If use_filter_bank=False, raw input is used directly.
+Note: use_filter_bank=False (default) -> raw (B, C, T) input is used directly.
+      use_filter_bank=True -> the model expects already-filter-banked (B, 2C, T)
+      input; the 2-band filtering (4-16 / 16-40 Hz, channel doubling) is done by
+      the adapter's preprocess via apply_filter_bank, NOT inside the model.
 """
 import math
 import numpy as np
@@ -150,7 +151,8 @@ class IFNet(nn.Module):
         kernel_size: temporal conv kernel (default 63)
         patch_size: temporal pooling size (default 125)
         radix: number of frequency bands (default 2)
-        use_filter_bank: if True, apply 2-band filter bank, doubling channels
+        use_filter_bank: if True, expect 2C input channels (2-band filter bank
+            already applied by the adapter's preprocess). Default False.
     """
     def __init__(self, in_channels, samples, num_classes,
                  embed_dim=64, kernel_size=63, patch_size=125, radix=2,

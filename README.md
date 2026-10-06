@@ -1,7 +1,9 @@
 # BigSmallCollab — 大小模型协同框架 (MI-BCI)
 
-统一管理 **大模型 (MIRepNet / CBraMod / LaBraM)** 与 **小模型 (IFNet / EEGNet /
-ADFCNN)** 在运动想象解码上的协同实验。
+维护运动想象解码中的 **大模型实现 (MIRepNet / CBraMod / LaBraM / CodeBrain)**、
+**小模型实现 (IFNet / EEGNet / ADFCNN)** 和协同实验工具。
+
+CodeBrain 的独立复现已完成，但在当前被试内 few-shot 协议下接近机会水平；按项目当前决定，它不纳入活动协同 baseline 或 teacher 集合。实现和结果作为负结果记录保留，见 [CodeBrain 复现与结果记录](docs/codebrain_reproduction.md)。
 
 ## 核心思想：缓存产物 Hub（解耦不兼容的 conda 环境）
 
@@ -24,16 +26,16 @@ ADFCNN)** 在运动想象解码上的协同实验。
 data/      一处管数据: eeg_dataset(加载) · split(规范切分) · preproc(EA/通道padding/滤波) · channels(montage)
 models/    一模型一文件夹(网络定义 + 适配器 co-located):
            base(ModelAdapter 契约 + 小模型基类 + registry)
-           ifnet/ · eegnet/ · adfcnn/ · mirepnet/(mlm+lora/mmd) · cbramod/(criss-cross + adapter) · labram/(+optim_factory/montage)
+           ifnet/ · eegnet/ · adfcnn/ · mirepnet/(mlm+lora/mmd) · cbramod/(criss-cross + adapter) · labram/(+optim_factory/montage) · codebrain/(EEGSSM + adapter)
            每个文件夹 = <net>.py + adapter.py;加模型 = 加一个文件夹
 collab/    distill(离线KD+特征对齐) · bidirectional/mutual/bdeeg(双向线) · seed(统一播种) · artifacts(跨环境产物 hub)
 eval/      stats(subject级配对 Wilcoxon+Holm+bootstrap CI,acc%优先) · metrics(acc/kappa/per_class)
-experiments/ 实验入口: run.py(config runner) · finetune/(单模型微调) · distill/ bigmodel/ bidir/ mask/ drivers
+experiments/ 实验入口: finetune/ · distill/ · fusion/ · bidir/ · mask/ drivers
 config.py  数据/模型 yaml 加载 + 权重解析(weight_path)
-weights/   预训练权重 symlink -> /data1/llx/pretrained_weights(*.pth, git忽略)
+weights/   预训练权重兼容 symlink -> /data1/llx/pre_weight(*.pth, git忽略)
 scripts/   自检工具: check/(smoke/verify)
-configs/   datasets/*.yaml · models/*.yaml · exp/*.yaml(实验配方)
-results/   artifacts/<ds>/<model>/<subj>_<seed>_<split>.npz · metrics/*.csv
+configs/   datasets/*.yaml(数据事实+统一split) · models/*.yaml(结构+finetune超参) · experiments/*.yaml(distill/fusion实验配方)
+results/   *.csv · artifacts/<ds>/<model>/<subj>_<seed>_<split>.npz
 envs/      各模型 conda 环境说明
 ```
 
@@ -43,11 +45,13 @@ envs/      各模型 conda 环境说明
   与小模型(`models/{ifnet,eegnet,adfcnn}`)—— 逐位一致,见 `scripts/verify_foundation.py`。
 - 大模型 **backbone** 与**微调代码**都在各自的 `models/<name>/` 里 —— `mirepnet`(`mlm` + PEFT
   `lora`/`mmd`)、`cbramod`(criss-cross transformer)、`labram`(`modeling_finetune` + `optim_factory`
-  逐层 LR 衰减 + `montage`)。三个大模型 build+forward 见 `scripts/verify_backbones.py`。
-- 预训练**权重**(非代码)真文件统一存放在 `/data1/llx/pretrained_weights/`(稳定数据盘,
-  与上游仓解耦——删掉 ~/MIRepNet 等不受影响);`weights/*.pth`(git 忽略)是指向它的 symlink,
+  逐层 LR 衰减 + `montage`)、`codebrain`(作者公开 EEGSSM 源码子集 + 适配器)。三个既有大模型 build+forward 见 `scripts/verify_backbones.py`。
+- 预训练**权重**(非代码)真文件统一存放在 `/data1/llx/pre_weight/`(稳定数据盘,
+  与上游仓解耦——删掉 ~/MIRepNet 等不受影响);`weights/*.pth`(git 忽略)只是兼容 symlink,
   由 `config.weight_path()` 解析,可用 `MIREPNET_WEIGHT` / `CBRAMOD_WEIGHT` /
-  `LABRAM_WEIGHT` 环境变量覆盖(如指向新微调的 checkpoint)。
+  `LABRAM_WEIGHT` 环境变量覆盖(如指向新微调的 checkpoint)。CodeBrain 权重默认是
+  `weights/codebrain.pth`,可用 `CODEBRAIN_WEIGHT` 覆盖；输入适配、官方权重版本和复现实验命令见
+  [CodeBrain 复现与结果记录](docs/codebrain_reproduction.md)。
 
 各大模型仍需在**自己的 conda 环境**里跑(依赖不兼容:MIRepNet 的 numpy/mne pin vs LaBraM 的
 timm0.4.12 vs CBraMod 的 einops);框架靠 artifact hub 解耦——见下。
@@ -72,13 +76,20 @@ conda run -n mirepnet python experiments/finetune/finetune.py --protocol fewshot
 conda run -n cbramod  python experiments/finetune/finetune.py --protocol fewshot --model cbramod  --dataset BNCI2014004 --gpu 1
 conda run -n labram   python experiments/finetune/finetune.py --protocol fewshot --model labram   --dataset BNCI2014004 --gpu 1
 
-# 2) 离线蒸馏（在 student 的 env 里跑；teacher 产物须已导出）
+# 2) 离线蒸馏（在 student env 里运行；teacher 产物须已导出）
 conda run -n mirepnet python experiments/distill/run_distill.py \
-    --dataset BNCI2014004 --teacher cbramod --student ifnet --lam_kd 0.5 --lam_feat 0.5
+    --config configs/experiments/distill_kd.yaml --gpu 0
+
+# 3) artifact 融合（当前统一版）
+conda run -n mirepnet python experiments/fusion/run_fusion.py \
+    --config configs/experiments/fusion_concat_mlp.yaml --gpu 0
 ```
 
-数据集：`BNCI2014004` (3ch/2类)、`BNCI2014001-4` (22ch/4类)，源数据在
+数据集配置只记录数据事实、seeds 和统一 split；模型在不同数据集/协议上的微调超参
+写在 `configs/models/<model>.yaml` 的 `finetune.<dataset>.<protocol>` 下。源数据在
 `/data1/llx/<DATASET>/`。`val_split` 是**测试**比例（0.3 = 70%校准/30%测试）。
+
+CodeBrain 保留专用审计 runner `experiments/finetune/run_codebrain.py` 以便复现；当前不属于活动协同 baseline 或 teacher。已完成的三 seed 结果和负结果结论见 [CodeBrain 结果报告](docs/codebrain_results.md)。
 
 ## 冒烟自检
 
@@ -95,28 +106,31 @@ conda run -n mirepnet python scripts/smoke_test.py --models ifnet eegnet adfcnn 
 
 ## 实验与工具入口
 
-`experiments/` 是正式实验层。新增协同方案优先写 `configs/exp/*.yaml` 并走
-`python -m experiments.run <yaml> --report`；如果暂时需要专门 driver，也放在
-`experiments/<line>/`，不要再新增到 `scripts/`。
+experiments/ 是正式实验层。每个协同方法一个 YAML，配置文件位于
+configs/experiments/：
 
-**`experiments/run.py` — config-driven 主入口**
-- `run.py` — config -> cells -> conditions -> metrics CSV -> optional report
-- cell 生成在 `data.split`(`iter_cells`);condition → kwargs 的 registry 是 `run.py` 里的 `METHOD_REGISTRY`
+- distill：distill_kd.yaml、distill_kd_masked.yaml、distill_mmd.yaml、distill_kd_mmd.yaml、distill_mi.yaml
+- fusion：fusion_avg_prob.yaml、fusion_concat_mlp.yaml、fusion_gate_conf_acc.yaml
 
-**`experiments/bigmodel/` — 大模型原生适配 & 调参**
-- `cbramod_adapt.py` · `labram_adapt.py` — 下游适配与调参驱动；CBraMod 支持 `--protocol loso`
-- `mirepnet_loso_adapt.py` — MIRepNet 端到端 LOSO 评估（per-subject EA + 45ch pad）
-- `tune_mirepnet_loso.py` · `tune_cbramod_loso.py` — LOSO 场景聚焦网格调参（1 seed search + 3 seed confirm）
-- `tune_cbramod.py` · `tune_labram.py` — 逐(数据集,split)超参调参
-- `tune_cbramod_004_caronly.py` — CBraMod 在 BNCI2014004 的 CAR-only 精调
+同一个 YAML 通过 pairs 为每个已选大模型/小模型组合分别配置 params 和 grid；
+训练超参也可作为 params/grid 的一部分写入。datasets.<dataset> 可以在 pair 内覆盖参数，
+优先级为模型默认值 → pair 参数 → dataset 覆盖 → grid 当前组合。Distill 会自动附加同训练配置的 student
+scratch baseline（可用 include_baseline: false 关闭）；fusion 会自动评估
+big_only 和 small_only（可用 include_controls: false 关闭）。
 
-**`experiments/distill/` — 蒸馏实验**
-- `run_distill.py` — 离线 KD + 特征对齐蒸馏（历史主蒸馏入口；新实验优先沉到 YAML）
-- `run_loso_distill.py` — LOSO 逐 fold 学生蒸馏
-- `run_loso_subject_oof_kd.py` — LOSO subject-OOF KD 入口
+experiments/distill/run_distill.py — YAML 蒸馏入口
+- 使用 --config configs/experiments/distill_<method>.yaml。
+- method 是单一方法：kd / kd_masked / mmd / kd_mmd；Base 不单独建 YAML。
+- distill_mi.yaml 仅运行 subject-wise few-shot，固定展开 Base、KD_all、CE_MI；CE+MI 的 lam_mi=0.1 是 pilot 值。
+- 支持 fewshot / loso，并写出 <name>.resolved.yaml。
 
-> D0-onward 线（集成/融合/路由 `experiments/fusion/`、target-support `experiments/adapt/`、
-> `eval/d0.py`）已于 2026-08-31 归档，可从 git tag `pre-consolidation` 恢复。
+experiments/fusion/run_fusion.py — YAML 融合入口
+- 使用 --config configs/experiments/fusion_<method>.yaml。
+- method 是 avg_prob / concat_mlp / gate_conf_acc；controls 自动附加。
+- avg_prob 支持 pair 级 big_temperature、small_temperature、big_weight。
+
+两个 runner 的正式 CLI 只保留 --config --gpu --resume --force --fail-fast；旧逐参数 CLI
+暂时保留用于历史复现，并标记为 deprecated。
 
 `scripts/` 是工具箱，不承载正式实验矩阵。
 
@@ -150,9 +164,9 @@ conda run -n mirepnet python scripts/smoke_test.py --models ifnet eegnet adfcnn 
 - **checkpoint ≠ artifact**：checkpoint 是权重；artifact 是模型对固定样本导出的 `{logits, feats, y}`。
 - **离线蒸馏 ≠ 双向蒸馏**：离线 = teacher 冻结、学生单向学工件；双向 = 两模型同进程同时更新互教（要求同 env）。
 - **模型代码在仓库内 ≠ 能在同一 env 同时跑**：依赖冲突仍在（MIRepNet 的 numpy/mne pin vs LaBraM 的 timm0.4.12），所以 artifact hub 是核心设计。
-- **新实验优先 YAML**：矩阵实验写 `configs/exp/*.yaml` + `run.py` 的 `METHOD_REGISTRY`；专门 driver 放 `experiments/<line>/`；导出/自检放 `scripts/`。
+- **实验配置职责**：`configs/datasets/*.yaml` 只放数据事实，`configs/models/*.yaml` 放模型默认参数，`configs/experiments/*.yaml` 放 distill/fusion 实验矩阵与 grid；统一 loader 负责校验、合并和展开。
 
 ## 范围
 
-- **模型代码全部在框架内**（每模型一个 `models/<name>/` 文件夹，网络定义 + 适配器同处），可直接改/微调；预训练权重通过 `weights/*.pth` symlink 或环境变量外置管理。
+- **模型代码全部在框架内**（每模型一个 `models/<name>/` 文件夹，网络定义 + 适配器同处），可直接改/微调；预训练权重默认从 `/data1/llx/pre_weight/*.pth` 读取，也可用环境变量覆盖。
 - 各大模型仍在各自 conda env 里 finetune + 导出产物；协同（蒸馏）在任意 env 消费产物。

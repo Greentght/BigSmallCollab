@@ -1,0 +1,41 @@
+# Reproducibility config for public CodeBrain EEGSSM + a fresh MI head.
+# Current project decision: not included in the active collaboration baseline or teacher set.
+# The dedicated experiments/finetune/run_codebrain.py runner records a full
+# resolved config, per-epoch history, final checkpoint, predictions, and UIDs.
+env: cbramod
+size: big
+scale_divisor: 100
+pretrain: null
+
+finetune:
+  defaults:
+    lr: 0.00001
+    weight_decay: 0.0005
+    batch_size: 64
+    dropout: 0.3
+    scale_divisor: 100
+    min_lr: 0.000001
+    max_grad_norm: 5.0
+    scheduler: cosine_per_group_to_10pct
+    encoder_lr: 0.00001
+    head_lr: 0.0003
+    group_min_lr_ratio: 0.1
+    label_smoothing: 0.0
+    backend:
+      device: cpu
+      torch_num_threads: 4
+      torch_num_interop_threads: 64
+      mkldnn_enabled: false
+      deterministic_algorithms: true
+  BNCI2014001:
+    fewshot:
+      epochs: 20
+  BNCI2014004:
+    fewshot:
+      epochs: 20
+  BNCI2015001:
+    fewshot:
+      epochs: 20
+  AlexMI:
+    fewshot:
+      epochs: 50

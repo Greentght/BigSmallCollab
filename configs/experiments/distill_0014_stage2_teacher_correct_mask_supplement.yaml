@@ -1,0 +1,27 @@
+name: distill_0014_stage2_teacher_correct_mask_supplement
+type: distill
+method: kd_mi_teacher_correct_mask_pilot
+datasets: [BNCI2014001-4]
+protocol: fewshot
+val_split: 0.7
+seed: 666
+teacher: mirepnet
+student: ifnet
+artifact_root: results/artifacts
+output_dir: results/distill/bnci2014001_4_supplement/stage2_teacher_correct_mask
+main_csv: results/distill/bnci2014001_4_supplement/stage2_teacher_correct_mask.csv
+supplement_mode: true
+epochs: 100
+optimizer: adamw
+lr: 0.001
+weight_decay: 0.01
+batch_size: 16
+scheduler: CosineAnnealingLR
+temperature_kd: 2.0
+lam_kd: 0.5
+temperature_mi: 1.0
+lam_mi: 0.1
+mi_eps: 1.0e-8
+drop_last: false
+model_selection: final_epoch
+conditions: [CE_TCORRECT_MASK, KD_MI_ALL, KD_MI_TCORRECT_MASK]
