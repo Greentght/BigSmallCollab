@@ -7,7 +7,7 @@ created: '2026-10-01'
 status: planned
 execution:
   runner_status: implemented_preflight_passed_formal_execution_started
-  output_template: results/reproductions/loso_five_settings_canonical4s_v1/{dataset}/{model}/{recipe}/subject_{subject:02d}/seed_{seed}
+  output_template: /data1/llx/BigSmallCollab_results/reproductions/loso_five_settings_canonical4s_v1/{dataset}/{model}/{recipe}/subject_{subject:02d}/seed_{seed}
   trial_manifest: configs/reproductions/manifests/loso_five_datasets_v1_trials.csv
   source_snapshot: configs/reproductions/manifests/loso_five_datasets_v1_sources.json
   fold_manifest: docs/loso_five_datasets_folds.csv
@@ -239,12 +239,12 @@ reuse:
   condition: same_source_hashes_trial_order_pretrained_hashes_preprocessing_training_schedule_and_head
   legacy_record_policy: preserve_existing_004_evidence_and_flag_missing_train_history_or_historical_environment_without_fabrication
   completed_main_004:
-    root: results/reproductions/loso_benchmark_session3_4s_v1
+    root: /data1/llx/BigSmallCollab_results/reproductions/loso_benchmark_session3_4s_v1
     models: [mirepnet, cbramod]
     seeds: [666, 667, 668]
     cells: 54
   historical_004_reference:
-    root: results/reproductions/loso_eegfm_cbfull_session3_4s_v1
+    root: /data1/llx/BigSmallCollab_results/reproductions/loso_eegfm_cbfull_session3_4s_v1
     model: cbramod
     seeds: [0, 1, 2]
     cells: 27

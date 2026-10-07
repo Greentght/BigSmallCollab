@@ -14,8 +14,8 @@ seeds: null
 subjects: null
 
 include_baseline: true
-artifact_root: results/artifacts
-output_dir: results/distill
+artifact_root: /data1/llx/BigSmallCollab_results/artifacts
+output_dir: /data1/llx/BigSmallCollab_results/distill
 fail_fast: false
 
 pairs:

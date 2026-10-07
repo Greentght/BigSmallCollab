@@ -30,16 +30,19 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import pandas as pd
 
 from eval import stats as estats
+from experiments.storage import (RESULTS_ROOT, external_path,
+                                 require_external_output, resolve_local_file)
 
 UNIT_COLS = ('subject', 'fold')
 
 
 def _load(pattern):
     """Load every CSV matching ``pattern`` with a ``source`` column."""
-    files = sorted(glob.glob(pattern))
+    files = sorted(glob.glob(str(external_path(pattern))))
     if not files:
         raise FileNotFoundError(f'no CSV matches {pattern!r}')
-    parts = [pd.read_csv(f).assign(source=os.path.basename(f)) for f in files]
+    parts = [pd.read_csv(resolve_local_file(f)).assign(source=os.path.basename(f))
+             for f in files]
     return pd.concat(parts, ignore_index=True)
 
 
@@ -90,6 +93,7 @@ def diff_sheet(hist, repro):
 
 def _write(path, sheets):
     """xlsx via pandas/openpyxl; fall back to per-sheet CSV on failure."""
+    path = require_external_output(path)
     try:
         with pd.ExcelWriter(path, engine='openpyxl') as w:
             for name, df in sheets.items():
@@ -100,7 +104,7 @@ def _write(path, sheets):
         print(f'[xlsx failed: {e}] falling back to CSV next to {path}')
     stem, _ = os.path.splitext(path)
     for name, df in sheets.items():
-        df.to_csv(f'{stem}_{name}.csv', index=False)
+        df.to_csv(require_external_output(f'{stem}_{name}.csv'), index=False)
         print(f'Wrote {stem}_{name}.csv')
 
 
@@ -109,7 +113,7 @@ def main():
     ap.add_argument('--hist', default=None, help='glob of historical metrics CSVs')
     ap.add_argument('--repro', default=None, help='glob of re-run metrics CSVs')
     ap.add_argument('--out', default=None,
-                    help=f'output path (default results/summary_<date>.xlsx)')
+                    help=f'output path (default {RESULTS_ROOT}/summary_<date>.xlsx)')
     ap.add_argument('--n_boot', type=int, default=2000)
     a = ap.parse_args()
 
@@ -129,10 +133,9 @@ def main():
     if hist is not None and repro is not None:
         sheets['diff'] = diff_sheet(hist, repro)
 
-    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    out = a.out or os.path.join(
-        root, 'results', f'summary_{datetime.now():%Y%m%d_%H%M%S}.xlsx')
-    os.makedirs(os.path.dirname(out), exist_ok=True)
+    out = require_external_output(
+        a.out or RESULTS_ROOT / f'summary_{datetime.now():%Y%m%d_%H%M%S}.xlsx')
+    out.parent.mkdir(parents=True, exist_ok=True)
     _write(out, sheets)
 
 

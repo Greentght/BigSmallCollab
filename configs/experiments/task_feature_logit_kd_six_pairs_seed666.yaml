@@ -19,8 +19,8 @@ students:
   - eegnet
   - adfcnn
 
-output_dir: results/distill/task_feature_logit_kd_six_pairs_seed666
-artifact_root: results/artifacts
+output_dir: /data1/llx/BigSmallCollab_results/distill/task_feature_logit_kd_six_pairs_seed666
+artifact_root: /data1/llx/BigSmallCollab_results/artifacts
 
 epochs: 100
 warmup_epochs: 10

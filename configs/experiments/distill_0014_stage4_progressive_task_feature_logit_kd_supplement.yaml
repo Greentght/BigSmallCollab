@@ -8,9 +8,9 @@ seed: 666
 pre_teacher: mirepnet
 ft_teacher: mirepnet
 student: ifnet
-artifact_root: results/artifacts
-old_root: results/distill/bnci2014001_4_supplement/stage4_prealign_delayed_kd
-output_dir: results/distill/bnci2014001_4_supplement/stage4_progressive_task_feature_logit_kd
+artifact_root: /data1/llx/BigSmallCollab_results/artifacts
+old_root: /data1/llx/BigSmallCollab_results/distill/bnci2014001_4_supplement/stage4_prealign_delayed_kd
+output_dir: /data1/llx/BigSmallCollab_results/distill/bnci2014001_4_supplement/stage4_progressive_task_feature_logit_kd
 epochs: 100
 prealign_epochs: 10
 optimizer: AdamW

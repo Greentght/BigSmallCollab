@@ -18,6 +18,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import sys
 import re
 import shutil
 import time
@@ -27,8 +28,11 @@ import pandas as pd
 
 
 ROOT = Path(__file__).resolve().parents[2]
-OUTPUT = ROOT / 'data_cache/loso_source_v3/BNCI2014001'
-V2_ROOT = ROOT / 'data_cache/eegfm_alignment_v2'
+sys.path.insert(0, str(ROOT))
+from experiments.storage import (DATA_CACHE_ROOT, RESULTS_ROOT,
+                                 require_external_output, resolve_local_file)
+OUTPUT = DATA_CACHE_ROOT / 'loso_source_v3/BNCI2014001'
+V2_ROOT = DATA_CACHE_ROOT / 'eegfm_alignment_v2'
 LEGACY = Path('/data1/llx/BNCI2014001')
 CLASS_MAP = {'left_hand': 0, 'right_hand': 1, 'feet': 2, 'tongue': 3}
 SESSION_MAP = {'0train': 'session_T', '1test': 'session_E'}
@@ -46,21 +50,12 @@ def sha256(path: Path) -> str:
 
 
 def entity(path: Path) -> Path:
-    """Resolve and validate an LFS pointer, or return an ordinary local file."""
-    with path.open('rb') as handle:
-        header = handle.read(256)
-    if not header.startswith(b'version https://git-lfs.github.com/spec/v1\n'):
-        return path
-    lines = header.decode('ascii').splitlines()
-    oid = next(line.split('sha256:', 1)[1] for line in lines if line.startswith('oid '))
-    size = int(next(line.split(' ', 1)[1] for line in lines if line.startswith('size ')))
-    resolved = ROOT / '.git/lfs/objects' / oid[:2] / oid[2:4] / oid
-    if not resolved.is_file() or resolved.stat().st_size != size or sha256(resolved) != oid:
-        raise RuntimeError(f'Local LFS entity missing or invalid for {path}: {oid}')
-    return resolved
+    """Resolve existing datasets through the external artifact/LFS store."""
+    return resolve_local_file(path)
 
 
 def write_json(path: Path, value: dict) -> None:
+    path = require_external_output(path)
     partial = path.with_name(path.name + '.partial')
     partial.write_text(json.dumps(value, indent=2, sort_keys=True) + '\n')
     partial.replace(path)
@@ -177,6 +172,7 @@ def verify_v2(x: np.ndarray, trials: pd.DataFrame) -> dict:
 
 
 def export(output: Path) -> dict:
+    output = require_external_output(output)
     started = time.time()
     output.mkdir(parents=True, exist_ok=True)
     raw_root = output / 'raw/mne_data'

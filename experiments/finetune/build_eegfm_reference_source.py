@@ -4,8 +4,8 @@
 Run with the isolated MOABB 1.2 overlay and a writable MNE_DATA directory:
 
   PYTHONPATH=/tmp/loso_alignment_deps_moabb \
-  MNE_DATA=$PWD/data_cache/eegfm_alignment_v2/mne_data \
-  MNE_DATASETS_BNCI_PATH=$PWD/data_cache/eegfm_alignment_v2/mne_data \
+  MNE_DATA=/data1/llx/data_cache/eegfm_alignment_v2/mne_data \
+  MNE_DATASETS_BNCI_PATH=/data1/llx/data_cache/eegfm_alignment_v2/mne_data \
   conda run -n cbramod python experiments/finetune/build_eegfm_reference_source.py
 
 This script only builds reference-source arrays and a verified row mapping. It
@@ -27,9 +27,12 @@ import pandas as pd
 
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT))
+from experiments.storage import (DATA_CACHE_ROOT, RESULTS_ROOT,
+                                 require_external_output, resolve_local_file)
 DATA_ROOT = Path('/data1/llx')
-OUTPUT_ROOT = ROOT / 'data_cache/eegfm_alignment_v2/rebuilt'
-MNE_ROOT = ROOT / 'data_cache/eegfm_alignment_v2/mne_data'
+OUTPUT_ROOT = DATA_CACHE_ROOT / 'eegfm_alignment_v2/rebuilt'
+MNE_ROOT = DATA_CACHE_ROOT / 'eegfm_alignment_v2/mne_data'
 
 DATASETS = {
     'BNCI2014001-4': {
@@ -310,8 +313,9 @@ def main() -> None:
                         default=list(DATASETS))
     parser.add_argument('--download-retries', type=int, default=5)
     args = parser.parse_args()
-    os.environ.setdefault('MNE_DATA', str(MNE_ROOT))
-    os.environ.setdefault('MNE_DATASETS_BNCI_PATH', str(MNE_ROOT))
+    os.environ['MNE_DATA'] = str(require_external_output(os.environ.get('MNE_DATA', MNE_ROOT)))
+    os.environ['MNE_DATASETS_BNCI_PATH'] = str(require_external_output(
+        os.environ.get('MNE_DATASETS_BNCI_PATH', MNE_ROOT)))
     if not Path(os.environ['MNE_DATA']).exists():
         raise RuntimeError(f'MNE_DATA does not exist: {os.environ["MNE_DATA"]}')
     for name in args.datasets:

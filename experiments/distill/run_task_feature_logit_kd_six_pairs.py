@@ -35,6 +35,7 @@ import data
 from collab import artifacts
 from collab.seed import set_seed
 from models import get_adapter
+from experiments.storage import external_path, require_external_output, resolve_local_file
 
 
 _DEFAULT_DATASETS = ('BNCI2014001', 'BNCI2014004', 'BNCI2015001', 'AlexMI')
@@ -59,8 +60,8 @@ TEMPERATURE_KD = 2.0
 LAM_KD = 0.5
 LAM_FEATURE = 1.0
 FEATURE_EPS = 1e-8
-OUTPUT_ROOT = ROOT / 'results' / 'distill' / 'task_feature_logit_kd_six_pairs_seed666'
-MAIN_CSV = ROOT / 'results' / 'distill' / 'task_feature_logit_kd_six_pairs_seed666.csv'
+OUTPUT_ROOT = Path('/data1/llx/BigSmallCollab_results') / 'distill' / 'task_feature_logit_kd_six_pairs_seed666'
+MAIN_CSV = Path('/data1/llx/BigSmallCollab_results') / 'distill' / 'task_feature_logit_kd_six_pairs_seed666.csv'
 
 
 def parse_args(argv=None):
@@ -124,6 +125,7 @@ def combined_hash(values):
 
 
 def atomic_text(path, text):
+    path = require_external_output(path)
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(f'.{path.name}.tmp-{os.getpid()}')
@@ -137,6 +139,7 @@ def atomic_json(path, value):
 
 
 def atomic_csv(path, rows, fieldnames=None):
+    path = require_external_output(path)
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     rows = list(rows)
@@ -204,7 +207,7 @@ def validate_config(path):
 
 
 def artifact_path(dataset, teacher, subject, root):
-    root = Path(root)
+    root = external_path(root)
     if not root.is_absolute():
         root = ROOT / root
     path = root / dataset / teacher / f'{int(subject)}_{SEED}_train.npz'
@@ -217,7 +220,7 @@ def align_teacher_artifact(path, y_ref, uid_ref):
     """Read and explicitly reorder one train artifact by canonical UID."""
     if path.name.endswith('_test.npz'):
         raise ValueError(f'refusing teacher test artifact: {path}')
-    with np.load(path, allow_pickle=False) as payload:
+    with np.load(resolve_local_file(path), allow_pickle=False) as payload:
         required = {'logits', 'feats', 'y', 'sample_uid', 'split_policy'}
         missing = required.difference(payload.files)
         if missing:
@@ -633,6 +636,7 @@ def run_key(unit, teacher_data, condition):
 
 
 def save_run(output_root, unit, teacher_data, condition, result):
+    output_root = require_external_output(output_root)
     key = run_key(unit, teacher_data, condition)
     paths = {
         'history': output_root / 'training_history' / f'{key}.json',
@@ -660,11 +664,11 @@ def save_run(output_root, unit, teacher_data, condition, result):
     }
     paths['checkpoint'].parent.mkdir(parents=True, exist_ok=True)
     tmp = paths['checkpoint'].with_name(f'.{paths["checkpoint"].name}.tmp-{os.getpid()}')
-    torch.save(checkpoint, tmp)
+    torch.save(checkpoint, require_external_output(tmp))
     os.replace(tmp, paths['checkpoint'])
     paths['prediction'].parent.mkdir(parents=True, exist_ok=True)
     tmp_pred = paths['prediction'].with_name(f'.{paths["prediction"].name}.tmp-{os.getpid()}')
-    np.savez(tmp_pred, train_uid=unit['uid_tr'], test_uid=unit['uid_te'],
+    np.savez(require_external_output(tmp_pred), train_uid=unit['uid_tr'], test_uid=unit['uid_te'],
              train_y=unit['y_tr'], test_y=unit['y_te'],
              train_logits=result['train_logits'].astype(np.float32),
              test_logits=result['test_logits'].astype(np.float32),
@@ -675,6 +679,7 @@ def save_run(output_root, unit, teacher_data, condition, result):
 
 
 def read_rows(path):
+    path = external_path(path)
     if not Path(path).exists():
         return []
     with open(path, newline='') as handle:
@@ -694,13 +699,13 @@ def row_complete(row):
         if not Path(row.get(field, '')).is_file():
             return False
     try:
-        payload = json.loads(Path(row['history_path']).read_text())
+        payload = json.loads(resolve_local_file(row['history_path']).read_text())
         if len(payload.get('epochs', [])) != EPOCHS:
             return False
-        checkpoint = torch.load(row['checkpoint_path'], map_location='cpu')
+        checkpoint = torch.load(resolve_local_file(row['checkpoint_path']), map_location='cpu')
         if not checkpoint.get('complete') or int(checkpoint.get('epochs_completed', 0)) != EPOCHS:
             return False
-        with np.load(row['prediction_path'], allow_pickle=False) as pred:
+        with np.load(resolve_local_file(row['prediction_path']), allow_pickle=False) as pred:
             if len(pred['test_uid']) != int(row['test_count']):
                 return False
     except Exception:
@@ -896,14 +901,14 @@ def main(argv=None):
     cfg_path = Path(args.config).resolve()
     cfg = validate_config(cfg_path)
     cfg = dict(cfg)
-    cfg['artifact_root'] = str((ROOT / cfg['artifact_root']).resolve()) if not os.path.isabs(cfg['artifact_root']) else cfg['artifact_root']
-    cfg['output_dir'] = str((ROOT / cfg['output_dir']).resolve()) if not os.path.isabs(cfg['output_dir']) else cfg['output_dir']
-    output_root = Path(cfg['output_dir'])
+    cfg['artifact_root'] = str(external_path(cfg['artifact_root']))
+    cfg['output_dir'] = str(require_external_output(cfg['output_dir']))
+    output_root = require_external_output(cfg['output_dir'])
     if output_root.exists() and any(output_root.iterdir()) and not (args.resume or args.force):
         raise RuntimeError(f'output directory is non-empty; use --resume or --force: {output_root}')
     if args.force:
         resolved = output_root.resolve()
-        allowed = (ROOT / 'results' / 'distill' / 'task_feature_logit_kd_six_pairs_seed666').resolve()
+        allowed = (Path('/data1/llx/BigSmallCollab_results') / 'distill' / 'task_feature_logit_kd_six_pairs_seed666').resolve()
         if resolved != allowed:
             raise ValueError('--force is restricted to the dedicated six-pair output directory')
     device = device_for(args.gpu)
@@ -911,7 +916,7 @@ def main(argv=None):
     prior_path = output_root / "execution_provenance.json"
     if args.resume and prior_path.is_file():
         try:
-            prior_provenance = json.loads(prior_path.read_text())
+            prior_provenance = json.loads(resolve_local_file(prior_path).read_text())
         except Exception:
             prior_provenance = {}
     physical_gpu = os.environ.get("CUDA_VISIBLE_DEVICES", "not_set")
@@ -1044,7 +1049,7 @@ def main(argv=None):
     if args.resume and len(epoch_rows) != len(all_rows) * EPOCHS:
         epoch_rows = []; transition_rows = []
         for row in all_rows:
-            payload = json.loads(Path(row['history_path']).read_text())
+            payload = json.loads(resolve_local_file(row['history_path']).read_text())
             for epoch_row in payload.get('epochs', []):
                 epoch_rows.append({
                     'dataset': row['dataset'], 'subject': row['subject'],

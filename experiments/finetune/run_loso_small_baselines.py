@@ -23,6 +23,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 import config
 from models import get_adapter
 from experiments.finetune import run_loso_five_datasets as protocol
+from experiments.storage import external_path, require_external_output, resolve_local_file
 
 
 MODELS = ('ifnet', 'eegnet', 'adfcnn')
@@ -198,7 +199,7 @@ def _run(args, spec, snapshot, device):
         }
         split_path = output_dir / 'split_manifest.json'
         if split_path.exists():
-            old = json.loads(split_path.read_text())
+            old = json.loads(resolve_local_file(split_path).read_text())
             old_seeds = old.pop('seeds', [])
             expected = dict(split_manifest)
             expected.pop('seeds')

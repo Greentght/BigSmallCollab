@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+import sys
 
 import numpy as np
 import pandas as pd
@@ -20,9 +21,12 @@ from experiments.finetune import prepare_loso_alignment_inputs as prep
 
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT))
+from experiments.storage import (DATA_CACHE_ROOT, RESULTS_ROOT,
+                                 require_external_output, resolve_local_file)
 OLD_DATA = Path('/data1/llx')
-SOURCE_ROOT = ROOT / 'data_cache/eegfm_alignment_v2/rebuilt'
-OUTPUT_ROOT = ROOT / 'data_cache/eegfm_alignment_v2/model_inputs'
+SOURCE_ROOT = DATA_CACHE_ROOT / 'eegfm_alignment_v2/rebuilt'
+OUTPUT_ROOT = DATA_CACHE_ROOT / 'eegfm_alignment_v2/model_inputs'
 SPEC_PATH = ROOT / 'configs/reproductions/loso_config_alignment_v2.yaml'
 
 DATASET = 'BNCI2014001-4'
@@ -115,7 +119,7 @@ def prepare() -> Path:
     x_source, source_indices, y, subjects, uids, source_manifest = source_rows()
     cfg = prep.get_profile('reference_aligned', MODEL, DATASET, spec)
     cfg['source_cast'] = 'float64_existing_npy'
-    output = OUTPUT_ROOT / PROFILE / DATASET / MODEL / VARIANT
+    output = require_external_output(OUTPUT_ROOT / PROFILE / DATASET / MODEL / VARIANT)
 
     # Ensure this input can be compared trial-for-trial with the finished
     # MOABB-source run, including order and class encoding.

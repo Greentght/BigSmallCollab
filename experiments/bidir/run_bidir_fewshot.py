@@ -87,7 +87,7 @@ def main():
     groups = ({k: GROUPS[k] for k in a.groups.split(',')} if a.groups else GROUPS)
 
     root = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-                        'results', 'metrics')
+                        '/data1/llx/BigSmallCollab_results', 'metrics')
     tag = a.tag or f'bidirfs_sb{a.lam_sb}'
     out_csv = f'{root}/{a.dataset}_fewshot_{tag}_mirepnet_ifnet.csv'
     diag_csv = f'{root}/{a.dataset}_fewshot_{tag}_diag.csv'

@@ -44,6 +44,7 @@ from collab.seed import set_seed
 from data import split as split_utils
 from experiments.distill import run_prealign_delayed_kd as previous
 from models import get_adapter
+from experiments.storage import external_path, require_external_output, resolve_local_file
 
 
 _DEFAULT_DATASETS = ('BNCI2014001', 'BNCI2014004', 'BNCI2015001', 'AlexMI')
@@ -60,7 +61,7 @@ OLD_CONDITIONS = (
     'PREALIGN_THEN_KD',
 )
 ALL_CONDITIONS = OLD_CONDITIONS + NEW_CONDITIONS
-OLD_ROOT = ROOT / 'results' / 'distill' / 'prealign_delayed_kd_pilot'
+OLD_ROOT = Path('/data1/llx/BigSmallCollab_results') / 'distill' / 'prealign_delayed_kd_pilot'
 
 
 def parse_args(argv=None):
@@ -139,6 +140,7 @@ def _hash_file(path):
 
 
 def _atomic_text(path, text):
+    path = require_external_output(path)
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(f'.{path.name}.tmp-{os.getpid()}')
@@ -152,6 +154,7 @@ def _atomic_json(path, value):
 
 
 def _atomic_csv(path, rows, fieldnames=None):
+    path = require_external_output(path)
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     rows = list(rows)
@@ -226,7 +229,7 @@ def _load_ft_teacher(dataset, subject, seed, y_ref, uid_ref, root):
     path = _artifact_path(dataset, subject, seed, root)
     if path.name.endswith('_test.npz'):
         raise ValueError(f'refusing test artifact {path}')
-    with np.load(path, allow_pickle=False) as payload:
+    with np.load(resolve_local_file(path), allow_pickle=False) as payload:
         required = {'logits', 'feats', 'y', 'sample_uid', 'split_policy'}
         missing = required.difference(payload.files)
         if missing:
@@ -551,6 +554,7 @@ def _train_condition(condition, unit, cfg, device, seed):
 
 
 def _save_run(out_dir, dataset, subject, seed, condition, unit, result, cfg):
+    out_dir = require_external_output(out_dir)
     paths = _paths(out_dir, dataset, subject, seed, condition)
     key = _run_key(dataset, subject, seed, condition)
     _atomic_json(paths['history'], {
@@ -573,10 +577,10 @@ def _save_run(out_dir, dataset, subject, seed, condition, unit, result, cfg):
     }
     paths['checkpoint'].parent.mkdir(parents=True, exist_ok=True)
     tmp = paths['checkpoint'].with_name(f'.{paths["checkpoint"].name}.tmp-{os.getpid()}')
-    torch.save(checkpoint, tmp); os.replace(tmp, paths['checkpoint'])
+    torch.save(checkpoint, require_external_output(tmp)); os.replace(tmp, paths['checkpoint'])
     paths['prediction'].parent.mkdir(parents=True, exist_ok=True)
     tmp_pred = paths['prediction'].with_name(f'.{paths["prediction"].name}.tmp-{os.getpid()}')
-    np.savez(tmp_pred, train_sample_uid=unit['uid_tr'], test_sample_uid=unit['uid_te'],
+    np.savez(require_external_output(tmp_pred), train_sample_uid=unit['uid_tr'], test_sample_uid=unit['uid_te'],
              y_train=unit['y_tr'], y_test=unit['y_te'],
              train_pred=result['train_m']['pred'], test_pred=result['test_m']['pred'],
              train_logits=result['train_logits'].astype(np.float32),
@@ -623,6 +627,7 @@ def _save_run(out_dir, dataset, subject, seed, condition, unit, result, cfg):
 
 
 def _read_rows(path):
+    path = external_path(path)
     if not Path(path).exists():
         return []
     with open(path, newline='') as handle:
@@ -657,20 +662,20 @@ def _validate_old_controls():
                 reason.append(f'missing_{field}')
         if not reason:
             try:
-                checkpoint = torch.load(row['checkpoint_path'], map_location='cpu')
+                checkpoint = torch.load(resolve_local_file(row['checkpoint_path']), map_location='cpu')
                 if not checkpoint.get('complete') or int(checkpoint.get('epochs_completed', 0)) != 100:
                     reason.append('checkpoint_not_complete_100_epochs')
             except Exception as exc:
                 reason.append(f'checkpoint_unreadable:{type(exc).__name__}')
             try:
-                with open(row['history_path']) as handle:
+                with open(resolve_local_file(row['history_path'])) as handle:
                     history = json.load(handle)
                 if len(history.get('epochs', [])) != 100:
                     reason.append('history_not_exactly_100_epochs')
             except Exception as exc:
                 reason.append(f'history_unreadable:{type(exc).__name__}')
             try:
-                with np.load(row['prediction_path'], allow_pickle=False) as prediction:
+                with np.load(resolve_local_file(row['prediction_path']), allow_pickle=False) as prediction:
                     for name in ('train_sample_uid', 'test_sample_uid', 'train_pred', 'test_pred'):
                         if name not in prediction.files:
                             reason.append(f'prediction_missing_{name}')
@@ -685,7 +690,7 @@ def _validate_old_controls():
             try:
                 artifact_path = _artifact_path(
                     row['dataset'], int(row['subject_index']), int(row['seed']),
-                    str(ROOT / 'results' / 'artifacts'))
+                    str(Path('/data1/llx/BigSmallCollab_results') / 'artifacts'))
                 if row.get('ft_teacher_artifact_sha256') != _hash_file(artifact_path):
                     reason.append('teacher_artifact_sha256_mismatch')
             except Exception as exc:
@@ -924,9 +929,9 @@ def main(argv=None):
         cfg = dict(cfg)
         cfg['epochs'] = 2; cfg['prealign_epochs'] = 1
         cfg['output_dir'] = '/tmp/progressive_task_feature_logit_kd_smoke'
-    cfg['artifact_root'] = str((ROOT / cfg['artifact_root']).resolve()) if not os.path.isabs(cfg['artifact_root']) else cfg['artifact_root']
-    cfg['output_dir'] = str((ROOT / cfg['output_dir']).resolve()) if not os.path.isabs(cfg['output_dir']) and not cfg['output_dir'].startswith('/tmp') else cfg['output_dir']
-    out_dir = Path(cfg['output_dir'])
+    cfg['artifact_root'] = str(external_path(cfg['artifact_root']))
+    cfg['output_dir'] = str(require_external_output(cfg['output_dir']))
+    out_dir = require_external_output(cfg['output_dir'])
     out_dir.mkdir(parents=True, exist_ok=True)
     if any(out_dir.iterdir()) and not (args.resume or args.force or smoke):
         raise RuntimeError(f'output directory is non-empty; use --resume/--force: {out_dir}')
@@ -1012,7 +1017,7 @@ def main(argv=None):
     if args.resume and not smoke and len(epoch_rows) != len(new_rows) * 100:
         epoch_rows = []; transition_rows = []
         for row in new_rows:
-            with open(row['history_path']) as handle:
+            with open(resolve_local_file(row['history_path'])) as handle:
                 hist = json.load(handle)
             for e in hist['epochs']:
                 epoch_rows.append({'dataset': row['dataset'], 'subject': row['subject'],

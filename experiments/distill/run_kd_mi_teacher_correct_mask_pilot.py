@@ -60,6 +60,7 @@ from experiments.distill.run_distill import (
     _sha256_uid_split,
     _session_default,
 )
+from experiments.storage import external_path, require_external_output, resolve_local_file
 
 
 _ALL_DATASET_SUBJECTS = {
@@ -85,10 +86,10 @@ COMPARISONS = (
     ("KD_MI_TCORRECT_MASK", "CE_MI"),
 )
 DEFAULT_CONFIG = ROOT / "configs/experiments/distill_kd_mi_teacher_correct_mask_pilot.yaml"
-DEFAULT_OUTPUT = ROOT / "results/distill/kd_mi_teacher_correct_mask_pilot"
-TOTAL_CSV = ROOT / "results/distill/kd_mi_teacher_correct_mask_pilot.csv"
-OLD_CSV = ROOT / "results/distill/distill_mi.csv"
-OLD_ROOT = ROOT / "results/distill/distill_mi"
+DEFAULT_OUTPUT = Path("/data1/llx/BigSmallCollab_results/distill/kd_mi_teacher_correct_mask_pilot")
+TOTAL_CSV = Path("/data1/llx/BigSmallCollab_results/distill/kd_mi_teacher_correct_mask_pilot.csv")
+OLD_CSV = Path("/data1/llx/BigSmallCollab_results/distill/distill_mi.csv")
+OLD_ROOT = Path("/data1/llx/BigSmallCollab_results/distill/distill_mi")
 INIT_ARGS = SimpleNamespace(
     epochs=None, lr=None, weight_decay=None, batch_size=None,
 )
@@ -103,6 +104,7 @@ def _json(value):
 
 
 def _atomic_bytes(path: Path, payload: bytes):
+    path = require_external_output(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile(dir=path.parent, prefix=f".{path.name}.",
                                      suffix=".tmp", delete=False) as handle:
@@ -142,6 +144,7 @@ def _atomic_csv(path: Path, rows, fieldnames=None):
 
 
 def _read_csv(path: Path):
+    path = external_path(path)
     if not path.exists():
         return []
     with path.open(newline="") as handle:
@@ -248,7 +251,7 @@ def _load_teacher_logits_only(path: Path):
     """Read only train logits, labels, UID and metadata; never touch ``feats``."""
     if not path.name.endswith("_train.npz"):
         raise ValueError(f"teacher path is not a train artifact: {path}")
-    with np.load(path, allow_pickle=False) as archive:
+    with np.load(resolve_local_file(path), allow_pickle=False) as archive:
         required = {"logits", "y", "sample_uid", "split_policy"}
         missing = required.difference(archive.files)
         if missing:
@@ -385,7 +388,7 @@ def _preflight_units(cfg):
 
 
 def configured_artifact_path(cfg, dataset, subject_index):
-    root = Path(cfg.get("artifact_root", "results/artifacts"))
+    root = external_path(cfg.get("artifact_root", "/data1/llx/BigSmallCollab_results/artifacts"))
     if not root.is_absolute():
         root = ROOT / root
     return root / dataset / "mirepnet" / f"{subject_index}_{SEED}_train.npz"
@@ -450,14 +453,14 @@ def _validate_old_controls(units):
                 "weight_mode": row["weight_mode"] == exp_weight,
                 "temperature": abs(float(row["temperature"]) - 2.0) < 1e-12,
             })
-            checkpoint = Path(row["checkpoint_path"])
-            history = Path(row["history_path"])
-            prediction = Path(row["prediction_path"])
+            checkpoint = external_path(row["checkpoint_path"])
+            history = external_path(row["history_path"])
+            prediction = external_path(row["prediction_path"])
             check.update({"checkpoint": checkpoint.exists(), "history": history.exists(),
                           "prediction": prediction.exists()})
             if checkpoint.exists():
                 try:
-                    payload = torch.load(checkpoint, map_location="cpu", weights_only=False)
+                    payload = torch.load(resolve_local_file(checkpoint), map_location="cpu", weights_only=False)
                     check["checkpoint_complete"] = (
                         bool(payload.get("complete")) and int(payload.get("epochs")) == 100
                         and payload.get("initial_state_hash") == unit["initial_state_hash"]
@@ -468,7 +471,7 @@ def _validate_old_controls(units):
                 check["checkpoint_complete"] = False
             if history.exists():
                 try:
-                    hist = json.loads(history.read_text())
+                    hist = json.loads(resolve_local_file(history).read_text())
                     check["history_100"] = isinstance(hist, list) and len(hist) == 100
                     old_hashes = json.loads(row.get("batch_order_hashes", "[]"))
                     check["batch_hashes_100"] = len(old_hashes) == 100 and len(hist) == 100
@@ -483,7 +486,7 @@ def _validate_old_controls(units):
                               "batch_hashes_match": False, "batch_combined": False})
             if prediction.exists():
                 try:
-                    with np.load(prediction, allow_pickle=False) as pred:
+                    with np.load(resolve_local_file(prediction), allow_pickle=False) as pred:
                         check["prediction_complete"] = (
                             pred["train_logits"].shape[0] == len(unit["ytr"])
                             and pred["test_logits"].shape[0] == len(unit["yte"])
@@ -599,20 +602,22 @@ def _inference(adapter, model, x, batch_size=256):
 
 
 def _atomic_torch_save(path: Path, payload):
+    path = require_external_output(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile(dir=path.parent, prefix=f".{path.name}.",
                                      suffix=".tmp", delete=False) as handle:
         tmp = Path(handle.name)
-    torch.save(payload, tmp)
+    torch.save(payload, require_external_output(tmp))
     os.replace(tmp, path)
 
 
 def _atomic_npz(path: Path, **arrays):
+    path = require_external_output(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile(dir=path.parent, prefix=f".{path.name}.",
                                      suffix=".npz", delete=False) as handle:
         tmp = Path(handle.name)
-    np.savez(tmp, **arrays)
+    np.savez(require_external_output(tmp), **arrays)
     os.replace(tmp, path)
 
 
@@ -844,13 +849,13 @@ def _new_row_valid(row, unit, output_root):
     if not all(_finite(row.get(k)) for k in ("test_accuracy", "test_balanced_accuracy", "test_kappa")):
         return False
     try:
-        hist = json.loads(Path(row["history_path"]).read_text())
+        hist = json.loads(resolve_local_file(row["history_path"]).read_text())
         if not isinstance(hist, list) or len(hist) != 100:
             return False
-        payload = torch.load(row["checkpoint_path"], map_location="cpu", weights_only=False)
+        payload = torch.load(resolve_local_file(row["checkpoint_path"]), map_location="cpu", weights_only=False)
         if not payload.get("complete") or len(payload.get("batch_order_hashes", [])) != 100:
             return False
-        with np.load(row["prediction_path"], allow_pickle=False) as pred:
+        with np.load(resolve_local_file(row["prediction_path"]), allow_pickle=False) as pred:
             return pred["test_preds"].shape[0] == len(unit["yte"])
     except Exception:
         return False
@@ -1126,20 +1131,20 @@ def main(argv=None):
     config_path = Path(args.config)
     if not config_path.is_absolute():
         config_path = ROOT / config_path
-    cfg = yaml.safe_load(config_path.read_text())
+    cfg = yaml.safe_load(resolve_local_file(config_path).read_text())
     _validate_config(cfg)
     global TOTAL_CSV, OLD_CSV
     total_csv_cfg = cfg.get("main_csv")
     if total_csv_cfg:
-        TOTAL_CSV = Path(total_csv_cfg)
+        TOTAL_CSV = require_external_output(total_csv_cfg)
         if not TOTAL_CSV.is_absolute():
             TOTAL_CSV = ROOT / TOTAL_CSV
     old_csv_cfg = cfg.get("old_controls_csv")
     if old_csv_cfg:
-        OLD_CSV = Path(old_csv_cfg)
+        OLD_CSV = external_path(old_csv_cfg)
         if not OLD_CSV.is_absolute():
             OLD_CSV = ROOT / OLD_CSV
-    output_root = ROOT / cfg["output_dir"] if not Path(cfg["output_dir"]).is_absolute() else Path(cfg["output_dir"])
+    output_root = require_external_output(cfg["output_dir"])
     if output_root.exists() and any(output_root.iterdir()) and not args.resume:
         raise RuntimeError(f"formal output is non-empty; use --resume: {output_root}")
     output_root.mkdir(parents=True, exist_ok=True)

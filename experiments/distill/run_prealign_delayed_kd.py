@@ -51,6 +51,7 @@ from collab import artifacts
 from collab.seed import set_seed
 from data import split as split_utils
 from models import get_adapter
+from experiments.storage import external_path, require_external_output, resolve_local_file
 
 
 CONDITIONS = (
@@ -106,6 +107,7 @@ def _load_cfg(path):
 
 
 def _sha256_file(path):
+    path = resolve_local_file(path)
     h = hashlib.sha256()
     with open(path, 'rb') as handle:
         for block in iter(lambda: handle.read(1024 * 1024), b''):
@@ -149,6 +151,7 @@ def _hash_state(state):
 
 
 def _atomic_text(path, text):
+    path = require_external_output(path)
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(f'.{path.name}.tmp-{os.getpid()}')
@@ -162,6 +165,7 @@ def _atomic_json(path, value):
 
 
 def _atomic_csv(path, rows, fieldnames=None):
+    path = require_external_output(path)
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     rows = list(rows)
@@ -211,7 +215,7 @@ def _load_ft_logits(dataset, subject, seed, y_ref, uid_ref, root):
         raise ValueError(f'refusing a test artifact: {path}')
     if not path.exists():
         raise FileNotFoundError(path)
-    with np.load(path, allow_pickle=False) as payload:
+    with np.load(resolve_local_file(path), allow_pickle=False) as payload:
         required = {'logits', 'y', 'sample_uid'}
         missing = required.difference(payload.files)
         if missing:
@@ -498,6 +502,7 @@ def _row_complete(row, paths):
 
 
 def _read_rows(path):
+    path = external_path(path)
     if not path.exists():
         return []
     with path.open(newline='') as handle:
@@ -568,7 +573,7 @@ def _prepare_unit(dataset, subject, seed, cfg, device):
 
 def _run_unit(dataset, subject, seed, condition, cfg, device, unit):
     start = time.time()
-    out_dir = Path(cfg['output_dir'])
+    out_dir = require_external_output(cfg['output_dir'])
     paths = _paths(out_dir, dataset, subject, seed, condition)
     result = _train_condition(
         condition, unit['student_adapter'], unit['Xp_tr'], unit['y_tr'],
@@ -611,12 +616,12 @@ def _run_unit(dataset, subject, seed, condition, cfg, device, unit):
     }
     paths['checkpoint'].parent.mkdir(parents=True, exist_ok=True)
     tmp_ckpt = paths['checkpoint'].with_name(f'.{paths["checkpoint"].name}.tmp-{os.getpid()}')
-    torch.save(checkpoint_payload, tmp_ckpt)
+    torch.save(checkpoint_payload, require_external_output(tmp_ckpt))
     os.replace(tmp_ckpt, paths['checkpoint'])
     paths['prediction'].parent.mkdir(parents=True, exist_ok=True)
     tmp_pred = paths['prediction'].with_name(f'.{paths["prediction"].name}.tmp-{os.getpid()}')
     np.savez(
-        tmp_pred,
+        require_external_output(tmp_pred),
         train_sample_uid=unit['uid_tr'], test_sample_uid=unit['uid_te'],
         y_train=unit['y_tr'], y_test=unit['y_te'],
         train_pred=train_metrics['pred'], test_pred=test_metrics['pred'],
@@ -856,7 +861,7 @@ def _preflight(cfg, device):
                 torch.cuda.empty_cache()
             expected_units = sum(len(_dataset_subjects(ds)) for ds in DATASETS)
             print(f'[preflight {len(results)}/{expected_units}] {dataset} S{subject + 1} feature={tuple(feats.shape)}', flush=True)
-    out_dir = Path(cfg['output_dir'])
+    out_dir = require_external_output(cfg['output_dir'])
     _atomic_json(out_dir / 'preflight.json', {'status': 'pass', 'units': results})
     print(f'[preflight-complete] {len(results)}/{sum(len(_dataset_subjects(ds)) for ds in DATASETS)} units', flush=True)
 
@@ -865,9 +870,9 @@ def main(argv=None):
     args = _parse_args(argv)
     cfg_path = Path(args.config).resolve()
     cfg = _load_cfg(cfg_path)
-    cfg['artifact_root'] = str((ROOT / cfg['artifact_root']).resolve()) if not os.path.isabs(cfg['artifact_root']) else cfg['artifact_root']
-    cfg['output_dir'] = str((ROOT / cfg['output_dir']).resolve()) if not os.path.isabs(cfg['output_dir']) else cfg['output_dir']
-    out_dir = Path(cfg['output_dir'])
+    cfg['artifact_root'] = str(external_path(cfg['artifact_root']))
+    cfg['output_dir'] = str(require_external_output(cfg['output_dir']))
+    out_dir = require_external_output(cfg['output_dir'])
     out_dir.mkdir(parents=True, exist_ok=True)
     if args.preflight_only:
         device = _device(args.gpu)

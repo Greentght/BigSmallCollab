@@ -13,8 +13,8 @@ seeds: null
 subjects: null
 
 include_controls: true
-artifact_root: results/artifacts
-output_dir: results/fusion
+artifact_root: /data1/llx/BigSmallCollab_results/artifacts
+output_dir: /data1/llx/BigSmallCollab_results/fusion
 fail_fast: false
 
 pairs:

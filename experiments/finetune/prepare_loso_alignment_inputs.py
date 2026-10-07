@@ -17,10 +17,13 @@ import yaml
 
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT))
+from experiments.storage import (DATA_CACHE_ROOT, RESULTS_ROOT,
+                                 require_external_output, resolve_local_file)
 OLD_DATA = Path('/data1/llx')
 SPEC_PATH = ROOT / 'configs/reproductions/loso_config_alignment_v2.yaml'
-SOURCE_ROOT = ROOT / 'data_cache/eegfm_alignment_v2/rebuilt'
-INPUT_ROOT = ROOT / 'data_cache/eegfm_alignment_v2/model_inputs'
+SOURCE_ROOT = DATA_CACHE_ROOT / 'eegfm_alignment_v2/rebuilt'
+INPUT_ROOT = DATA_CACHE_ROOT / 'eegfm_alignment_v2/model_inputs'
 MOABB_OVERLAY = Path('/tmp/loso_alignment_deps_moabb')
 if MOABB_OVERLAY.is_dir():
     sys.path.insert(0, str(MOABB_OVERLAY))
@@ -49,7 +52,7 @@ def valid_existing_input(folder: Path, profile: str, dataset: str, model: str,
     if not manifest_path.is_file():
         return False
     try:
-        saved = json.loads(manifest_path.read_text())
+        saved = json.loads(resolve_local_file(manifest_path).read_text())
         if (saved.get('profile') != profile or saved.get('dataset') != dataset
                 or saved.get('model') != model or saved.get('variant') != variant
                 or saved.get('resolved_profile') != cfg
@@ -69,10 +72,10 @@ def valid_existing_input(folder: Path, profile: str, dataset: str, model: str,
 
 def source_info(dataset: str) -> tuple[np.ndarray, np.ndarray, np.ndarray, list[str], dict]:
     folder = SOURCE_ROOT / dataset
-    x = np.load(folder / 'X.npy', mmap_mode='r')
-    y = np.load(folder / 'y.npy', mmap_mode='r')
-    trials = pd.read_csv(folder / 'trials.csv')
-    manifest = json.loads((folder / 'manifest.json').read_text())
+    x = np.load(resolve_local_file(folder / 'X.npy'), mmap_mode='r')
+    y = np.load(resolve_local_file(folder / 'y.npy'), mmap_mode='r')
+    trials = pd.read_csv(resolve_local_file(folder / 'trials.csv'))
+    manifest = json.loads(resolve_local_file(folder / 'manifest.json').read_text())
     if len(x) != len(y) or len(y) != len(trials):
         raise RuntimeError(f'{dataset}: rebuilt source files disagree on trial count')
     order = np.lexsort((trials.event_ordinal.to_numpy(),
@@ -86,7 +89,7 @@ def bridge_info(dataset: str, variant: str):
         raise ValueError('source bridge currently only covers BNCI2014001-4')
     new_x, new_y, _, new_uids, new_manifest = source_info(dataset)
     folder = SOURCE_ROOT / dataset
-    mapping = pd.read_csv(folder / 'legacy_row_mapping.csv')
+    mapping = pd.read_csv(resolve_local_file(folder / 'legacy_row_mapping.csv'))
     if (len(mapping) != 2592 or not mapping.paired_verified.all()
             or mapping.legacy_raw_row.duplicated().any()
             or mapping.rebuilt_row.duplicated().any()):
@@ -247,12 +250,12 @@ def prepare(profile: str, model: str, dataset: str, variant: str, spec: dict,
         src_fs = 250
     else:
         source_x, y, order, all_uids, src_manifest = source_info(dataset)
-        trials = pd.read_csv(SOURCE_ROOT / dataset / 'trials.csv')
+        trials = pd.read_csv(resolve_local_file(SOURCE_ROOT / dataset / 'trials.csv'))
         source_rows = order
         y = y[order]
         subjects = trials.subject.to_numpy(dtype=np.int64)[order] - 1
         uids = [all_uids[int(i)] for i in order]
-        src_fs = int(json.loads((SOURCE_ROOT / dataset / 'manifest.json').read_text())[
+        src_fs = int(json.loads(resolve_local_file(SOURCE_ROOT / dataset / 'manifest.json').read_text())[
             'effective_native_fs_hz'])
     cfg = get_profile(profile, model, dataset, spec)
     if len(source_rows) != len(y) or len(y) != len(subjects) or len(y) != len(uids):
@@ -262,7 +265,7 @@ def prepare(profile: str, model: str, dataset: str, variant: str, spec: dict,
         if set(np.unique(y).tolist()) != expected_class:
             raise RuntimeError(f'{dataset}: rebuilt labels do not cover expected classes')
 
-    output = INPUT_ROOT / profile / dataset / model / variant
+    output = require_external_output(INPUT_ROOT / profile / dataset / model / variant)
     if valid_existing_input(output, profile, dataset, model, variant, cfg, src_manifest):
         print(f'[skip-valid] {profile} {dataset} {model} {variant}', flush=True)
         return

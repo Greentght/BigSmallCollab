@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 RUNNER="$ROOT/experiments/finetune/run_loso_five_datasets.py"
-LOG_DIR="$ROOT/results/reproductions/loso_five_settings_canonical4s_v1/execution_logs"
+LOG_DIR="/data1/llx/BigSmallCollab_results/reproductions/loso_five_settings_canonical4s_v1/execution_logs"
 mkdir -p "$LOG_DIR"
 
 wait_for_current_seed666() {

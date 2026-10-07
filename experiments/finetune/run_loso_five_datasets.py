@@ -30,6 +30,7 @@ import yaml
 import config
 from data.eeg_dataset import EEGDataset, _DATA_ROOT
 from models import get_adapter
+from experiments.storage import external_path, require_external_output, resolve_local_file
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -37,8 +38,8 @@ SPEC_PATH = ROOT / 'configs/reproductions/loso_five_datasets_v1.yaml'
 SNAPSHOT_PATH = ROOT / 'configs/reproductions/manifests/loso_five_datasets_v1_sources.json'
 TRIALS_PATH = ROOT / 'configs/reproductions/manifests/loso_five_datasets_v1_trials.csv'
 PROTOCOL = 'loso_five_settings_canonical4s_v1'
-RESULTS_ROOT = ROOT / 'results/reproductions' / PROTOCOL
-LEGACY_004 = ROOT / 'results/reproductions/loso_benchmark_session3_4s_v1'
+RESULTS_ROOT = Path('/data1/llx/BigSmallCollab_results/reproductions') / PROTOCOL
+LEGACY_004 = Path('/data1/llx/BigSmallCollab_results/reproductions/loso_benchmark_session3_4s_v1')
 DATASET_NAMES = ('BNCI2014001', 'BNCI2014001-4', 'BNCI2014004',
                  'BNCI2015001', 'AlexMI')
 MODEL_NAMES = ('mirepnet', 'cbramod')
@@ -66,6 +67,7 @@ def _parse_args():
 
 
 def _sha256(path):
+    path = resolve_local_file(path)
     digest = hashlib.sha256()
     with Path(path).open('rb') as stream:
         for block in iter(lambda: stream.read(4 * 1024 * 1024), b''):
@@ -104,8 +106,8 @@ def _environment_snapshot(device):
 
 
 def _load_spec():
-    spec = yaml.safe_load(SPEC_PATH.read_text())
-    snapshot = json.loads(SNAPSHOT_PATH.read_text())
+    spec = yaml.safe_load(resolve_local_file(SPEC_PATH).read_text())
+    snapshot = json.loads(resolve_local_file(SNAPSHOT_PATH).read_text())
     actual_hash = _sha256(SPEC_PATH)
     if snapshot['spec_sha256'] != actual_hash:
         raise RuntimeError('experiment YAML differs from its recorded source snapshot')
@@ -139,7 +141,7 @@ def _load_trials(dataset, spec):
     source = ds['source_dataset']
     meta_path = Path(_DATA_ROOT) / source / ('meta004.csv' if source == 'BNCI2014004' else 'meta.csv')
     meta = pd.read_csv(meta_path, dtype={'session': str, 'run': str})
-    y_raw = np.load(Path(_DATA_ROOT) / source / 'labels.npy', allow_pickle=True).astype(str)
+    y_raw = np.load(resolve_local_file(Path(_DATA_ROOT) / source / 'labels.npy'), allow_pickle=True).astype(str)
     args = SimpleNamespace(**kwargs)
     loaded = EEGDataset(args=args)
     x = np.asarray(loaded.X, dtype=np.float32)
@@ -356,6 +358,7 @@ def _cell_paths(output_dir, subject, seed):
 
 
 def _write_history(path, history):
+    path = require_external_output(path)
     keys = list(history[0]) if history else ['epoch']
     tmp = path.with_suffix(path.suffix + '.tmp')
     with tmp.open('w', newline='') as stream:
@@ -367,8 +370,12 @@ def _write_history(path, history):
 
 def _save_cell(result_path, checkpoint_path, manifest_path, history_path,
                model, result, manifest, history):
+    result_path = require_external_output(result_path)
+    checkpoint_path = require_external_output(checkpoint_path)
+    manifest_path = require_external_output(manifest_path)
+    history_path = require_external_output(history_path)
     checkpoint_tmp = checkpoint_path.with_suffix('.pt.tmp')
-    torch.save(model.state_dict(), checkpoint_tmp)
+    torch.save(model.state_dict(), require_external_output(checkpoint_tmp))
     os.replace(checkpoint_tmp, checkpoint_path)
     result_tmp = result_path.with_suffix('.npz.tmp')
     with result_tmp.open('wb') as stream:
@@ -384,14 +391,14 @@ def _cell_is_complete(result_path, checkpoint_path, manifest_path, history_path,
                       cfg, source_hashes, weight_sha, force):
     if force or not all(p.is_file() for p in (result_path, checkpoint_path, manifest_path)):
         return None
-    manifest = json.loads(manifest_path.read_text())
+    manifest = json.loads(resolve_local_file(manifest_path).read_text())
     if manifest.get('model_config') != cfg:
         raise RuntimeError(f'completed cell model config mismatch: {manifest_path}')
     if manifest.get('source_files') != source_hashes or manifest.get('pretrained_sha256') != weight_sha:
         raise RuntimeError(f'completed cell data or pretrained checkpoint mismatch: {manifest_path}')
     if not manifest.get('artifact_origin', '').startswith('reused_') and not history_path.is_file():
         return None
-    with np.load(result_path) as saved:
+    with np.load(resolve_local_file(result_path)) as saved:
         return json.loads(str(saved['metrics_json'].item()))
 
 
@@ -404,17 +411,17 @@ def _import_004_cell(dataset, model, subject, seed, cfg, y_test, uid_test,
     legacy_manifest = legacy_dir/'manifest.json'
     if not all(p.is_file() for p in (legacy_result, legacy_checkpoint, legacy_manifest)):
         raise FileNotFoundError(f'completed legacy 004 cell missing: {legacy_dir}')
-    old = json.loads(legacy_manifest.read_text())
+    old = json.loads(resolve_local_file(legacy_manifest).read_text())
     if old.get('model_config') != cfg:
         raise RuntimeError(f'legacy 004 config does not match current main recipe: {legacy_manifest}')
-    legacy_split = json.loads((LEGACY_004/'split_manifest.json').read_text())
+    legacy_split = json.loads((resolve_local_file(LEGACY_004/'split_manifest.json')).read_text())
     for name, item in legacy_split['source_files'].items():
         if source_file_payload['files'].get(name, {}).get('sha256') != item['sha256']:
             raise RuntimeError(f'legacy 004 source hash mismatch: {name}')
     if old.get('pretrained_sha256') != weight_sha:
         raise RuntimeError('legacy 004 pretrained checkpoint hash mismatch')
 
-    with np.load(legacy_result) as saved:
+    with np.load(resolve_local_file(legacy_result)) as saved:
         old_y = saved['y']
         old_uid = saved['sample_uid'].astype(np.int64)
         if not np.array_equal(old_y, y_test):
@@ -501,12 +508,13 @@ def _dataset_label_map(dataset):
 
 
 def _summary(output_dir, dataset, model, recipe, seeds, n_subjects, profile_meta):
+    output_dir = require_external_output(output_dir)
     rows = []
     for seed in seeds:
         for subject in range(n_subjects):
             _, result_path, _, _, _ = _cell_paths(output_dir, subject, seed)
             if result_path.is_file():
-                with np.load(result_path) as saved:
+                with np.load(resolve_local_file(result_path)) as saved:
                     rows.append(json.loads(str(saved['metrics_json'].item())))
     scalar_metrics = ('accuracy', 'balanced_accuracy', 'kappa', 'macro_f1', 'auroc')
     csv_path = output_dir/'summary.csv'
@@ -630,7 +638,7 @@ def _run(args, spec, snapshot, device):
         }
         split_path = output_dir/'split_manifest.json'
         if split_path.exists():
-            old = json.loads(split_path.read_text())
+            old = json.loads(resolve_local_file(split_path).read_text())
             previous_seeds = old.pop('seeds', [])
             expected = dict(split_manifest); expected.pop('seeds')
             if old != expected:

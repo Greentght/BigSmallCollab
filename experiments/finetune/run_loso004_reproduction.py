@@ -31,12 +31,13 @@ from torch.utils.data import DataLoader, TensorDataset
 import config
 import data
 from models import get_adapter
+from experiments.storage import external_path, require_external_output, resolve_local_file
 
 
 DATASET = 'BNCI2014004'
 PROJECT_PROTOCOL = 'loso_benchmark_session3_4s_v1'
 EEGFM_CB_FULL_PROTOCOL = 'loso_eegfm_cbfull_session3_4s_v1'
-RESULTS_ROOT = Path(__file__).resolve().parents[2] / 'results' / 'reproductions'
+RESULTS_ROOT = Path('/data1/llx/BigSmallCollab_results') / 'reproductions'
 EEGFM_CONFIG = Path('/home/lixinli/EEG-FM-Benchmark/config/BNCI2014004.json')
 SEEDS = (666, 667, 668)
 EEGFM_SEEDS = (0, 1, 2)
@@ -61,6 +62,7 @@ def _parse_args():
 
 
 def _sha256(path):
+    path = resolve_local_file(path)
     digest = hashlib.sha256()
     with open(path, 'rb') as stream:
         for block in iter(lambda: stream.read(1024 * 1024), b''):
@@ -96,7 +98,7 @@ def _model_config(model_name, cbramod_profile='project_loso'):
             if not EEGFM_CONFIG.is_file():
                 raise FileNotFoundError(
                     f'EEG-FM-Benchmark config not found: {EEGFM_CONFIG}')
-            benchmark = json.loads(EEGFM_CONFIG.read_text())['CBraMod']['full']
+            benchmark = json.loads(resolve_local_file(EEGFM_CONFIG).read_text())['CBraMod']['full']
             # Transfer only the full-finetuning hyperparameters and signal
             # filters. Keep the shared LOSO protocol's four-second window.
             cfg.update(
@@ -127,7 +129,7 @@ def _profile_metadata(model_name, cbramod_profile):
             'name': 'project_loso',
             'description': 'Current repository CBraMod LOSO configuration',
         }
-    benchmark = json.loads(EEGFM_CONFIG.read_text())['CBraMod']['full']
+    benchmark = json.loads(resolve_local_file(EEGFM_CONFIG).read_text())['CBraMod']['full']
     return {
         'name': 'eegfm_benchmark_full_transferred_to_loso',
         'source_config': str(EEGFM_CONFIG),
@@ -262,7 +264,7 @@ def _run_cell(model_name, fold, seed, cfg, device, x_train, y_train,
     checkpoint_path = run_dir / 'model.pt'
     manifest_path = run_dir / 'manifest.json'
     if result_path.exists() and checkpoint_path.exists() and manifest_path.exists() and not force:
-        with np.load(result_path) as saved:
+        with np.load(resolve_local_file(result_path)) as saved:
             return json.loads(str(saved['metrics_json'].item()))
     run_dir.mkdir(parents=True, exist_ok=True)
 
@@ -287,7 +289,7 @@ def _run_cell(model_name, fold, seed, cfg, device, x_train, y_train,
                             metrics_json=np.asarray(json.dumps(metrics, sort_keys=True)))
     os.replace(result_tmp, result_path)
     checkpoint_tmp = run_dir / 'model.pt.tmp'
-    torch.save(model.state_dict(), checkpoint_tmp)
+    torch.save(model.state_dict(), require_external_output(checkpoint_tmp))
     os.replace(checkpoint_tmp, checkpoint_path)
     manifest = {
         'protocol': protocol,
@@ -325,6 +327,7 @@ def _run_cell(model_name, fold, seed, cfg, device, x_train, y_train,
 
 
 def _write_summary(output_dir, model_name, rows, protocol, profile_meta):
+    output_dir = require_external_output(output_dir)
     csv_path = output_dir / model_name / 'summary.csv'
     csv_path.parent.mkdir(parents=True, exist_ok=True)
     columns = ['model', 'test_subject', 'seed', 'n_train', 'n_test', 'accuracy',
@@ -374,7 +377,7 @@ def main():
                 else PROJECT_PROTOCOL)
     seeds = args.seeds if args.seeds is not None else list(
         EEGFM_SEEDS if profile == 'eegfm_full' else SEEDS)
-    output_dir = args.output or (RESULTS_ROOT / protocol)
+    output_dir = require_external_output(args.output or (RESULTS_ROOT / protocol))
     profile_meta = _profile_metadata(args.model, profile)
     if any(fold < 0 or fold >= 9 for fold in args.folds):
         raise ValueError('--folds values must be zero-based integers in [0, 8]')
@@ -422,7 +425,7 @@ def main():
     output_dir.mkdir(parents=True, exist_ok=True)
     split_path = output_dir / 'split_manifest.json'
     if split_path.exists():
-        old = json.loads(split_path.read_text())
+        old = json.loads(resolve_local_file(split_path).read_text())
         old_seeds = old.pop('seeds', [])
         expected = dict(split_manifest)
         expected.pop('seeds', None)
@@ -480,7 +483,7 @@ def main():
             path = (output_dir / args.model / f'subject_{fold + 1:02d}' /
                     f'seed_{seed}' / 'result.npz')
             if path.exists():
-                with np.load(path) as saved:
+                with np.load(resolve_local_file(path)) as saved:
                     rows.append(json.loads(str(saved['metrics_json'].item())))
     _write_summary(output_dir, args.model, rows, protocol, profile_meta)
     print(f'[summary] wrote {output_dir / args.model / "summary.csv"}', flush=True)

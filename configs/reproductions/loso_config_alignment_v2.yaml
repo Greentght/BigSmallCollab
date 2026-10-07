@@ -44,7 +44,7 @@ environment:
   model_tensor_dtype: float32
 
 data:
-  cache_root: data_cache/eegfm_alignment_v2
+  cache_root: /data1/llx/data_cache/eegfm_alignment_v2
   unit: microvolts_after_moabb_conversion_verified_and_recorded
   uid_fields: [raw_file_identity, subject, session, run, event_sample_or_verified_ordinal, class_name]
   record_fields: [native_fs, epoch_tmin, epoch_tmax, event_sample, channel_order, unit, filter_chain, raw_file_sha256]
@@ -345,4 +345,4 @@ execution_plan:
   preflight_short_jobs: counted_separately
   wall_time_estimate: after_measured_pilot_only
   timing_categories: [data_processing, model_training, teacher_export, queue_wait, total_wall_time]
-  output_root: results/reproductions/loso_config_alignment_v2
+  output_root: /data1/llx/BigSmallCollab_results/reproductions/loso_config_alignment_v2

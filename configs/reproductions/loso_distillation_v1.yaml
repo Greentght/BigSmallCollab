@@ -50,7 +50,7 @@ student_training:
   batch_size: {ifnet: 16, eegnet: 32, adfcnn: 32}
   weight_decay: {ifnet: 0.01, eegnet: 0.0001, adfcnn: 0.0001}
 
-output_root: results/distill/loso_five_settings_kd_feature_warmup10_v1
+output_root: /data1/llx/BigSmallCollab_results/distill/loso_five_settings_kd_feature_warmup10_v1
 execution:
   runner: experiments/distill/run_loso_distillation.py
   launcher: experiments/distill/run_loso_distillation_suite.sh

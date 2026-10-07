@@ -17,19 +17,19 @@ fusion code should also require ``sample_uid`` for true sample-level alignment.
 import os
 
 import numpy as np
+from experiments.storage import RESULTS_ROOT, external_path, require_external_output, resolve_local_file
 
-ARTIFACT_ROOT = os.path.join(os.path.dirname(os.path.dirname(__file__)),
-                             'results', 'artifacts')
+ARTIFACT_ROOT = str(RESULTS_ROOT / 'artifacts')
 
 
 def artifact_path(dataset, model, subject, seed, split, root=ARTIFACT_ROOT):
-    return os.path.join(root, dataset, model, f'{subject}_{seed}_{split}.npz')
+    return str(external_path(root) / dataset / model / f'{subject}_{seed}_{split}.npz')
 
 
 def save(dataset, model, subject, seed, split, logits, feats, y,
          root=ARTIFACT_ROOT, sample_uid=None, split_policy=None):
     """Write one artifact (creates parent dirs). Arrays are coerced to f32/i64."""
-    path = artifact_path(dataset, model, subject, seed, split, root)
+    path = str(require_external_output(artifact_path(dataset, model, subject, seed, split, root)))
     os.makedirs(os.path.dirname(path), exist_ok=True)
     logits_arr = np.asarray(logits, dtype=np.float32)
     feats_arr = np.asarray(feats, dtype=np.float32)
@@ -62,7 +62,7 @@ def exists(dataset, model, subject, seed, split, root=ARTIFACT_ROOT):
 
 def load(dataset, model, subject, seed, split, root=ARTIFACT_ROOT):
     """Load one artifact as a dict with logits, feats, y, and optional metadata."""
-    path = artifact_path(dataset, model, subject, seed, split, root)
+    path = str(resolve_local_file(artifact_path(dataset, model, subject, seed, split, root)))
     if not os.path.exists(path):
         raise FileNotFoundError(f'missing artifact: {path}')
     d = np.load(path)

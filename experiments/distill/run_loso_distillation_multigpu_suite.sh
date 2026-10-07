@@ -20,7 +20,7 @@ for i in "${!gpus[@]}"; do
 done
 
 conda_bin="/home/lixinli/anaconda3/bin/conda"
-result_root="${repo_root}/results/distill/loso_five_settings_kd_feature_warmup10_v1"
+result_root="/data1/llx/BigSmallCollab_results/distill/loso_five_settings_kd_feature_warmup10_v1"
 log_dir="${result_root}/execution_logs"
 mkdir -p "${log_dir}"
 export OMP_NUM_THREADS=4 MKL_NUM_THREADS=4 OPENBLAS_NUM_THREADS=4 TORCH_NUM_THREADS=4

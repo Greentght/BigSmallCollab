@@ -7,11 +7,11 @@ val_split: 0.7
 seed: 666
 teachers: [mirepnet, cbramod]
 students: [ifnet, eegnet, adfcnn]
-output_dir: results/distill/bnci2014001_4_supplement/stage5_six_pairs
-artifact_root: results/artifacts
+output_dir: /data1/llx/BigSmallCollab_results/distill/bnci2014001_4_supplement/stage5_six_pairs
+artifact_root: /data1/llx/BigSmallCollab_results/artifacts
 teacher_artifact_roots:
-  mirepnet: results/artifacts
-  cbramod: results/distill/bnci2014001_4_supplement/stage5_cbramod200/teacher_artifacts
+  mirepnet: /data1/llx/BigSmallCollab_results/artifacts
+  cbramod: /data1/llx/BigSmallCollab_results/distill/bnci2014001_4_supplement/stage5_cbramod200/teacher_artifacts
 epochs: 100
 warmup_epochs: 10
 scheduler: CosineAnnealingLR

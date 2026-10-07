@@ -20,6 +20,7 @@ from scipy.signal import resample_poly
 from torch.utils.data import DataLoader, TensorDataset
 
 from models.base import ModelAdapter
+from experiments.storage import WEIGHTS_ROOT, resolve_local_file
 
 
 OFFICIAL_REPO = 'https://github.com/jingyingma01/CodeBrain'
@@ -32,7 +33,7 @@ OFFICIAL_WEIGHT_SHA256 = (
     'd9714b8732c9883a04d022ee66254cd578ae1fa27f5458e6ab7f1aa96e9a7352'
 )
 DEFAULT_REPO = Path(__file__).resolve().parent / 'upstream' / 'CodeBrain-main'
-DEFAULT_WEIGHT = Path(__file__).resolve().parents[2] / 'weights' / 'codebrain.pth'
+DEFAULT_WEIGHT = WEIGHTS_ROOT / 'codebrain.pth'
 OFFICIAL_SOURCE_SHA256 = {
     'Models/SSSM.py': 'e2fe5f7364907129507f3a9e946df9f9e44e10c3511efdcf772fab46d6fa278f',
     'Models/SGConv.py': '94f12f897ab4e8784a45d64fb65664184c872e6928159a6759fda2920c488be8',
@@ -41,6 +42,7 @@ OFFICIAL_SOURCE_SHA256 = {
 
 
 def sha256_file(path: str | os.PathLike, chunk_size: int = 8 * 1024 * 1024) -> str:
+    path = resolve_local_file(path)
     digest = hashlib.sha256()
     with open(path, 'rb') as stream:
         while True:
@@ -183,8 +185,7 @@ def load_codebrain_backbone(
     verify_sha256: bool = True,
 ) -> dict:
     """Load public encoder weights strictly and return an auditable report."""
-    path = Path(checkpoint or os.environ.get('CODEBRAIN_WEIGHT', DEFAULT_WEIGHT))
-    path = path.expanduser().resolve()
+    path = resolve_local_file(checkpoint or os.environ.get('CODEBRAIN_WEIGHT', DEFAULT_WEIGHT))
     if not path.is_file():
         raise FileNotFoundError(
             f'CodeBrain weights not found at {path}; set CODEBRAIN_WEIGHT.'

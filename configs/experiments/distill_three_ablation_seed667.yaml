@@ -12,9 +12,9 @@ val_split: 0.7
 seed: 667
 teacher: mirepnet
 student: ifnet
-artifact_root: results/artifacts
-output_dir: results/distill/three_seed_ablation_seed667
-main_csv: results/distill/three_seed_ablation_seed667.csv
+artifact_root: /data1/llx/BigSmallCollab_results/artifacts
+output_dir: /data1/llx/BigSmallCollab_results/distill/three_seed_ablation_seed667
+main_csv: /data1/llx/BigSmallCollab_results/distill/three_seed_ablation_seed667.csv
 epochs: 100
 optimizer: adamw
 lr: 0.001

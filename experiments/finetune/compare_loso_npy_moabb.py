@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import sys
 
 import numpy as np
 import pandas as pd
@@ -13,9 +14,12 @@ from data.preproc import bandpass
 
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT))
+from experiments.storage import (DATA_CACHE_ROOT, RESULTS_ROOT,
+                                 require_external_output, resolve_local_file)
 OLD = Path('/data1/llx')
-REBUILT = ROOT / 'data_cache/eegfm_alignment_v2/rebuilt'
-OUT = ROOT / 'results/reproductions/loso_config_alignment_v2/npy_vs_moabb_raw_comparison.json'
+REBUILT = DATA_CACHE_ROOT / 'eegfm_alignment_v2/rebuilt'
+OUT = RESULTS_ROOT / 'reproductions/loso_config_alignment_v2/npy_vs_moabb_raw_comparison.json'
 DATASETS = [
     ('BNCI2014001-4', 'BNCI2014001', 'meta.csv', 250),
     ('BNCI2014004', 'BNCI2014004', 'meta004.csv', 250),

@@ -16,8 +16,8 @@ subjects: null
 
 # The loader always expands this method to Base, KD_all and CE_MI.
 include_baseline: true
-artifact_root: results/artifacts
-output_dir: results/distill
+artifact_root: /data1/llx/BigSmallCollab_results/artifacts
+output_dir: /data1/llx/BigSmallCollab_results/distill
 fail_fast: false
 
 pairs:

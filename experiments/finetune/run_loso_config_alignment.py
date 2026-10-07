@@ -31,9 +31,11 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
+from experiments.storage import (DATA_CACHE_ROOT, RESULTS_ROOT,
+                                 require_external_output, resolve_local_file)
 SPEC = ROOT / 'configs/reproductions/loso_config_alignment_v2.yaml'
-INPUT_ROOT = ROOT / 'data_cache/eegfm_alignment_v2/model_inputs'
-RESULT_ROOT = ROOT / 'results/reproductions/loso_config_alignment_v2'
+INPUT_ROOT = DATA_CACHE_ROOT / 'eegfm_alignment_v2/model_inputs'
+RESULT_ROOT = RESULTS_ROOT / 'reproductions/loso_config_alignment_v2'
 REFERENCE_ROOT = Path('/home/lixinli/EEG-FM-Benchmark')
 WEIGHT_PATH = Path('/data1/llx/pre_weight/cbramod.pth')
 MIREPNET_WEIGHT_PATH = Path('/data1/llx/pre_weight/mirepnet.pth')
@@ -79,12 +81,12 @@ class ReferenceEEGNet(nn.Module):
 
 
 def read_json(path: Path) -> dict:
-    return json.loads(path.read_text())
+    return json.loads(resolve_local_file(path).read_text())
 
 
 def sha256_file(path: Path) -> str:
     h = hashlib.sha256()
-    with path.open('rb') as f:
+    with resolve_local_file(path).open('rb') as f:
         for block in iter(lambda: f.read(4 * 1024 * 1024), b''):
             h.update(block)
     return h.hexdigest()
@@ -227,11 +229,11 @@ def load_fold_data(profile: str, dataset: str, model: str, variant: str):
     if missing:
         raise FileNotFoundError(f'{folder}: missing prepared inputs {missing}')
     manifest = read_json(folder / 'manifest.json')
-    x = np.load(folder / 'X.npy', mmap_mode='r')
-    y = np.load(folder / 'y.npy', mmap_mode='r')
-    subjects = np.load(folder / 'subjects.npy', mmap_mode='r')
+    x = np.load(resolve_local_file(folder / 'X.npy'), mmap_mode='r')
+    y = np.load(resolve_local_file(folder / 'y.npy'), mmap_mode='r')
+    subjects = np.load(resolve_local_file(folder / 'subjects.npy'), mmap_mode='r')
     import pandas as pd
-    trials = pd.read_csv(folder / 'trials.csv')
+    trials = pd.read_csv(resolve_local_file(folder / 'trials.csv'))
     if not (len(x) == len(y) == len(subjects) == len(trials)):
         raise RuntimeError(f'{folder}: sample arrays and trial manifest differ')
     if not np.array_equal(trials.label_id.to_numpy(), y):
@@ -345,6 +347,7 @@ def apply_step_lr(optimizer, schedule: np.ndarray, global_step: int) -> float:
 
 
 def checkpoint_save(path: Path, state: dict) -> None:
+    path = require_external_output(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + '.partial')
     torch.save(state, tmp)
@@ -367,7 +370,7 @@ def train_one_fold(profile: str, dataset: str, model_name: str, seed: int,
                    subjects_all: np.ndarray, trials, manifest: dict, cfg: dict,
                    device: torch.device, output: Path, epochs_override: int | None = None,
                    max_batches: int | None = None, stream_resume_rng: bool = True) -> dict:
-    out = output
+    out = require_external_output(output)
     out.mkdir(parents=True, exist_ok=True)
     train_rows = np.flatnonzero(subjects_all != subject)
     test_rows = np.flatnonzero(subjects_all == subject)

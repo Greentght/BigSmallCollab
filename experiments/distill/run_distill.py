@@ -38,6 +38,7 @@ from data import split as split_utils
 from eval import metrics
 from models import BIG_MODELS, SMALL_MODELS, get_adapter
 from sklearn.metrics import balanced_accuracy_score
+from experiments.storage import external_path, require_external_output, resolve_local_file
 
 
 DEFAULT_METHODS = ('Base', 'KD_all', 'KD_masked', 'MMD', 'KD_MMD')
@@ -185,6 +186,7 @@ def _set_thread_defaults():
 
 
 def _sha256_file(path, chunk_size=1024 * 1024):
+    path = resolve_local_file(path)
     digest = hashlib.sha256()
     with open(path, 'rb') as handle:
         while True:
@@ -578,7 +580,7 @@ def _default_out_csv(args, datasets, teachers, students, protocol):
     out_dir = os.environ.get(
         'REPRO_OUT',
         os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-                     'results'),
+                     '/data1/llx/BigSmallCollab_results'),
     )
     if len(datasets) == len(teachers) == len(students) == 1:
         name = f'{datasets[0]}_{protocol}_distill_{teachers[0]}_to_{students[0]}.csv'

@@ -24,6 +24,7 @@ import config
 import data
 from collab import artifacts
 from models import get_adapter
+from experiments.storage import external_path, require_external_output, resolve_local_file
 
 
 def parse_args():
@@ -83,7 +84,7 @@ def main():
             # matching MC-dropout uncertainty on the train (=KD) split
             pe, bald = ad.mc_uncertainty(model, X_tr, K=a.mc_passes)
             os.makedirs(os.path.dirname(mcp), exist_ok=True)
-            np.savez(mcp, pred_entropy=pe, bald=bald,
+            np.savez(require_external_output(mcp), pred_entropy=pe, bald=bald,
                      y=np.asarray(y_tr, dtype=np.int64))
             print(f'[ok] {a.model} {a.dataset} S{subj} seed{seed} '
                   f'| meanH={pe.mean():.3f} meanBALD={bald.mean():.3f} -> {mcp}',

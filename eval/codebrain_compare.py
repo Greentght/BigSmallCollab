@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Strict, sample-aligned comparison of CodeBrain and EEG baselines.
 
-Artifacts are read from ``results/artifacts/<dataset>/<model>/`` by default.
+Artifacts are read from ``/data1/llx/BigSmallCollab_results/artifacts/<dataset>/<model>/`` by default.
 Each expected file is ``<subject0>_<seed>_test.npz`` with ``logits``, ``y``,
 ``sample_uid`` and ``split_policy`` fields. Results are written to
-``results/codebrain/comparison``. Model-specific roots can be supplied with
+``/data1/llx/BigSmallCollab_results/codebrain/comparison``. Model-specific roots can be supplied with
 ``--model-root MODEL=PATH``; each root must contain the usual
 ``<dataset>/<model>/<subject0>_<seed>_test.npz`` layout.
 
@@ -32,8 +32,12 @@ import numpy as np
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_ARTIFACT_ROOT = PROJECT_ROOT / "results" / "artifacts"
-DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "results" / "codebrain" / "comparison"
+sys.path.insert(0, str(PROJECT_ROOT))
+from experiments.storage import (RESULTS_ROOT, external_path,
+                                 require_external_output, resolve_local_file)
+
+DEFAULT_ARTIFACT_ROOT = RESULTS_ROOT / "artifacts"
+DEFAULT_OUTPUT_DIR = RESULTS_ROOT / "codebrain" / "comparison"
 DATASET_SUBJECTS = {
     "BNCI2014001": 9,
     "BNCI2014004": 9,
@@ -178,12 +182,13 @@ def _metrics_from_logits(logits: np.ndarray, y: np.ndarray) -> tuple[dict[str, A
 
 def _load_artifact(dataset: str, subject0: int, seed: int, model: str,
                    path: Path) -> Artifact:
+    path = external_path(path)
     artifact = Artifact(dataset, subject0, seed, model, path)
     if not path.is_file():
         return artifact
     artifact.exists = True
     try:
-        with np.load(path, allow_pickle=False) as data:
+        with np.load(resolve_local_file(path), allow_pickle=False) as data:
             fields = set(data.files)
             required = {"logits", "y", "sample_uid", "split_policy"}
             missing = sorted(required - fields)
@@ -305,6 +310,7 @@ def _mean(values: list[float]) -> float | None:
 
 
 def _write_csv(path: Path, fieldnames: list[str], rows: list[dict[str, Any]]) -> None:
+    path = require_external_output(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=fieldnames, extrasaction="ignore")
@@ -314,6 +320,7 @@ def _write_csv(path: Path, fieldnames: list[str], rows: list[dict[str, Any]]) ->
 
 
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
+    path = require_external_output(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as handle:
         json.dump(payload, handle, indent=2, ensure_ascii=False, default=_plain,
@@ -352,7 +359,7 @@ def _parse_model_roots(items: list[str], parser: argparse.ArgumentParser) -> dic
             parser.error(f"unknown model in --model-root: {model!r}; choose from {MODELS}")
         if not raw_path:
             parser.error(f"empty path in --model-root {item!r}")
-        roots[model] = Path(raw_path).expanduser().resolve()
+        roots[model] = external_path(raw_path).resolve()
     return roots
 
 
@@ -679,7 +686,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR,
-        help="report directory (default: results/codebrain/comparison)",
+        help=f"report directory (default: {DEFAULT_OUTPUT_DIR})",
     )
     parser.add_argument(
         "--datasets", nargs="+", choices=tuple(DATASET_SUBJECTS),
@@ -701,8 +708,8 @@ def main(argv: list[str] | None = None) -> int:
     datasets = list(args.datasets)
     seeds = list(args.seeds)
     model_roots = _parse_model_roots(args.model_root, parser)
-    artifact_root = args.artifact_root.expanduser().resolve()
-    output_dir = args.output_dir.expanduser().resolve()
+    artifact_root = external_path(args.artifact_root).resolve()
+    output_dir = require_external_output(args.output_dir)
 
     # Seed 666 remains available as a dedicated first-round table when a caller
     # selects another seed subset for the aggregate comparison.

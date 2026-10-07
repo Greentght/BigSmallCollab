@@ -83,7 +83,7 @@ def main():
             print(f"fold{f} seed{seed} done", flush=True)
 
     root = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-                        'results', 'metrics')
+                        '/data1/llx/BigSmallCollab_results', 'metrics')
     qdf = pd.DataFrame(qrows); qdf.to_csv(f'{root}/{a.dataset}_loso_predstates.csv', index=False)
     cdf = pd.DataFrame(crows); cdf.to_csv(f'{root}/{a.dataset}_loso_teachercalib.csv', index=False)
     print('\n=== prediction states (mean over folds/seeds) ===')

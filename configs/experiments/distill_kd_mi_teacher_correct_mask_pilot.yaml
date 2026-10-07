@@ -13,8 +13,8 @@ val_split: 0.7       # repository convention: test fraction (30% train)
 seed: 666
 teacher: mirepnet
 student: ifnet
-artifact_root: results/artifacts
-output_dir: results/distill/kd_mi_teacher_correct_mask_pilot
+artifact_root: /data1/llx/BigSmallCollab_results/artifacts
+output_dir: /data1/llx/BigSmallCollab_results/distill/kd_mi_teacher_correct_mask_pilot
 epochs: 100
 optimizer: adamw
 lr: 0.001

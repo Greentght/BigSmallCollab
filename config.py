@@ -19,6 +19,8 @@ import os
 
 import yaml
 
+from experiments.storage import WEIGHTS_ROOT, external_path, resolve_local_file
+
 _ROOT = os.path.dirname(os.path.abspath(__file__))
 CONFIG_DIR = os.path.join(_ROOT, 'configs')
 WEIGHTS_DIR = '/data1/llx/pre_weight'
@@ -116,13 +118,13 @@ def weight_path(name):
         raise KeyError(f'unknown model {name!r}; known: {list(_WEIGHTS)}')
     fname, env = _WEIGHTS[key]
     default_path = (
-        os.path.join(_ROOT, 'weights', fname)
+        str(WEIGHTS_ROOT / fname)
         if key == 'codebrain'
         else os.path.join(WEIGHTS_DIR, fname)
     )
-    path = os.environ.get(env, default_path)
+    path = str(external_path(os.environ.get(env, default_path)))
     if not os.path.exists(path):
         raise FileNotFoundError(
             f'{name} weights not found at {path}. Set {env} to override, or add '
-            f'the file/symlink under {WEIGHTS_DIR}/.')
-    return path
+            f'the weight file at {default_path}.')
+    return str(resolve_local_file(path))

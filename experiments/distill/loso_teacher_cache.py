@@ -23,11 +23,12 @@ import numpy as np
 import torch
 
 from experiments.finetune import run_loso_five_datasets as protocol
+from experiments.storage import external_path, require_external_output, resolve_local_file
 
 
 ROOT = protocol.ROOT
 PROTOCOL = 'loso_five_settings_kd_feature_warmup10_v1'
-CACHE_ROOT = ROOT / 'results/distill' / PROTOCOL / 'teacher_cache'
+CACHE_ROOT = Path('/data1/llx/BigSmallCollab_results/distill') / PROTOCOL / 'teacher_cache'
 TEACHERS = ('mirepnet', 'cbramod')
 CACHE_VERSION = 1
 _HASHES = {}
@@ -43,7 +44,7 @@ _CODE_FILES = (
 
 def _sha256(path):
     """Memoize hashes only while the file's identity/timestamps/size match."""
-    path = Path(path).resolve()
+    path = resolve_local_file(path).resolve()
     stat = path.stat()
     signature = (stat.st_dev, stat.st_ino, stat.st_size,
                  stat.st_mtime_ns, stat.st_ctime_ns)
@@ -149,7 +150,7 @@ def _teacher_context(teacher, dataset, fold, seed, uid, y, spec, snapshot):
     cp, mp = source_cell / 'model.pt', source_cell / 'manifest.json'
     if not all(p.is_file() for p in (cp, mp, source_cell / 'result.npz')):
         raise FileNotFoundError(f'complete teacher artifacts missing: {source_cell}')
-    manifest = json.loads(mp.read_text())
+    manifest = json.loads(resolve_local_file(mp).read_text())
     recipe = source_cell.parent.parent.name
     recorded_recipe = manifest.get('recipe')
     if (dataset == 'BNCI2014004' and recorded_recipe == 'main'
@@ -228,13 +229,13 @@ def _load_cache_unlocked(teacher, dataset, fold, seed, expected_uid, expected_y)
     spec, snapshot = protocol._load_spec()
     uid, y = _expected_arrays(expected_uid, expected_y, fold, len(spec['datasets'][dataset]['classes']))
     context, _ = _teacher_context(teacher, dataset, fold, seed, uid, y, spec, snapshot)
-    metadata = json.loads(mp.read_text())
+    metadata = json.loads(resolve_local_file(mp).read_text())
     for key, value in context.items():
         if metadata.get(key) != value:
             raise RuntimeError(f'{mp}: cache provenance mismatch: {key}')
     if metadata.get('cache_file_sha256') != _sha256(cp):
         raise RuntimeError(f'{cp}: cache file hash mismatch')
-    with np.load(cp, allow_pickle=False) as saved:
+    with np.load(resolve_local_file(cp), allow_pickle=False) as saved:
         data = {name: saved[name].copy() for name in saved.files}
     _validate_data(data, uid, y, metadata)
     return data, metadata
@@ -250,6 +251,7 @@ def load_cache(teacher, dataset, fold, seed, expected_uid, expected_y):
 
 
 def _atomic_save(cell, data, metadata):
+    cell = require_external_output(cell)
     cp, mp = cell / 'cache.npz', cell / 'cache_manifest.json'
     temporary_paths = []
     try:
@@ -328,7 +330,7 @@ def export(args):
                         print(f'[preprocessed] {args.teacher} {dataset} shape={tuple(prepared.shape)} '
                               f'seconds={time.time()-started:.1f}', flush=True)
                     model = adapter.build(metadata['num_classes'])
-                    state = torch.load(metadata['teacher_checkpoint']['path'], map_location='cpu', weights_only=True)
+                    state = torch.load(resolve_local_file(metadata['teacher_checkpoint']['path']), map_location='cpu', weights_only=True)
                     model.load_state_dict(state, strict=True)
                     del state
                     model.requires_grad_(False)

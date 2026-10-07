@@ -2,7 +2,7 @@
 """Cross-dataset external validation of MIRepNet-QC and Signal-QC.
 
 This is intentionally a diagnostic runner under ``test/qc``.  It does not
-modify the formal experiment runners and it treats ``results/artifacts`` as a
+modify the formal experiment runners and it treats ``/data1/llx/BigSmallCollab_results/artifacts`` as a
 read-only input directory.  The two QC implementations are imported from the
 previous single-dataset experiment so that this experiment cannot silently
 change the frozen feature, distance, or robust-z rules.
@@ -17,7 +17,7 @@ Stages are restartable:
     --stage aggregate
 
 The default output is the only directory this script is allowed to write:
-``test/qc/artifacts/qc_v1/cross_dataset_qc_generalization``.
+``/data1/llx/BigSmallCollab_results/qc_artifacts/qc_v1/cross_dataset_qc_generalization``.
 """
 from __future__ import annotations
 
@@ -44,8 +44,10 @@ from sklearn.metrics import balanced_accuracy_score, cohen_kappa_score
 from torch.utils.data import DataLoader, TensorDataset
 
 ROOT = Path(__file__).resolve().parents[2]
+
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+from experiments.storage import external_path, require_external_output, resolve_local_file
 
 import config
 import data
@@ -88,11 +90,11 @@ SIGNAL_THRESHOLD = 3.5
 RANDOM_MASKS = 5
 METHOD_VERSION = "mirepnet_signal_qc_v1_cross_dataset"
 DEFAULT_OUTPUT = (
-    ROOT / "test" / "qc" / "artifacts" / "qc_v1"
+    Path('/data1/llx/BigSmallCollab_results/qc_artifacts') / "qc_v1"
     / "cross_dataset_qc_generalization"
 )
-INPUT_ARTIFACT_ROOT = ROOT / "results" / "artifacts"
-OLD_QC_ROOT = ROOT / "test" / "qc" / "artifacts" / "qc_v1" / "mirepnet_vs_signal_qc"
+INPUT_ARTIFACT_ROOT = Path('/data1/llx/BigSmallCollab_results') / "artifacts"
+OLD_QC_ROOT = Path('/data1/llx/BigSmallCollab_results/qc_artifacts') / "qc_v1" / "mirepnet_vs_signal_qc"
 OLD_REGRESSION_DIR = OLD_QC_ROOT / "BNCI2015001" / "S1" / "fewshot"
 SESSION_BY_DATASET = {
     "BNCI2014001": "sessionT",
@@ -146,16 +148,19 @@ def _jsonable(value: Any) -> Any:
 
 
 def _write_json(path: Path, payload: Any) -> None:
+    path = require_external_output(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(_jsonable(payload), ensure_ascii=False, indent=2) + "\n")
 
 
 def _write_yaml(path: Path, payload: Mapping[str, Any]) -> None:
+    path = require_external_output(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(yaml.safe_dump(_jsonable(payload), sort_keys=False, allow_unicode=True))
 
 
 def _write_csv(path: Path, rows: Sequence[Mapping[str, Any]], fields: Sequence[str]) -> None:
+    path = require_external_output(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=list(fields), extrasaction="ignore")
@@ -179,6 +184,7 @@ def _append_csv(path: Path, row: Mapping[str, Any], fields: Sequence[str]) -> No
 
 
 def _read_csv(path: Path) -> list[dict[str, str]]:
+    path = external_path(path)
     if not path.exists():
         return []
     with path.open(newline="") as handle:
@@ -186,6 +192,7 @@ def _read_csv(path: Path) -> list[dict[str, str]]:
 
 
 def _sha256(path: Path) -> str:
+    path = resolve_local_file(path)
     digest = hashlib.sha256()
     with path.open("rb") as handle:
         for block in iter(lambda: handle.read(1024 * 1024), b""):
@@ -214,21 +221,21 @@ def _nvidia_smi() -> str:
 
 
 def _resolve_output(path: Path) -> Path:
-    value = path if path.is_absolute() else ROOT / path
-    value = value.resolve()
+    value = require_external_output(path)
     allowed = DEFAULT_OUTPUT.resolve()
     if value != allowed and allowed not in value.parents:
         raise ValueError(
             "cross-dataset QC output must stay under "
             f"{allowed}, got {value}"
         )
-    if str(value).startswith(str(ROOT / "results")) or value == ROOT / "artifacts":
-        raise ValueError("diagnostic output cannot be written under results/ or top-level artifacts/")
+    inputs = INPUT_ARTIFACT_ROOT.resolve()
+    if value == inputs or inputs in value.parents:
+        raise ValueError("diagnostic output cannot overwrite formal model artifacts")
     return value
 
 
 def _resolve_input_artifact_root(path: Path) -> Path:
-    value = (path if path.is_absolute() else ROOT / path).resolve()
+    value = external_path(path).resolve()
     if value != INPUT_ARTIFACT_ROOT.resolve():
         raise ValueError(
             "this diagnostic only accepts the read-only input root "
@@ -415,7 +422,7 @@ def inspect_artifact(dataset: str, subject_index: int, seed: int,
     if not path.exists():
         return base
     base["artifact_sha256"] = _sha256(path)
-    with np.load(path, allow_pickle=False) as artifact:
+    with np.load(resolve_local_file(path), allow_pickle=False) as artifact:
         if "feats" not in artifact.files or "sample_uid" not in artifact.files:
             base["status"] = "missing_required_field"
             return base
@@ -448,7 +455,7 @@ def _load_aligned_artifact_features(info: Mapping[str, Any], uid_train: np.ndarr
     if not info.get("eligible_for_mirepnet_qc"):
         raise QCScoreError(f"artifact is not eligible: {info.get('status')}")
     path = Path(str(info["artifact_path"]))
-    with np.load(path, allow_pickle=False) as artifact:
+    with np.load(resolve_local_file(path), allow_pickle=False) as artifact:
         feats = np.asarray(artifact["feats"])
         aligned = align_by_uid(
             np.asarray(uid_train, dtype=np.int64),
@@ -716,6 +723,7 @@ def _inventory_and_packs(plan: Sequence[Mapping[str, Any]], output_dir: Path,
 
 
 def _write_inventory(path: Path, rows: Sequence[Mapping[str, Any]]) -> None:
+    path = require_external_output(path)
     fields = [
         "dataset", "subject", "subject_index", "seed", "artifact_path",
         "artifact_exists", "artifact_sha256", "feature_key", "feature_shape",
@@ -764,6 +772,7 @@ def _config_payload(plan: Sequence[Mapping[str, Any]], output_dir: Path,
 
 def _write_provenance(output_dir: Path, artifact_root: Path,
                       config_payload: Mapping[str, Any]) -> None:
+    output_dir = require_external_output(output_dir)
     _write_json(output_dir / "provenance.json", {
         "git_commit": _git(["git", "rev-parse", "HEAD"]),
         "git_status_short": _git(["git", "status", "--short"]),
@@ -898,7 +907,7 @@ def stage_score(args: argparse.Namespace, output_dir: Path,
     # and cannot be mistaken for a successful external validation.
     if not regression["passed"]:
         raise RuntimeError("BNCI2015001-S1 QC regression failed; formal cross-dataset stages are blocked")
-    before = json.loads((output_dir / "artifact_sha256_before.json").read_text())
+    before = json.loads((resolve_local_file(output_dir / "artifact_sha256_before.json")).read_text())
     after = {path: _sha256(Path(path)) for path in before}
     unchanged = before == after
     _write_json(output_dir / "artifact_sha256_check.json", {
@@ -1022,10 +1031,10 @@ def _train_one(pack: Mapping[str, Any], condition: str,
             "removed_uids": [list(uid_tuple(x)) for x in removed_uids],
             "epochs": int(epochs), "final_train_loss": final["train_loss"],
             "final_train_accuracy": final["train_accuracy"],
-        }, condition_dir / "checkpoint.pt")
+        }, require_external_output(condition_dir / "checkpoint.pt"))
         _write_csv(condition_dir / "train_history.csv", history,
                    ["condition", "epoch", "train_loss", "train_accuracy", "learning_rate"])
-        np.savez_compressed(condition_dir / "test_predictions.npz",
+        np.savez_compressed(require_external_output(condition_dir / "test_predictions.npz"),
                             sample_uid=uid_test, y=y_test,
                             logits=np.asarray(logits, dtype=np.float32), pred=pred)
         (condition_dir / "train.log").write_text(
@@ -1107,8 +1116,9 @@ def _copy_reused(row: Mapping[str, Any], condition: str,
 
 
 def _read_manifest_mask(cell_dir: Path, method: str) -> tuple[str, list[tuple[int, int]], dict[str, Any]]:
+    cell_dir = external_path(cell_dir)
     filename = "mirepnet_qc_manifest.json" if method == "mirepnet_feature_qc" else "signal_qc_manifest.json"
-    payload = json.loads((cell_dir / filename).read_text())
+    payload = json.loads((resolve_local_file(cell_dir / filename)).read_text())
     return str(payload.get("status", "missing")), [uid_tuple(x) for x in payload.get("flagged_uids", [])], payload.get("safety", {})
 
 
@@ -1165,7 +1175,7 @@ def _load_score_cells(output_dir: Path, plan: Sequence[Mapping[str, Any]]) -> li
 
 def stage_main(args: argparse.Namespace, output_dir: Path,
                plan: Sequence[Mapping[str, Any]]) -> None:
-    regression = json.loads((output_dir / "regression_check.json").read_text())
+    regression = json.loads((resolve_local_file(output_dir / "regression_check.json")).read_text())
     if not regression.get("passed"):
         raise RuntimeError("main stage blocked because regression_check.json is not passed")
     cells = _load_score_cells(output_dir, plan)
@@ -1251,7 +1261,7 @@ def stage_random(args: argparse.Namespace, output_dir: Path,
     cells = _load_score_cells(output_dir, plan)
     manifest_path = _random_manifest_path(output_dir)
     if manifest_path.exists() and args.resume:
-        groups = json.loads(manifest_path.read_text())
+        groups = json.loads(resolve_local_file(manifest_path).read_text())
     else:
         groups = _build_random_manifest(cells, args.n_random_masks)
         _write_json(manifest_path, groups)
@@ -1401,6 +1411,7 @@ def _holm(records: list[dict[str, Any]]) -> None:
 
 def _write_figures(output_dir: Path, score_rows: Sequence[Mapping[str, str]],
                    subject_rows: Sequence[Mapping[str, Any]]) -> None:
+    output_dir = require_external_output(output_dir)
     try:
         import matplotlib
         matplotlib.use("Agg")
@@ -1542,7 +1553,7 @@ def _report(output_dir: Path, plan: Sequence[Mapping[str, Any]],
         "",
         "## artifact 覆盖", "",
         f"- MIRepNet train artifact 可用且 UID 集合严格对齐：{coverage}/{len(inventory)} folds。详细输入 SHA256 在 `artifact_inventory.csv` 和 `artifact_sha256_check.json`。",
-        "- 本脚本没有写入、覆盖或生成 `results/artifacts/` 中的任何文件；没有保存过滤后的 EEG 或 MIRepNet feature。",
+        "- 本脚本没有写入、覆盖或生成 `/data1/llx/BigSmallCollab_results/artifacts/` 中的任何文件；没有保存过滤后的 EEG 或 MIRepNet feature。",
         "",
         "## QC 规则", "",
         "- MIRepNet：`feats` 的最终 mean-pooled、classifier 前表征；float64、逐 trial L2、cosine、leave-self-out 5-NN 距离均值，fold 内 modified robust-z > 3.5。",

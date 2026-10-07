@@ -4,7 +4,7 @@
 This is an independent, train-only diagnostic.  It reproduces the existing
 adapter training loop with the resolved model configuration, takes fixed
 epoch snapshots, and immediately evaluates those snapshots on the same 30%
-train split.  It never writes ``results/artifacts`` and it has no test-split
+train split.  It never writes ``/data1/llx/BigSmallCollab_results/artifacts`` and it has no test-split
 input path or test-evaluation branch.
 
 The current BNCI2015001 configuration has different training lengths
@@ -30,6 +30,10 @@ from typing import Any, Mapping, Sequence
 import numpy as np
 
 ROOT = Path(__file__).resolve().parents[2]
+
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+from experiments.storage import external_path, require_external_output, resolve_local_file
 QC_DIR = ROOT / "test" / "qc"
 if str(QC_DIR) not in sys.path:
     sys.path.insert(0, str(QC_DIR))
@@ -58,8 +62,8 @@ DEFAULT_PROTOCOL = "fewshot"
 DEFAULT_FM = "mirepnet"
 DEFAULT_SM = "ifnet"
 DEFAULT_SEEDS = (666, 667, 668)
-DEFAULT_ARTIFACT_ROOT = ROOT / "results" / "artifacts"
-FORMAL_OUTPUT_ROOT = ROOT / "test" / "qc" / "artifacts" / "relation_gap" / "epochwise_prototype_reliability"
+DEFAULT_ARTIFACT_ROOT = Path('/data1/llx/BigSmallCollab_results') / "artifacts"
+FORMAL_OUTPUT_ROOT = Path('/data1/llx/BigSmallCollab_results/qc_artifacts') / "relation_gap" / "epochwise_prototype_reliability"
 EXPECTED_N = 60
 BASE_OBSERVATION_EPOCHS = (1, 2, 3, 5, 10)
 MIN_DISAGREEMENT_DESCRIPTIVE = 2
@@ -85,7 +89,7 @@ def _jsonable(value: Any) -> Any:
 
 def artifact_train_path(root: Path | str, dataset: str, model: str,
                         subject: int, seed: int) -> Path:
-    path = Path(root) / dataset / model / f"{int(subject)}_{int(seed)}_train.npz"
+    path = external_path(root) / dataset / model / f"{int(subject)}_{int(seed)}_train.npz"
     if not path.name.endswith("_train.npz") or "_test.npz" in path.name:
         raise DiagnosticError(f"only *_train.npz is permitted: {path}")
     return path
@@ -186,8 +190,8 @@ def _load_train_arrays(dataset: str, subject: int, seed: int,
 
             data_root = Path(os.environ.get("DATA_ROOT", "/data1/llx"))
             ds_root = data_root / dataset
-            raw_x_all = np.load(ds_root / "X.npy")
-            raw_y_all = np.load(ds_root / "labels.npy", allow_pickle=True)
+            raw_x_all = np.load(resolve_local_file(ds_root / "X.npy"))
+            raw_y_all = np.load(resolve_local_file(ds_root / "labels.npy"), allow_pickle=True)
             meta = pd.read_csv(ds_root / "meta.csv")
             mask = (np.asarray(meta["subject"].values) == int(subject) + 1)
             mask &= (np.asarray(meta["session"].values) == session)
@@ -270,11 +274,12 @@ def _infer_preprocessed(adapter: Any, model: Any, X_preprocessed: Any) -> tuple[
 def _write_snapshot(path: Path, dataset: str, subject: int, seed: int,
                     model: str, epoch: int, uid: np.ndarray, y: np.ndarray,
                     feats: np.ndarray, logits: np.ndarray, split_policy: str) -> None:
+    path = require_external_output(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     probability = stable_softmax(logits).astype(np.float32)
     pred = np.argmax(probability, axis=1).astype(np.int64)
     np.savez_compressed(
-        path, dataset=np.asarray(dataset), subject=np.asarray(int(subject)),
+        require_external_output(path), dataset=np.asarray(dataset), subject=np.asarray(int(subject)),
         seed=np.asarray(int(seed)), model=np.asarray(model), epoch=np.asarray(int(epoch)),
         sample_uid=np.asarray(uid, dtype=np.int64), y=np.asarray(y, dtype=np.int64),
         logits=np.asarray(logits, dtype=np.float32), probability=probability,
@@ -284,11 +289,12 @@ def _write_snapshot(path: Path, dataset: str, subject: int, seed: int,
 
 
 def load_snapshot(path: Path) -> dict[str, Any]:
+    path = external_path(path)
     if path.name.endswith("_test.npz") or "test" in path.name.lower():
         raise DiagnosticError(f"test snapshot path is forbidden: {path}")
     if not path.exists():
         raise FileNotFoundError(f"missing epoch snapshot: {path}")
-    with np.load(path, allow_pickle=False) as z:
+    with np.load(resolve_local_file(path), allow_pickle=False) as z:
         required = {"sample_uid", "y", "logits", "probability", "prediction", "feats"}
         missing = sorted(required - set(z.files))
         if missing:
@@ -576,6 +582,7 @@ def build_trajectories(sample_rows: Sequence[Mapping[str, Any]],
 
 
 def _write_csv(path: Path, rows: Sequence[Mapping[str, Any]], fields: Sequence[str]) -> None:
+    path = require_external_output(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=list(fields), extrasaction="ignore")
@@ -671,6 +678,7 @@ def _config_file_info(dataset: str, models: Sequence[str]) -> list[dict[str, Any
 
 
 def _ensure_out_dir(path: Path, force: bool = False) -> None:
+    path = require_external_output(path)
     path = path.resolve()
     if path.exists() and any(path.iterdir()):
         if not force:
@@ -684,6 +692,7 @@ def _ensure_out_dir(path: Path, force: bool = False) -> None:
 
 def _optional_charts(out_dir: Path, analyses: Sequence[Mapping[str, Any]],
                      schedule: Sequence[Mapping[str, Any]], seeds: Sequence[int]) -> list[str]:
+    out_dir = require_external_output(out_dir)
     try:
         import matplotlib
         matplotlib.use("Agg")
@@ -779,10 +788,10 @@ def run_analysis(dataset: str = DEFAULT_DATASET, subject: int = DEFAULT_SUBJECT,
     seeds = sorted(int(seed) for seed in seeds)
     if not seeds or len(set(seeds)) != len(seeds):
         raise DiagnosticError("seeds must be non-empty and unique")
-    artifact_root = Path(artifact_root).resolve()
+    artifact_root = external_path(artifact_root).resolve()
     if out_dir is None:
         out_dir = FORMAL_OUTPUT_ROOT / dataset / f"S{int(subject) + 1}" / DEFAULT_PROTOCOL / f"{fm_name}__{sm_name}"
-    out_dir = Path(out_dir).resolve()
+    out_dir = require_external_output(out_dir)
     _ensure_out_dir(out_dir, force=force)
 
     import torch
@@ -961,7 +970,7 @@ def build_report(config: Mapping[str, Any], summary: Mapping[str, Any],
              f"- Fixed shared observations: `{config['base_observation_epochs']}`; configured schedule: `{[r['epoch'] for r in config['observation_schedule']]}`",
              f"- Feature dimensions: `{config['feature_dimensions']}`", "",
              "## Snapshot and data provenance", "",
-             "No formal training code, loss, KD/fusion logic, checkpoint, baseline, or `results/artifacts` file was modified. Snapshots are independent `.npz` inference exports written below this diagnostic directory.",
+             "No formal training code, loss, KD/fusion logic, checkpoint, baseline, or `/data1/llx/BigSmallCollab_results/artifacts` file was modified. Snapshots are independent `.npz` inference exports written below this diagnostic directory.",
              "Only train artifacts were opened. No `*_test.npz` was opened and no test feature, label, logit, prediction, threshold, or routing decision was used.",
              f"Snapshot method: {provenance['snapshot_method']}",
              f"Session provenance: {provenance['session_provenance']}",

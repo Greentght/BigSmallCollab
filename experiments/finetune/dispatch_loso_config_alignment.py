@@ -21,8 +21,11 @@ import numpy as np
 
 
 ROOT = Path(__file__).resolve().parents[2]
-INPUT_ROOT = ROOT / 'data_cache/eegfm_alignment_v2/model_inputs'
-RESULT_ROOT = ROOT / 'results/reproductions/loso_config_alignment_v2'
+sys.path.insert(0, str(ROOT))
+from experiments.storage import (DATA_CACHE_ROOT, RESULTS_ROOT,
+                                 require_external_output, resolve_local_file)
+INPUT_ROOT = DATA_CACHE_ROOT / 'eegfm_alignment_v2/model_inputs'
+RESULT_ROOT = RESULTS_ROOT / 'reproductions/loso_config_alignment_v2'
 LOG_ROOT = RESULT_ROOT / 'execution_logs/jobs'
 WORKER = ROOT / 'experiments/finetune/run_loso_config_alignment.py'
 CONDA = '/home/lixinli/anaconda3/bin/conda'

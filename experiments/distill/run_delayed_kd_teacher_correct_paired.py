@@ -33,10 +33,11 @@ import config
 import data
 from data import split as split_utils
 from models import get_adapter
+from experiments.storage import external_path, require_external_output, resolve_local_file
 
 DATASETS = ("BNCI2014001", "BNCI2014004", "BNCI2015001", "AlexMI")
 CONDITIONS = ("DELAYED_KD_ALL", "DELAYED_KD_TCORRECT")
-LEGACY_CSV = ROOT / "results/distill/prealign_delayed_kd_pilot.csv"
+LEGACY_CSV = Path("/data1/llx/BigSmallCollab_results/distill/prealign_delayed_kd_pilot.csv")
 
 
 def _args():
@@ -55,7 +56,7 @@ def _load_config(path):
     path = Path(path)
     if not path.is_absolute():
         path = ROOT / path
-    cfg = yaml.safe_load(path.read_text())
+    cfg = yaml.safe_load(resolve_local_file(path).read_text())
     expected = {
         "datasets": list(DATASETS), "protocol": "fewshot", "val_split": 0.7,
         "seed": 666, "teacher": "mirepnet", "student": "ifnet",
@@ -68,8 +69,8 @@ def _load_config(path):
     for key, value in expected.items():
         if cfg.get(key) != value:
             raise ValueError(f"config {key} must be {value!r}, got {cfg.get(key)!r}")
-    cfg["artifact_root"] = str((ROOT / cfg["artifact_root"]).resolve()) if not Path(cfg["artifact_root"]).is_absolute() else cfg["artifact_root"]
-    cfg["output_dir"] = str((ROOT / cfg["output_dir"]).resolve()) if not Path(cfg["output_dir"]).is_absolute() else cfg["output_dir"]
+    cfg["artifact_root"] = str(external_path(cfg['artifact_root']))
+    cfg["output_dir"] = str(require_external_output(cfg['output_dir']))
     return cfg
 
 
@@ -112,6 +113,7 @@ def _restore_rng(state, device):
 
 
 def _sha256_file(path):
+    path = resolve_local_file(path)
     h = hashlib.sha256()
     with open(path, "rb") as f:
         for block in iter(lambda: f.read(1024 * 1024), b""):
@@ -176,6 +178,7 @@ def _schedule_hash(schedule, uid_tr):
 
 
 def _atomic_json(path, value):
+    path = require_external_output(path)
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(f".{path.name}.tmp-{os.getpid()}")
@@ -185,6 +188,7 @@ def _atomic_json(path, value):
 
 
 def _atomic_csv(path, rows):
+    path = require_external_output(path)
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     rows = list(rows)
@@ -202,10 +206,11 @@ def _atomic_csv(path, rows):
 
 
 def _atomic_torch_save(path, payload):
+    path = require_external_output(path)
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(f".{path.name}.tmp-{os.getpid()}")
-    torch.save(payload, tmp)
+    torch.save(payload, require_external_output(tmp))
     os.replace(tmp, path)
 
 
@@ -214,12 +219,12 @@ def _run_key(dataset, subject, seed):
 
 
 def _read_mask(path):
-    with np.load(path, allow_pickle=False) as d:
+    with np.load(resolve_local_file(path), allow_pickle=False) as d:
         return {key: np.asarray(d[key]) for key in d.files}
 
 
 def _prepare_masks(cfg):
-    out = Path(cfg["output_dir"])
+    out = require_external_output(cfg["output_dir"])
     mask_dir = out / "teacher_masks"
     mask_dir.mkdir(parents=True, exist_ok=True)
     unit_rows = []
@@ -246,10 +251,10 @@ def _prepare_masks(cfg):
             if not set(np.unique(y_te)).issubset(set(range(int(dcfg["num_classes"])))):
                 raise ValueError(f"{dataset_name} S{subject + 1}: test label mapping outside configured classes")
 
-            artifact_path = Path(cfg["artifact_root"]) / dataset_name / "mirepnet" / f"{subject}_{cfg['seed']}_train.npz"
+            artifact_path = external_path(cfg["artifact_root"]) / dataset_name / "mirepnet" / f"{subject}_{cfg['seed']}_train.npz"
             if not artifact_path.is_file():
                 raise FileNotFoundError(artifact_path)
-            with np.load(artifact_path, allow_pickle=False) as payload:
+            with np.load(resolve_local_file(artifact_path), allow_pickle=False) as payload:
                 needed = {"logits", "y", "sample_uid", "split_policy"}
                 missing = needed.difference(payload.files)
                 if missing:
@@ -469,7 +474,7 @@ def _warmup_path(out, key):
 def _create_warmup(out, key, dataset_name, subject, cfg, unit, device, max_epochs=10):
     path = _warmup_path(out, key)
     if path.exists():
-        cached = torch.load(path, map_location="cpu", weights_only=False)
+        cached = torch.load(resolve_local_file(path), map_location="cpu", weights_only=False)
         if (cached.get("epoch") != int(cfg["warmup_epochs"])
                 or cached.get("split_uid_hash") != unit["split_uid_hash"]
                 or cached.get("train_uid_hash") != unit["train_uid_hash"]
@@ -526,7 +531,7 @@ def _create_warmup(out, key, dataset_name, subject, cfg, unit, device, max_epoch
         "warmup_history": history,
     }
     _atomic_torch_save(path, payload)
-    saved = torch.load(path, map_location="cpu", weights_only=False)
+    saved = torch.load(resolve_local_file(path), map_location="cpu", weights_only=False)
     return saved, _sha256_file(path)
 
 
@@ -565,7 +570,7 @@ def _branch_complete(paths):
     if not paths["result"].is_file() or not paths["checkpoint"].is_file() or not paths["prediction"].is_file() or not paths["history"].is_file():
         return None
     try:
-        row = json.loads(paths["result"].read_text())
+        row = json.loads(resolve_local_file(paths["result"]).read_text())
         return row if row.get("status") == "complete" and int(row.get("epochs_completed", 0)) == 100 else None
     except Exception:
         return None
@@ -700,8 +705,8 @@ def _verify_all_one_pair(out, key, warmup_sha):
     logits = {}
     for condition in CONDITIONS:
         paths = _branch_paths(out, key, condition)
-        rows[condition] = json.loads(paths["result"].read_text())
-        with np.load(paths["prediction"], allow_pickle=False) as payload:
+        rows[condition] = json.loads(resolve_local_file(paths["result"]).read_text())
+        with np.load(resolve_local_file(paths["prediction"]), allow_pickle=False) as payload:
             logits[condition] = {
                 "test_logits": np.asarray(payload["test_logits"]),
                 "train_logits": np.asarray(payload["train_logits"]),
@@ -729,6 +734,7 @@ def _verify_all_one_pair(out, key, warmup_sha):
 
 
 def _read_rows(path):
+    path = external_path(path)
     if not Path(path).exists():
         return []
     with open(path, newline="") as f:
@@ -844,7 +850,7 @@ def _git_snapshot():
 def main():
     args = _args()
     cfg = _load_config(args.config)
-    out = Path(cfg["output_dir"])
+    out = require_external_output(cfg["output_dir"])
     if out.exists() and any(out.iterdir()) and not (args.resume or args.force):
         raise FileExistsError(f"{out} is not empty; use --resume or --force")
     out.mkdir(parents=True, exist_ok=True)
@@ -888,7 +894,7 @@ def main():
                 if a["final_student_state_hash"] != b["final_student_state_hash"]:
                     raise RuntimeError(f"{key}: smoke all-one branches did not match")
                 p0, p1 = [_branch_paths(out, key, c, smoke=True)["prediction"] for c in CONDITIONS]
-                with np.load(p0, allow_pickle=False) as a0, np.load(p1, allow_pickle=False) as a1:
+                with np.load(resolve_local_file(p0), allow_pickle=False) as a0, np.load(resolve_local_file(p1), allow_pickle=False) as a1:
                     if not np.array_equal(a0["test_logits"], a1["test_logits"]):
                         raise RuntimeError(f"{key}: smoke all-one test logits differ")
         _atomic_json(out / "smoke_test" / "smoke_status.json", {
@@ -935,7 +941,7 @@ def main():
                 pair_row = by_key[(dataset_name, subject + 1, condition)]
                 pair_row["all_one_consistency_verified"] = True
                 paths = _branch_paths(out, key, condition)
-                result_json = json.loads(paths["result"].read_text())
+                result_json = json.loads(resolve_local_file(paths["result"]).read_text())
                 result_json["all_one_consistency_verified"] = True
                 _atomic_json(paths["result"], result_json)
             _persist_rows(out, list(by_key.values()))

@@ -87,7 +87,7 @@ def main():
     ap.add_argument('--variant', action='append', default=[], help='k=v，可重复')
     ap.add_argument('--seeds', type=int, nargs='+', default=[666, 667, 668])
     ap.add_argument('--gpu', type=int, default=0)
-    ap.add_argument('--out_csv', default='results/cbramod_sweep.csv')
+    ap.add_argument('--out_csv', default='/data1/llx/BigSmallCollab_results/cbramod_sweep.csv')
     ap.add_argument('--summary_csv', default=None, help='可选：汇总表 CSV')
     ap.add_argument('--n_boot', type=int, default=10000)
     a = ap.parse_args()

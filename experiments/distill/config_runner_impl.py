@@ -20,6 +20,7 @@ import yaml
 
 from experiments import config_loader
 from experiments.distill import run_distill as legacy
+from experiments.storage import external_path, require_external_output, resolve_local_file
 
 
 class _Tee:
@@ -91,6 +92,7 @@ def _row_key(row):
 
 
 def _read_rows(path):
+    path = external_path(path)
     if not path.exists():
         return []
     with path.open(newline="") as handle:
@@ -98,6 +100,7 @@ def _read_rows(path):
 
 
 def _atomic_write_text(path, text):
+    path = require_external_output(path)
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(f'.{path.name}.tmp-{os.getpid()}')
@@ -111,6 +114,7 @@ def _atomic_write_json(path, value):
 
 
 def _atomic_write_csv(path, rows, fieldnames=None):
+    path = require_external_output(path)
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     rows = list(rows)
@@ -181,10 +185,10 @@ def _row_complete(row, run_root):
     if not all(path.is_file() and path.stat().st_size > 0 for path in files.values()):
         return False
     try:
-        checkpoint = torch.load(files['checkpoint'], map_location='cpu')
+        checkpoint = torch.load(resolve_local_file(files['checkpoint']), map_location='cpu')
         if not isinstance(checkpoint, dict) or not checkpoint.get('complete', False):
             return False
-        history = json.loads(files['history'].read_text())
+        history = json.loads(resolve_local_file(files['history']).read_text())
         if not history or len(history) != int(row.get('student_epochs', 0)):
             return False
     except Exception:  # noqa: BLE001
@@ -272,6 +276,7 @@ def _write_manifest(path, manifest):
 
 
 def _save_run_artifacts(run_root, row, details, checkpoint_payload):
+    run_root = require_external_output(run_root)
     files = _artifact_file_map(run_root, row)
     for path in files.values():
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -279,14 +284,14 @@ def _save_run_artifacts(run_root, row, details, checkpoint_payload):
     _atomic_write_json(files['history'], history)
     checkpoint_tmp = files['checkpoint'].with_name(
         f'.{files["checkpoint"].name}.tmp-{os.getpid()}')
-    torch.save(checkpoint_payload, checkpoint_tmp)
+    torch.save(checkpoint_payload, require_external_output(checkpoint_tmp))
     os.replace(checkpoint_tmp, files['checkpoint'])
     train_logits = np.asarray(details['train_logits'])
     test_logits = np.asarray(details['test_logits'])
     npz_tmp = files['prediction'].with_name(
         f'.{files["prediction"].name}.tmp-{os.getpid()}')
     np.savez(
-        npz_tmp,
+        require_external_output(npz_tmp),
         train_logits=train_logits,
         test_logits=test_logits,
         train_preds=np.asarray(details['train_preds'], dtype=np.int64),

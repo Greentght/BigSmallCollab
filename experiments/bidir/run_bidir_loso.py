@@ -53,7 +53,7 @@ def main():
               else 'cpu')
     out_csv = a.out_csv or os.path.join(
         os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-        'results', 'metrics', f'{a.dataset}_loso_bidir_mirepnet_ifnet.csv')
+        '/data1/llx/BigSmallCollab_results', 'metrics', f'{a.dataset}_loso_bidir_mirepnet_ifnet.csv')
     os.makedirs(os.path.dirname(out_csv), exist_ok=True)
 
     conds = {'Uni': 0.0, 'Bidir': a.lam_sb}

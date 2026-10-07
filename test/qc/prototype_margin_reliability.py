@@ -28,6 +28,10 @@ import numpy as np
 
 
 ROOT = Path(__file__).resolve().parents[2]
+
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+from experiments.storage import external_path, require_external_output, resolve_local_file
 DEFAULT_DATASET = "BNCI2015001"
 DEFAULT_SUBJECT = 0
 DEFAULT_SESSION = "session_A"
@@ -35,8 +39,8 @@ DEFAULT_PROTOCOL = "fewshot"
 DEFAULT_FM = "mirepnet"
 DEFAULT_SM = "ifnet"
 DEFAULT_SEEDS = (666, 667, 668)
-DEFAULT_ARTIFACT_ROOT = ROOT / "results" / "artifacts"
-FORMAL_OUTPUT_ROOT = ROOT / "test" / "qc" / "artifacts" / "relation_gap" / "prototype_margin_reliability"
+DEFAULT_ARTIFACT_ROOT = Path('/data1/llx/BigSmallCollab_results') / "artifacts"
+FORMAL_OUTPUT_ROOT = Path('/data1/llx/BigSmallCollab_results/qc_artifacts') / "relation_gap" / "prototype_margin_reliability"
 DEFAULT_EPSILON = 1e-12
 EXPECTED_N = 60
 
@@ -76,6 +80,7 @@ def _jsonable(value: Any) -> Any:
 
 
 def sha256_file(path: Path) -> str:
+    path = resolve_local_file(path)
     digest = hashlib.sha256()
     with path.open("rb") as handle:
         for block in iter(lambda: handle.read(1 << 20), b""):
@@ -86,13 +91,14 @@ def sha256_file(path: Path) -> str:
 def artifact_path(artifact_root: Path | str, dataset: str, model: str,
                   subject: int, seed: int) -> Path:
     """Return the sole permitted input path (the train artifact)."""
-    root = Path(artifact_root)
+    root = external_path(artifact_root)
     path = root / dataset / model / f"{int(subject)}_{int(seed)}_train.npz"
     validate_train_path(path)
     return path
 
 
 def validate_train_path(path: Path | str) -> Path:
+    path = external_path(path)
     path = Path(path)
     if not path.name.endswith("_train.npz") or "_test.npz" in path.name:
         raise DiagnosticError(
@@ -111,10 +117,11 @@ def _finite(array: np.ndarray, name: str, path: Path) -> None:
 
 def load_train_artifact(path: Path | str, expected_n: int | None = None) -> dict[str, Any]:
     """Load and strictly validate one train artifact, never a test artifact."""
+    path = external_path(path)
     path = validate_train_path(path)
     if not path.exists():
         raise FileNotFoundError(f"missing train artifact: {path}")
-    with np.load(path, allow_pickle=False) as archive:
+    with np.load(resolve_local_file(path), allow_pickle=False) as archive:
         required = {"logits", "feats", "y", "sample_uid"}
         missing = sorted(required - set(archive.files))
         if missing:
@@ -644,6 +651,7 @@ def conservative_decision(seed_summaries: Sequence[Mapping[str, Any]]) -> tuple[
 
 
 def _ensure_output_dir(path: Path, force: bool = False) -> None:
+    path = require_external_output(path)
     path = path.resolve()
     if path.exists() and any(path.iterdir()):
         if not force:
@@ -693,6 +701,7 @@ def _csv_value(value: Any) -> Any:
 
 
 def write_csv(path: Path, rows: Sequence[Mapping[str, Any]], fieldnames: Sequence[str]) -> None:
+    path = require_external_output(path)
     with path.open("w", encoding="utf-8", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=list(fieldnames), extrasaction="ignore")
         writer.writeheader()
@@ -830,10 +839,10 @@ def run_analysis(dataset: str = DEFAULT_DATASET, subject: int = DEFAULT_SUBJECT,
         # The diagnostic does not repartition or load raw data.  This guard
         # prevents a session argument from silently changing artifact meaning.
         raise DiagnosticError(f"only the configured session {DEFAULT_SESSION!r} is supported")
-    artifact_root = Path(artifact_root).resolve()
+    artifact_root = external_path(artifact_root).resolve()
     if out_dir is None:
         out_dir = FORMAL_OUTPUT_ROOT / dataset / f"S{int(subject) + 1}" / DEFAULT_PROTOCOL / f"{fm_name}__{sm_name}"
-    out_dir = Path(out_dir).resolve()
+    out_dir = require_external_output(out_dir)
     # Load/validate all inputs before creating or modifying any output.
     expected_n = EXPECTED_N if dataset == DEFAULT_DATASET and int(subject) == 0 else None
     analyses = []

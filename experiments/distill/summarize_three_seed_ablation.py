@@ -4,6 +4,7 @@ import csv, json
 from collections import Counter, defaultdict
 from pathlib import Path
 import numpy as np
+from experiments.storage import external_path, require_external_output, resolve_local_file
 
 ROOT = Path(__file__).resolve().parents[2]
 SEEDS = (666, 667, 668)
@@ -19,7 +20,7 @@ SOURCES = {
     'BNCI2015001': ('BNCI2015001',),
     'AlexMI': ('AlexMI',),
 }
-OUT = ROOT / 'results/distill/three_seed_ablation'
+OUT = Path('/data1/llx/BigSmallCollab_results/distill/three_seed_ablation')
 OUT.mkdir(parents=True, exist_ok=True)
 
 
@@ -40,8 +41,8 @@ def write_csv(path, rows):
 
 
 def seed_root(seed):
-    if seed == 666: return ROOT / 'results/distill/seed666_three_ablation'
-    return ROOT / f'results/distill/three_seed_ablation_seed{seed}'
+    if seed == 666: return Path('/data1/llx/BigSmallCollab_results/distill/seed666_three_ablation')
+    return ROOT / f'/data1/llx/BigSmallCollab_results/distill/three_seed_ablation_seed{seed}'
 
 
 all_rows=[]; teacher_rows=[]; perf_by_seed={}; delta_by_seed={}; source_arrays={}
@@ -58,7 +59,7 @@ for seed in SEEDS:
     for key,group in units.items():
         for field in ('train_uid_hash','test_uid_hash','initial_state_hash','batch_order_hash','batch_order_hashes'):
             assert len({r[field] for r in group})==1, (seed,key,field)
-    prov=json.loads((folder/'execution_provenance.json').read_text())
+    prov=json.loads((resolve_local_file(folder/'execution_provenance.json')).read_text())
     assert prov['status']=='complete' and prov['new_runs']==235
     assert all(x['hashes_equal'] for x in prov['new_triplet_hashes'])
     for r in rows:

@@ -41,7 +41,7 @@ import data
 from models import get_adapter
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-METRICS = os.path.join(ROOT, 'results', 'metrics')
+METRICS = os.path.join(ROOT, '/data1/llx/BigSmallCollab_results', 'metrics')
 
 _SPLIT_CACHE = {}
 

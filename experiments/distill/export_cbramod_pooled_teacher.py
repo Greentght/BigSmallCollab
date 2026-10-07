@@ -30,6 +30,7 @@ import data
 from collab import artifacts
 from collab.seed import set_seed
 from models import get_adapter
+from experiments.storage import external_path, require_external_output, resolve_local_file
 
 # Keep the canonical project spellings explicit; the export is intentionally
 # limited to the four datasets in the six-pair pilot.
@@ -45,6 +46,7 @@ SEED = 666
 
 
 def sha256(path: Path) -> str:
+    path = resolve_local_file(path)
     h = hashlib.sha256()
     with path.open('rb') as f:
         for block in iter(lambda: f.read(1024 * 1024), b''):

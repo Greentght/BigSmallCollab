@@ -12,7 +12,10 @@ import time
 
 
 ROOT = Path(__file__).resolve().parents[2]
-RESULTS = ROOT / 'results/reproductions/loso_config_alignment_v2'
+sys.path.insert(0, str(ROOT))
+from experiments.storage import (DATA_CACHE_ROOT, RESULTS_ROOT,
+                                 require_external_output, resolve_local_file)
+RESULTS = RESULTS_ROOT / 'reproductions/loso_config_alignment_v2'
 EXEC = RESULTS / 'execution_logs'
 LOGS = EXEC / 'npy_source_control_0014'
 WORKER = ROOT / 'experiments/finetune/run_loso_config_alignment.py'

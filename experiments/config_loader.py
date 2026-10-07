@@ -20,6 +20,7 @@ import yaml
 import config as project_config
 import data
 from models import BIG_MODELS, SMALL_MODELS
+from experiments.storage import external_path, require_external_output
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -249,11 +250,13 @@ def _validate_common(raw: Mapping, kind: str) -> dict:
     seeds = _int_list(raw.get("seeds"), "seeds", allow_none=True)
     if subjects is not None and any(subject < 0 for subject in subjects):
         _fail("subjects", "must contain only non-negative indices")
-    artifact_root = raw.get("artifact_root", "results/artifacts")
-    output_dir = raw.get("output_dir", f"results/{kind}")
+    artifact_root = raw.get("artifact_root", "/data1/llx/BigSmallCollab_results/artifacts")
+    output_dir = raw.get("output_dir", f"/data1/llx/BigSmallCollab_results/{kind}")
     for field, value in (("artifact_root", artifact_root), ("output_dir", output_dir)):
         if not isinstance(value, str) or not value:
             _fail(field, "must be a non-empty string")
+    artifact_root = str(external_path(artifact_root))
+    output_dir = str(require_external_output(output_dir))
     fail_fast = raw.get("fail_fast", False)
     if not isinstance(fail_fast, bool):
         _fail("fail_fast", "must be boolean")
@@ -600,8 +603,8 @@ def require_experiment_type(loaded: Mapping, expected: str) -> None:
 
 
 def resolve_path(value: str | Path) -> Path:
-    """Resolve a config path relative to the project root."""
-    path = Path(value)
+    """Resolve code paths locally and historical artifact paths externally."""
+    path = external_path(value)
     return path if path.is_absolute() else PROJECT_ROOT / path
 
 
@@ -632,7 +635,7 @@ def resolved_path(output: str | Path, name: str | None = None) -> Path:
 
 
 def save_resolved(loaded: Mapping, output: str | Path) -> Path:
-    path = resolved_path(output, loaded["config"].get("name"))
+    path = require_external_output(resolved_path(output, loaded["config"].get("name")))
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w") as handle:
         yaml.safe_dump(resolved_payload(loaded), handle,

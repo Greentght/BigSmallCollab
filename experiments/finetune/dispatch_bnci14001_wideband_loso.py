@@ -14,20 +14,24 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import sys
 import statistics
 import subprocess
 import time
 
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT))
+from experiments.storage import (DATA_CACHE_ROOT, RESULTS_ROOT,
+                                 require_external_output, resolve_local_file)
 PYTHONS = {
     'cbramod': Path('/home/lixinli/anaconda3/envs/cbramod/bin/python'),
     'mirepnet': Path('/home/lixinli/anaconda3/envs/mirepnet/bin/python'),
 }
 WORKER = ROOT / 'experiments/finetune/run_loso_config_alignment.py'
-RESULT_ROOT = ROOT / 'results/reproductions/loso_config_alignment_v2'
-INPUT_ROOT = ROOT / 'data_cache/eegfm_alignment_v2/model_inputs'
-EXEC = ROOT / 'results/reproductions/loso_source_v3/execution_logs'
+RESULT_ROOT = RESULTS_ROOT / 'reproductions/loso_config_alignment_v2'
+INPUT_ROOT = DATA_CACHE_ROOT / 'eegfm_alignment_v2/model_inputs'
+EXEC = RESULTS_ROOT / 'reproductions/loso_source_v3/execution_logs'
 STATUS_PATH = EXEC / 'wideband_14001_loso_status.json'
 LOCK_PATH = EXEC / 'wideband_14001_loso_dispatcher.lock'
 PROFILE = 'wideband_npy_v3'
@@ -40,7 +44,7 @@ SUBJECTS = tuple(range(1, 10))
 TASKS = tuple((dataset, model, seed) for seed in SEEDS for dataset, model in COMBINATIONS)
 EXPECTED_EPOCHS = {(dataset, model): (10 if model == 'mirepnet' and dataset == 'BNCI2014001' else 20)
                    for dataset, model in COMBINATIONS}
-SOURCE_MANIFEST = ROOT / 'data_cache/loso_source_v3/BNCI2014001/manifest.json'
+SOURCE_MANIFEST = DATA_CACHE_ROOT / 'loso_source_v3/BNCI2014001/manifest.json'
 PREFLIGHT_LOGS = RESULT_ROOT / PROFILE / 'audit/preflight'
 WORKER_LOGS = EXEC / 'wideband_14001_loso_workers'
 ALLOWED_GPUS = tuple(range(1, 10))
@@ -93,6 +97,7 @@ def log(message: str) -> None:
 
 
 def atomic_json(path: Path, value: dict) -> None:
+    path = require_external_output(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(path.suffix + '.partial')
     temporary.write_text(json.dumps(value, indent=2, sort_keys=True) + '\n')
@@ -100,34 +105,8 @@ def atomic_json(path: Path, value: dict) -> None:
 
 
 def local_data_path(path: Path) -> Path:
-    """Read a checked-out file or its existing local LFS object without checkout."""
-    with path.open('rb') as f:
-        beginning = f.read(256)
-    if not beginning.startswith(b'version https://git-lfs.github.com/spec/v1\n'):
-        return path
-    fields = beginning.decode('ascii').splitlines()
-    oid = next((line.split(':', 1)[1] for line in fields
-                if line.startswith('oid sha256:')), None)
-    size = next((int(line.split(' ', 1)[1]) for line in fields
-                 if line.startswith('size ')), None)
-    if not oid or len(oid) != 64 or size is None:
-        raise RuntimeError(f'Malformed LFS pointer: {path}')
-    git_directory = ROOT / '.git'
-    if git_directory.is_file():
-        record = git_directory.read_text().strip()
-        if not record.startswith('gitdir: '):
-            raise RuntimeError(f'Invalid Git directory record: {git_directory}')
-        git_directory = Path(record.split(': ', 1)[1])
-        if not git_directory.is_absolute():
-            git_directory = ROOT / git_directory
-    common_path = git_directory / 'commondir'
-    if common_path.is_file():
-        common = Path(common_path.read_text().strip())
-        git_directory = common if common.is_absolute() else git_directory / common
-    blob = git_directory / 'lfs/objects' / oid[:2] / oid[2:4] / oid
-    if not blob.is_file() or blob.stat().st_size != size:
-        raise FileNotFoundError(f'Local LFS object unavailable for {path}: {oid}')
-    return blob
+    """Read datasets and prior results through the external artifact store."""
+    return resolve_local_file(path)
 
 
 def sha256_file(path: Path) -> str:
@@ -269,6 +248,7 @@ def worker_command(task: tuple[str, str, int], gpu: int, preflight: bool = False
 
 
 def start_worker(task: tuple[str, str, int], gpu: int, log_path: Path, preflight: bool = False) -> dict:
+    log_path = require_external_output(log_path)
     log_path.parent.mkdir(parents=True, exist_ok=True)
     handle = log_path.open('ab', buffering=0)
     worker_env = {**os.environ, 'PYTHONPATH': str(ROOT),
@@ -290,10 +270,36 @@ def start_worker(task: tuple[str, str, int], gpu: int, log_path: Path, preflight
             'log_path': log_path, 'log_handle': handle}
 
 
-def run_preflight() -> None:
+def run_preflight(manifest_hashes: dict) -> None:
     completed = PREFLIGHTS_DONE
     for dataset, model in COMBINATIONS:
         task = (dataset, model, 0)
+        # Preserve successful preflights across storage migrations/restarts.
+        # Validate the original receipt against the actual moved input bytes.
+        prior_receipt = None
+        for prior_log in sorted((PREFLIGHT_LOGS / model / dataset).glob('seed0_gpu*_try*.log')):
+            for line in reversed(local_data_path(prior_log).read_text().splitlines()):
+                if not line.startswith('{'):
+                    continue
+                try:
+                    candidate = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if (candidate.get('preflight_status') == 'passed'
+                        and candidate.get('profile') == PROFILE
+                        and candidate.get('dataset') == dataset
+                        and candidate.get('model') == model
+                        and candidate.get('input_manifest_sha256') == manifest_hashes[(dataset, model)]
+                        and candidate.get('input_shape') == expected_shape(model)
+                        and candidate.get('batch_size') == (8 if model == 'mirepnet' else 16)):
+                    prior_receipt = prior_log
+                    break
+            if prior_receipt:
+                break
+        if prior_receipt:
+            completed.append(task_record(task))
+            log(f'restored verified preflight: {model}/{dataset}; receipt={prior_receipt}')
+            continue
         attempts = 0
         while True:
             gpu = choose_gpu(gpu_snapshot(), set())
@@ -489,7 +495,7 @@ def main() -> int:
             write_status('validating_inputs', list(pending), active)
             manifests, manifest_hashes = validate_inputs()
             log('verified complete all-session source and four model inputs; 0train only is selected for training')
-            run_preflight()
+            run_preflight(manifest_hashes)
             while pending or active:
                 for item in list(active):
                     code = item['proc'].poll()

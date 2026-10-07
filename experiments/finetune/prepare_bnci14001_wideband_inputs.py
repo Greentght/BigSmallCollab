@@ -17,11 +17,13 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
+from experiments.storage import (DATA_CACHE_ROOT, RESULTS_ROOT,
+                                 require_external_output, resolve_local_file)
 
 from experiments.finetune.export_bnci14001_all_sessions import entity, sha256, write_json
 from experiments.finetune import prepare_loso_alignment_inputs as reference
 
-SOURCE = ROOT / 'data_cache/loso_source_v3/BNCI2014001'
+SOURCE = DATA_CACHE_ROOT / 'loso_source_v3/BNCI2014001'
 PROFILE = 'wideband_npy_v3'
 VARIANT = 'all_sessions_source_train_session'
 DATASETS = ('BNCI2014001', 'BNCI2014001-4')
@@ -104,7 +106,7 @@ def prepare(model: str, dataset: str, x_source, source_trials: pd.DataFrame,
         raise RuntimeError('Unexpected class IDs')
     subjects = trials['subject'].to_numpy(dtype=np.int64) - 1
     cfg = recipe(model, spec)
-    output = reference.INPUT_ROOT / PROFILE / dataset / model / VARIANT
+    output = require_external_output(reference.INPUT_ROOT / PROFILE / dataset / model / VARIANT)
     source_sha = sha256(SOURCE / 'manifest.json')
     existing = output / 'manifest.json'
     if existing.exists():

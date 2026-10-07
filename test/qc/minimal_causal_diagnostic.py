@@ -41,8 +41,10 @@ import yaml
 
 
 ROOT = Path(__file__).resolve().parents[2]
+
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+from experiments.storage import external_path, require_external_output, resolve_local_file
 
 import config  # noqa: E402
 import data  # noqa: E402
@@ -133,6 +135,7 @@ def assert_condition_uids(full_uid: np.ndarray, clean_uid: np.ndarray,
 
 
 def _sha256(path: Path) -> str:
+    path = resolve_local_file(path)
     digest = hashlib.sha256()
     with path.open("rb") as handle:
         for block in iter(lambda: handle.read(1024 * 1024), b""):
@@ -166,6 +169,7 @@ def _to_builtin(value):
 
 
 def _write_json(path: Path, payload: Mapping) -> None:
+    path = require_external_output(path)
     path.write_text(json.dumps(_to_builtin(payload), indent=2, ensure_ascii=False) + "\n")
 
 
@@ -186,6 +190,7 @@ def _runtime_config(X_train: np.ndarray) -> dict:
 
 
 def _load_split_and_teacher(artifact_root: Path, excluded_uids: list[tuple[int, int]]):
+    artifact_root = external_path(artifact_root)
     X_train, y_train, X_test, y_test, uid_train, uid_test = data.subject_split(
         DATASET, SUBJECT, val_split=VAL_SPLIT, seed=SEED, return_uid=True)
     X_train = np.asarray(X_train, dtype=np.float32)
@@ -378,13 +383,13 @@ def _train_condition(condition: str, X_train: np.ndarray, y_train: np.ndarray,
         "epochs": epochs,
         "final_train_loss": final_history["train_loss"],
         "final_train_accuracy": final_history["train_accuracy"],
-    }, condition_dir / "model.pt")
+    }, require_external_output(condition_dir / "model.pt"))
     with (condition_dir / "train_history.csv").open("w", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=list(history[0]))
         writer.writeheader()
         writer.writerows(history)
     np.savez_compressed(
-        condition_dir / "test_predictions.npz",
+        require_external_output(condition_dir / "test_predictions.npz"),
         sample_uid=np.asarray(teacher["test_uid"], dtype=np.int64),
         y=y_test,
         logits=np.asarray(test_logits, dtype=np.float32),
@@ -415,6 +420,7 @@ def _train_condition(condition: str, X_train: np.ndarray, y_train: np.ndarray,
 
 
 def _write_csv(path: Path, rows: list[Mapping], fieldnames: list[str]) -> None:
+    path = require_external_output(path)
     with path.open("w", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
         writer.writeheader()
@@ -431,6 +437,7 @@ def _condition_result(result: dict, excluded_uids: list[tuple[int, int]]) -> dic
 def _write_report(output_dir: Path, results: list[dict], resolved: Mapping,
                   split_manifest: Mapping, excluded_uids: list[tuple[int, int]],
                   prior_result_path: Path) -> None:
+    output_dir = require_external_output(output_dir)
     def fmt(value, digits=2):
         return f"{float(value):.{digits}f}"
 
@@ -486,8 +493,8 @@ def _write_report(output_dir: Path, results: list[dict], resolved: Mapping,
         "```bash",
         "conda run -n mirepnet python test/qc/minimal_causal_diagnostic.py \\",
         "  --exclude-uid 0 1 --device cpu \\",
-        "  --artifact-root results/artifacts \\",
-        "  --output-dir test/qc/artifacts/qc_v1/test-15001-S1-seed666",
+        "  --artifact-root /data1/llx/BigSmallCollab_results/artifacts \\",
+        "  --output-dir /data1/llx/BigSmallCollab_results/qc_artifacts/qc_v1/test-15001-S1-seed666",
         "```",
         "",
         "smoke test 可加 `--epochs 2 --output-dir /tmp/test-15001-S1-seed666-smoke`；该结果不能代替正式 100 epoch 结果。",
@@ -508,9 +515,9 @@ def parse_args(argv=None):
                         metavar=("SUBJECT", "TRIAL"),
                         help="UID to remove in clean conditions")
     parser.add_argument("--artifact-root", type=Path,
-                        default=ROOT / "results" / "artifacts")
+                        default=Path('/data1/llx/BigSmallCollab_results') / "artifacts")
     parser.add_argument("--output-dir", type=Path,
-                        default=ROOT / "test" / "qc" / "artifacts" / "qc_v1" / "test-15001-S1-seed666")
+                        default=Path('/data1/llx/BigSmallCollab_results/qc_artifacts') / "qc_v1" / "test-15001-S1-seed666")
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--epochs", type=int, default=None,
                         help="only for smoke tests; omit for resolved formal epochs")
@@ -526,8 +533,8 @@ def run(args) -> int:
     if args.device.startswith("cuda") and not torch.cuda.is_available():
         raise RuntimeError(f"requested {args.device}, but CUDA is unavailable")
     excluded_uids = [uid_key(args.exclude_uid)]
-    output_dir = args.output_dir if args.output_dir.is_absolute() else ROOT / args.output_dir
-    artifact_root = args.artifact_root if args.artifact_root.is_absolute() else ROOT / args.artifact_root
+    output_dir = require_external_output(args.output_dir)
+    artifact_root = external_path(args.artifact_root).resolve()
     if output_dir.exists() and any(output_dir.iterdir()) and not args.allow_existing:
         raise FileExistsError(
             f"refusing to overwrite non-empty diagnostic output: {output_dir}; "
@@ -595,20 +602,20 @@ def run(args) -> int:
     teacher_clean = {key: value[clean_mask] for key, value in teacher_full.items()}
     filtered_teacher_path = output_dir / "teacher_kd_clean_train.npz"
     np.savez_compressed(
-        filtered_teacher_path,
+        require_external_output(filtered_teacher_path),
         feats=np.asarray(teacher_clean["feats"], dtype=np.float32),
         logits=np.asarray(teacher_clean["logits"], dtype=np.float32),
         y=np.asarray(teacher_clean["y"], dtype=np.int64),
         sample_uid=np.asarray(clean_uid, dtype=np.int64),
         split_policy=np.asarray("fewshot_stratified_random"),
     )
-    filtered_teacher = np.load(filtered_teacher_path)
+    filtered_teacher = np.load(resolve_local_file(filtered_teacher_path))
     if not np.array_equal(filtered_teacher["sample_uid"], clean_uid):
         raise AssertionError("filtered teacher UID order does not match clean student UID order")
     if not np.array_equal(filtered_teacher["y"], data_pack["y_train"][clean_mask]):
         raise AssertionError("filtered teacher labels do not match clean student labels")
 
-    prior_result_path = ROOT / "results" / "BNCI2015001_fewshot_distill_mirepnet_to_eegnet.csv"
+    prior_result_path = Path('/data1/llx/BigSmallCollab_results') / "BNCI2015001_fewshot_distill_mirepnet_to_eegnet.csv"
     config_payload = {
         "experiment": "minimal_bad_trial_causal_diagnostic",
         "dataset": DATASET,

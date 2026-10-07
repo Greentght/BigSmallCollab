@@ -28,8 +28,10 @@ from sklearn.metrics import balanced_accuracy_score, cohen_kappa_score
 from torch.utils.data import DataLoader, TensorDataset
 
 ROOT = Path(__file__).resolve().parents[2]
+
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+from experiments.storage import external_path, require_external_output, resolve_local_file
 
 import config
 import data
@@ -57,7 +59,7 @@ ZERO_DIFF_EPS_MULTIPLIER = 10.0
 RANDOM_MASKS = 20
 METHOD_VERSION = "mirepnet_signal_qc_v1"
 DEFAULT_OUTPUT = (
-    ROOT / "test" / "qc" / "artifacts" / "qc_v1"
+    Path('/data1/llx/BigSmallCollab_results/qc_artifacts') / "qc_v1"
     / "mirepnet_vs_signal_qc" / DATASET / SUBJECT_NAME / PROTOCOL
 )
 SIGNAL_FEATURES = (
@@ -370,6 +372,7 @@ def _jsonable(value: Any) -> Any:
 
 
 def _write_json(path: Path, payload: Any) -> None:
+    path = require_external_output(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(_jsonable(payload), ensure_ascii=False, indent=2) + "\n")
 
@@ -377,10 +380,12 @@ def _write_json(path: Path, payload: Any) -> None:
 def _write_yaml_once(path: Path, payload: Mapping[str, Any]) -> None:
     # The output directory is protected by --resume.  Rewriting this metadata
     # on an explicit resume keeps score-only then formal runs provenance-correct.
+    path = require_external_output(path)
     path.write_text(yaml.safe_dump(_jsonable(payload), sort_keys=False, allow_unicode=True))
 
 
 def _write_csv(path: Path, rows: list[Mapping[str, Any]], fields: Sequence[str]) -> None:
+    path = require_external_output(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=list(fields), extrasaction="ignore")
@@ -389,6 +394,7 @@ def _write_csv(path: Path, rows: list[Mapping[str, Any]], fields: Sequence[str])
 
 
 def _sha256(path: Path) -> str:
+    path = resolve_local_file(path)
     digest = hashlib.sha256()
     with path.open("rb") as handle:
         for block in iter(lambda: handle.read(1024 * 1024), b""):
@@ -540,6 +546,7 @@ def _manifest(
 
 
 def _write_qc_outputs(output_dir: Path, packs: list[dict[str, Any]]) -> dict[str, Any]:
+    output_dir = require_external_output(output_dir)
     all_rows = [row for pack in packs for row in pack["rows"]]
     fields = [
         "seed", "uid_session", "uid_trial", "label", "is_known_bad",
@@ -630,6 +637,7 @@ def _hash_state_dict(state: Mapping[str, torch.Tensor]) -> str:
 
 
 def _write_log(path: Path, lines: Sequence[str]) -> None:
+    path = require_external_output(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(str(x) for x in lines) + "\n")
 
@@ -733,12 +741,12 @@ def _train_one(
         "removed_uids": [list(x) for x in removed_uids],
         "epochs": epochs, "final_train_loss": final["train_loss"],
         "final_train_accuracy": final["train_accuracy"],
-    }, condition_dir / "checkpoint.pt")
+    }, require_external_output(condition_dir / "checkpoint.pt"))
     _write_csv(condition_dir / "train_history.csv", history,
                ["condition", "seed", "epoch", "train_loss",
                 "train_accuracy", "learning_rate"])
     np.savez_compressed(
-        condition_dir / "test_predictions.npz",
+        require_external_output(condition_dir / "test_predictions.npz"),
         sample_uid=np.asarray(uid_test, np.int64), y=np.asarray(y_test, np.int64),
         logits=np.asarray(test_logits, np.float32), pred=pred,
     )
@@ -867,6 +875,7 @@ def _random_summary(
 def _write_figures(
     output_dir: Path, packs: list[Mapping[str, Any]], results: list[Mapping[str, Any]]
 ) -> str | None:
+    output_dir = require_external_output(output_dir)
     try:
         import matplotlib
         matplotlib.use("Agg")
@@ -936,6 +945,7 @@ def _write_report(
     output_dir: Path, comparisons: Mapping[str, Any], results: list[Mapping[str, Any]],
     summary: Mapping[str, Any],
 ) -> None:
+    output_dir = require_external_output(output_dir)
     def fmt(x: Any, n: int = 2) -> str:
         return "NA" if x is None else f"{float(x):.{n}f}"
     lines = [
@@ -1035,7 +1045,7 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     mode.add_argument("--score-only", action="store_true")
     mode.add_argument("--smoke", action="store_true")
     mode.add_argument("--formal", action="store_true")
-    parser.add_argument("--artifact-root", type=Path, default=ROOT / "results" / "artifacts")
+    parser.add_argument("--artifact-root", type=Path, default=Path('/data1/llx/BigSmallCollab_results') / "artifacts")
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--epochs", type=int, default=None,
@@ -1050,10 +1060,8 @@ def run(args: argparse.Namespace) -> int:
         raise RuntimeError(f"requested {args.device}, but CUDA is unavailable")
     if args.n_random_masks <= 0:
         raise ValueError("n-random-masks must be positive")
-    output_dir = (args.output_dir if args.output_dir.is_absolute()
-                  else ROOT / args.output_dir).resolve()
-    artifact_root = (args.artifact_root if args.artifact_root.is_absolute()
-                     else ROOT / args.artifact_root).resolve()
+    output_dir = require_external_output(args.output_dir)
+    artifact_root = external_path(args.artifact_root).resolve()
     if output_dir.exists() and any(output_dir.iterdir()) and not args.resume:
         raise FileExistsError(f"non-empty output; pass --resume: {output_dir}")
     output_dir.mkdir(parents=True, exist_ok=True)

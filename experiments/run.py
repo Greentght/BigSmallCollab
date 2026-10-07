@@ -182,7 +182,7 @@ def _run(a):
         print('No rows produced (missing teacher artifacts?).'); return
 
     out_csv = os.path.join(os.environ.get('REPRO_OUT',
-                                          os.path.join(_ROOT, 'results')),
+                                          os.path.join(_ROOT, '/data1/llx/BigSmallCollab_results')),
                            f"{cfg['name']}.csv")
     os.makedirs(os.path.dirname(out_csv), exist_ok=True)
     df = pd.DataFrame(rows)

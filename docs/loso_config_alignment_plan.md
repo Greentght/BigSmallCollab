@@ -126,4 +126,4 @@ CBraMod 对齐 12 层、d_model=200、native channels、flatten 读出，全参�
 
 最终验收需有完整单元数量、源码/配置/输入/权重指纹、全部 epochs、一次 final 测试、预测结果、无被试交叉、准确率/BCA/Kappa、逐被试和三 seed 统计。Excel 使用显式 dataset_id 映射填列，分别注明 recipe、时长、padding、参数来源和 seed；通过条件不包含“达到论文 Accuracy”。
 
-输出目录建议为 `results/reproductions/loso_config_alignment_v2/{profile}/{dataset}/{model}/subject_XX/seed_Y`；规划缓存放 `data_cache/eegfm_alignment_v2/`。旧实验不写入新协议目录。当前 YAML 的 `execution_enabled=false`，尚无本规格的执行入口。
+输出目录为 `/data1/llx/BigSmallCollab_results/reproductions/loso_config_alignment_v2/{profile}/{dataset}/{model}/seed_Y/subject_XX`；缓存放 `/data1/llx/data_cache/eegfm_alignment_v2/`。来源与模型输入的处理记录随缓存保存，旧实验不写入新协议目录。执行入口为 `experiments/finetune/run_loso_config_alignment.py`；目录于 2026-10-07 按用户要求外置，数据和模型不再保存到项目工作树。

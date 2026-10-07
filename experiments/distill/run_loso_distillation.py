@@ -28,6 +28,7 @@ import yaml
 from models import get_adapter
 from experiments.finetune import run_loso_five_datasets as protocol
 from experiments.distill import loso_teacher_cache as teachers
+from experiments.storage import external_path, require_external_output, resolve_local_file
 
 PLAN_PATH = protocol.ROOT / 'configs/reproductions/loso_distillation_v1.yaml'
 STAGES = ('logits_kd', 'kd_feature', 'warmup10_kd', 'warmup10_kd_feature')
@@ -55,7 +56,7 @@ def _args():
 
 
 def _plan(path):
-    plan = yaml.safe_load(path.read_text())
+    plan = yaml.safe_load(resolve_local_file(path).read_text())
     if list(plan['stages']) != list(STAGES):
         raise ValueError(f'Expected stage order {STAGES}')
     if plan['loss']['feature_transform'] != 'native_penultimate':
@@ -74,10 +75,11 @@ def _plan(path):
 
 
 def _root(plan):
-    return (protocol.ROOT / plan['output_root']).resolve()
+    return require_external_output(plan['output_root'])
 
 
 def _json_write(path, value):
+    path = require_external_output(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + '.tmp')
     tmp.write_text(json.dumps(value, sort_keys=True, indent=2, allow_nan=True) + '\n')
@@ -85,8 +87,9 @@ def _json_write(path, value):
 
 
 def _torch_write(path, value):
+    path = require_external_output(path)
     tmp = path.with_suffix(path.suffix + '.tmp')
-    torch.save(value, tmp)
+    torch.save(value, require_external_output(tmp))
     os.replace(tmp, path)
 
 
@@ -173,7 +176,7 @@ def _baseline(dataset, student, fold, seed, uid_train, uid_test, y_test, classes
     names = ('model.pt', 'manifest.json', 'result.npz', 'train_history.csv')
     if not all((cell / name).is_file() for name in names):
         raise FileNotFoundError(f'Complete scratch baseline required: {cell}')
-    manifest = json.loads((cell / 'manifest.json').read_text())
+    manifest = json.loads((resolve_local_file(cell / 'manifest.json')).read_text())
     if manifest['test_subject'] != fold + 1 or manifest['seed'] != seed:
         raise RuntimeError(f'Baseline fold/seed mismatch: {cell}')
     if manifest.get('label_values') != classes:
@@ -188,7 +191,7 @@ def _baseline(dataset, student, fold, seed, uid_train, uid_test, y_test, classes
         history = list(csv.DictReader(f))
     if len(history) != 100 or int(history[-1]['epoch']) != 100:
         raise RuntimeError(f'Baseline history incomplete: {cell}')
-    with np.load(cell / 'result.npz', allow_pickle=False) as saved:
+    with np.load(resolve_local_file(cell / 'result.npz'), allow_pickle=False) as saved:
         if (not np.array_equal(saved['sample_uid'], uid_test)
                 or not np.array_equal(saved['y'], y_test)):
             raise RuntimeError(f'Baseline test artifact mismatch: {cell}')
@@ -206,14 +209,14 @@ def _completed(cell, fingerprint, uid_test, labels, feature_enabled):
         paths.append(cell / 'projector.pt')
     if not all(p.is_file() for p in paths):
         return False
-    manifest = json.loads((cell / 'manifest.json').read_text())
+    manifest = json.loads((resolve_local_file(cell / 'manifest.json')).read_text())
     if manifest.get('run_fingerprint') != fingerprint:
         raise RuntimeError(f'Completed cell belongs to another configuration: {cell}')
     with (cell / 'train_history.csv').open() as f:
         history = list(csv.DictReader(f))
     if len(history) != 100 or int(history[-1]['epoch']) != 100:
         raise RuntimeError(f'Completed cell has invalid epoch history: {cell}')
-    with np.load(cell / 'result.npz', allow_pickle=False) as saved:
+    with np.load(resolve_local_file(cell / 'result.npz'), allow_pickle=False) as saved:
         if (not np.array_equal(saved['sample_uid'], uid_test)
                 or not np.array_equal(saved['y'], labels)):
             raise RuntimeError(f'Completed cell has different test trials: {cell}')
@@ -238,7 +241,7 @@ def _fit(adapter, model, projection, x_tensor, labels, targets, cfg, stage,
     history, epoch_start, elapsed_before = [], 0, 0.0
     resume_path = cell / 'resume.pt'
     if resume_path.is_file():
-        saved = torch.load(resume_path, map_location='cpu')
+        saved = torch.load(resolve_local_file(resume_path), map_location='cpu')
         if (saved['run_fingerprint'] != fingerprint
                 or saved['initial_state_sha256'] != initial_hash):
             raise RuntimeError(f'Resume state/configuration mismatch: {cell}')
@@ -476,13 +479,13 @@ def _scan(plan, spec):
                                 ts = progress.stat().st_mtime
                                 if latest is None or ts > latest['mtime']:
                                     latest = {'path': str(progress), 'mtime': ts,
-                                              'details': json.loads(progress.read_text())}
+                                              'details': json.loads(resolve_local_file(progress).read_text())}
                             needed = [rp, cp, mp, hp]
                             if plan['stages'][stage]['lam_feat'] > 0:
                                 needed.append(cell / 'projector.pt')
                             if not all(p.is_file() for p in needed):
                                 continue
-                            manifest = json.loads(mp.read_text())
+                            manifest = json.loads(resolve_local_file(mp).read_text())
                             if (manifest.get('protocol') != plan['protocol_id']
                                     or manifest.get('stage') != stage
                                     or manifest.get('dataset') != ds
@@ -564,9 +567,9 @@ def _smoke(args, plan, spec, device):
         mask = subs != fold
         targets, _ = teachers.load_cache(args.teacher, ds_name, fold, seed, uid[mask], y[mask])
         for student in args.students or plan['students']:
-            cfg = json.loads((protocol.RESULTS_ROOT / ds_name / student
+            cfg = json.loads((resolve_local_file(protocol.RESULTS_ROOT / ds_name / student
                              / 'scratch_supervised_loso_v1' / f'subject_{fold+1:02d}'
-                             / f'seed_{seed}' / 'manifest.json').read_text())['model_config']
+                             / f'seed_{seed}' / 'manifest.json')).read_text())['model_config']
             for stage_name, stage in plan['stages'].items():
                 protocol._set_seed(seed)
                 adapter = get_adapter(student, device=device, **cfg)

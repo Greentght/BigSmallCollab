@@ -36,6 +36,7 @@ from collab.seed import set_seed
 from eval import metrics
 from models import get_adapter
 from experiments.distill import run_distill as legacy
+from experiments.storage import external_path, require_external_output, resolve_local_file
 
 _spec = importlib.util.spec_from_file_location(
     "_prototype_margin_reliability", ROOT / "test/qc/prototype_margin_reliability.py")
@@ -59,10 +60,10 @@ WARMUP_EPOCHS = 10
 PROTO_EPS = 1e-12
 INIT_ARGS = SimpleNamespace(epochs=None, lr=None, weight_decay=None, batch_size=None)
 DEFAULT_CONFIG = ROOT / "configs/experiments/distill_kd_mi_proto_mask_warmup10.yaml"
-DEFAULT_OUTPUT = ROOT / "results/distill/kd_mi_proto_mask_warmup10"
-MAIN_CSV = ROOT / "results/distill/kd_mi_proto_mask_warmup10_pairs.csv"
-OLD_MI_CSV = ROOT / "results/distill/distill_mi.csv"
-OLD_MASK_ROOT = ROOT / "results/distill/kd_mi_teacher_correct_mask_pilot"
+DEFAULT_OUTPUT = Path("/data1/llx/BigSmallCollab_results/distill/kd_mi_proto_mask_warmup10")
+MAIN_CSV = Path("/data1/llx/BigSmallCollab_results/distill/kd_mi_proto_mask_warmup10_pairs.csv")
+OLD_MI_CSV = Path("/data1/llx/BigSmallCollab_results/distill/distill_mi.csv")
+OLD_MASK_ROOT = Path("/data1/llx/BigSmallCollab_results/distill/kd_mi_teacher_correct_mask_pilot")
 PAIR_TEACHER = "mirepnet"
 PAIR_STUDENT = "ifnet"
 TRAIN_LR = .001
@@ -84,6 +85,7 @@ def _json(x):
 
 
 def _atomic_bytes(path, payload):
+    path = require_external_output(path)
     path = Path(path); path.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile(dir=path.parent, prefix=f".{path.name}.",
                                      suffix=".tmp", delete=False) as f:
@@ -111,6 +113,7 @@ def _atomic_csv(path, rows, fields=None):
 
 
 def _read_csv(path):
+    path = external_path(path)
     path = Path(path)
     if not path.exists(): return []
     with path.open(newline="") as f: return list(csv.DictReader(f))
@@ -209,7 +212,7 @@ def _capture_student_state(student_cfg, num_classes):
     return state
 
 def _artifact_path(cfg, dataset, subject_index):
-    root = Path(cfg.get("artifact_root", "results/artifacts"))
+    root = external_path(cfg.get("artifact_root", "/data1/llx/BigSmallCollab_results/artifacts"))
     if not root.is_absolute(): root = ROOT / root
     path = root / dataset / PAIR_TEACHER / f"{subject_index}_{SEED}_train.npz"
     _proto.validate_train_path(path)
@@ -345,17 +348,19 @@ def mask_from_predictions(teacher_pred, student_pred, reliable):
 
 
 def _atomic_torch(path, payload):
+    path = require_external_output(path)
     path = Path(path); path.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp", delete=False) as f:
         tmp = Path(f.name)
-    torch.save(payload, tmp); os.replace(tmp, path)
+    torch.save(payload, require_external_output(tmp)); os.replace(tmp, path)
 
 
 def _atomic_npz(path, **arrays):
+    path = require_external_output(path)
     path = Path(path); path.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile(dir=path.parent, prefix=f".{path.name}.", suffix=".npz", delete=False) as f:
         tmp = Path(f.name)
-    np.savez(tmp, **arrays); os.replace(tmp, path)
+    np.savez(require_external_output(tmp), **arrays); os.replace(tmp, path)
 
 
 def _run_key(unit, condition):
@@ -586,21 +591,21 @@ def _validate_control_row(row, unit, name):
     else:
         check['condition']=row.get('condition')=='KD_MI_ALL'; check['epochs']=str(row.get('epochs_completed','100')) in ('100','100.0')
         try:
-            hist=json.loads(Path(row['history_path']).read_text()); check['history_unmasked']=len(hist)==100 and all(int(x.get('effective_ce_sample_count',-1))==len(unit['ytr']) and int(x.get('effective_kd_sample_count',-1))==len(unit['ytr']) and int(x.get('effective_mi_sample_count',-1))==len(unit['ytr']) and int(x.get('all_masked_batch_count',-1))==0 for x in hist)
+            hist=json.loads(resolve_local_file(row['history_path']).read_text()); check['history_unmasked']=len(hist)==100 and all(int(x.get('effective_ce_sample_count',-1))==len(unit['ytr']) and int(x.get('effective_kd_sample_count',-1))==len(unit['ytr']) and int(x.get('effective_mi_sample_count',-1))==len(unit['ytr']) and int(x.get('all_masked_batch_count',-1))==0 for x in hist)
         except Exception: check['history_unmasked']=False
-    for key in ('checkpoint_path','history_path','prediction_path'): check[key]=bool(row.get(key)) and Path(row[key]).exists()
+    for key in ('checkpoint_path','history_path','prediction_path'): check[key]=bool(row.get(key)) and external_path(row[key]).exists()
     if check.get('checkpoint_path'):
         try:
-            p=torch.load(row['checkpoint_path'],map_location='cpu',weights_only=True); check['checkpoint_complete']=bool(p.get('complete')) and int(p.get('epochs',-1))==100
+            p=torch.load(resolve_local_file(row['checkpoint_path']),map_location='cpu',weights_only=True); check['checkpoint_complete']=bool(p.get('complete')) and int(p.get('epochs',-1))==100
         except Exception: check['checkpoint_complete']=False
     else: check['checkpoint_complete']=False
     if check.get('history_path'):
-        try: check['history_100']=len(json.loads(Path(row['history_path']).read_text()))==100
+        try: check['history_100']=len(json.loads(resolve_local_file(row['history_path']).read_text()))==100
         except Exception: check['history_100']=False
     else: check['history_100']=False
     if check.get('prediction_path'):
         try:
-            with np.load(row['prediction_path'],allow_pickle=False) as p: check['prediction_complete']=p['test_preds'].shape[0]==len(unit['yte'])
+            with np.load(resolve_local_file(row['prediction_path']),allow_pickle=False) as p: check['prediction_complete']=p['test_preds'].shape[0]==len(unit['yte'])
         except Exception: check['prediction_complete']=False
     else: check['prediction_complete']=False
     return check,[k for k,v in check.items() if not v]
@@ -631,9 +636,9 @@ def _new_valid(row, unit):
         if row.get(key)!=value:return False
     if not all(_finite(row.get(k)) for k in ('test_accuracy','test_balanced_accuracy','test_kappa')):return False
     try:
-        hist=json.loads(Path(row['history_path']).read_text()); p=torch.load(row['checkpoint_path'],map_location='cpu',weights_only=True)
+        hist=json.loads(resolve_local_file(row['history_path']).read_text()); p=torch.load(resolve_local_file(row['checkpoint_path']),map_location='cpu',weights_only=True)
         if len(hist)!=100 or not p.get('complete') or int(p.get('epochs',-1))!=100:return False
-        with np.load(row['prediction_path'],allow_pickle=False) as a:
+        with np.load(resolve_local_file(row['prediction_path']),allow_pickle=False) as a:
             if a['test_preds'].shape[0]!=len(unit['yte']):return False
         return Path(row['mask_trace_path']).exists() and _sha_file(Path(row['mask_trace_path']))==row.get('mask_trace_sha256')
     except Exception:return False
@@ -715,11 +720,11 @@ def _report(output_root, units, inventory, reused, new_rows, datasets, compariso
 def main(argv=None):
     ap=argparse.ArgumentParser(); ap.add_argument('--config',default=str(DEFAULT_CONFIG)); ap.add_argument('--gpu',type=int,default=0); ap.add_argument('--resume',action='store_true'); ap.add_argument('--preflight-only',action='store_true',help='write inventory/control validation without training'); args=ap.parse_args(argv)
     global PAIR_TEACHER, PAIR_STUDENT, MAIN_CSV
-    config_path=Path(args.config); config_path=ROOT/config_path if not config_path.is_absolute() else config_path; cfg=yaml.safe_load(config_path.read_text()); _validate_config(cfg)
+    config_path=Path(args.config); config_path=ROOT/config_path if not config_path.is_absolute() else config_path; cfg=yaml.safe_load(resolve_local_file(config_path).read_text()); _validate_config(cfg)
     PAIR_TEACHER=str(cfg['teacher']).lower(); PAIR_STUDENT=str(cfg['student']).lower()
-    main_csv_cfg=cfg.get('main_csv', str(ROOT / 'results/distill' / f'kd_mi_proto_mask_warmup10_{PAIR_TEACHER}__{PAIR_STUDENT}.csv'))
-    MAIN_CSV=Path(main_csv_cfg); MAIN_CSV=ROOT/MAIN_CSV if not MAIN_CSV.is_absolute() else MAIN_CSV
-    output_root=Path(cfg.get('output_dir',DEFAULT_OUTPUT)); output_root=ROOT/output_root if not output_root.is_absolute() else output_root
+    main_csv_cfg=cfg.get('main_csv', str(Path('/data1/llx/BigSmallCollab_results/distill') / f'kd_mi_proto_mask_warmup10_{PAIR_TEACHER}__{PAIR_STUDENT}.csv'))
+    MAIN_CSV=require_external_output(main_csv_cfg)
+    output_root=require_external_output(cfg.get('output_dir',DEFAULT_OUTPUT))
     if output_root.exists() and any(output_root.iterdir()) and not args.resume: raise RuntimeError(f'formal output is non-empty; use --resume: {output_root}')
     output_root.mkdir(parents=True,exist_ok=True);
     if MAIN_CSV.exists() and not args.resume and MAIN_CSV.stat().st_size > 0: raise RuntimeError(f'new main CSV is non-empty; use --resume: {MAIN_CSV}')

@@ -68,6 +68,7 @@ from models.codebrain.adapter import (
     load_codebrain_backbone,
     sha256_file,
 )
+from experiments.storage import external_path, require_external_output, resolve_local_file
 
 
 DATASETS = ('BNCI2014001', 'BNCI2014004', 'BNCI2015001', 'AlexMI')
@@ -95,7 +96,7 @@ SESSIONS = {
 SPLIT_POLICY = split_utils.FEWSHOT_SPLIT_POLICY
 REFERENCE_MODELS = ('mirepnet', 'cbramod')
 ARTIFACT_MODEL = {'pretrained': 'codebrain', 'random': 'codebrain_random'}
-RESULTS_ROOT = Path(__file__).resolve().parents[2] / 'results' / 'codebrain'
+RESULTS_ROOT = Path('/data1/llx/BigSmallCollab_results') / 'codebrain'
 MODEL_YAML = Path(__file__).resolve().parents[2] / 'configs' / 'models' / 'codebrain.yaml'
 DATASET_YAMLS = {
     dataset: Path(__file__).resolve().parents[2] / 'configs' / 'datasets' / f'{dataset}.yaml'
@@ -127,6 +128,7 @@ def _json_default(value: Any):
 
 
 def _write_json(path: Path, obj: Any) -> None:
+    path = require_external_output(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + '.tmp')
     with tmp.open('w') as stream:
@@ -452,7 +454,7 @@ def _check_snapshot(path: Path, expected_text: str, expected_sha256: str) -> Non
     if not path.is_file():
         raise RuntimeError(f'Run-id snapshot is missing: {path}')
     actual_sha = hashlib.sha256(path.read_bytes()).hexdigest()
-    if actual_sha != expected_sha256 or path.read_text(encoding='utf-8') != expected_text:
+    if actual_sha != expected_sha256 or resolve_local_file(path).read_text(encoding='utf-8') != expected_text:
         raise RuntimeError(f'Run-id snapshot hash collision: {path}')
 
 
@@ -469,7 +471,7 @@ def _check_run_id_collision(context: dict) -> None:
                 f'matching run manifest: {root}; choose a new --run-id'
             )
         return
-    prior = json.loads(manifest_path.read_text(encoding='utf-8'))
+    prior = json.loads(resolve_local_file(manifest_path).read_text(encoding='utf-8'))
     expected = context['manifest']['run_signature_sha256']
     actual = prior.get('run_signature_sha256')
     if actual != expected:
@@ -537,7 +539,7 @@ def _persist_run_context(context: dict) -> None:
     }
     resolved_path = root / 'config_resolved_all.json'
     if resolved_path.exists():
-        current = json.loads(resolved_path.read_text(encoding='utf-8'))
+        current = json.loads(resolve_local_file(resolved_path).read_text(encoding='utf-8'))
         if current != resolved_snapshot:
             raise RuntimeError(f'Resolved config collision under run-id: {resolved_path}')
     else:
@@ -1202,18 +1204,19 @@ def _optimizer_group_lrs(optimizer: torch.optim.Optimizer) -> list[dict]:
 
 def _save_final_checkpoint(path: Path, model: nn.Module, cfg: dict,
                            load_report: dict) -> None:
+    path = require_external_output(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     state = {key: value.detach().cpu() for key, value in model.state_dict().items()}
     torch.save({
         'model_state_dict': state,
         'config': cfg,
         'weight_load_report': load_report,
-    }, path)
+    }, require_external_output(path))
 
 
 def _hub_artifact_matches(path: Path, y: np.ndarray, uid: np.ndarray) -> bool:
     try:
-        with np.load(path, allow_pickle=False) as stored:
+        with np.load(resolve_local_file(path), allow_pickle=False) as stored:
             return (
                 {'logits', 'feats', 'y', 'sample_uid', 'split_policy'} <= set(stored.files)
                 and np.array_equal(stored['y'], y)
@@ -1228,7 +1231,7 @@ def _hub_artifact_matches(path: Path, y: np.ndarray, uid: np.ndarray) -> bool:
 
 def _prediction_matches(path: Path, y: np.ndarray, uid: np.ndarray) -> bool:
     try:
-        with np.load(path, allow_pickle=False) as stored:
+        with np.load(resolve_local_file(path), allow_pickle=False) as stored:
             return (
                 {'logits', 'y_true', 'y_pred', 'sample_uid'} <= set(stored.files)
                 and np.array_equal(stored['y_true'], y)
@@ -1287,7 +1290,7 @@ def _run_one(context: dict, dataset: str, subject: int, seed: int, init_mode: st
     history_path = run_dir / 'history.jsonl'
     cfg_path = run_dir / 'config_resolved.json'
     if cfg_path.is_file():
-        previous_cfg = json.loads(cfg_path.read_text())
+        previous_cfg = json.loads(resolve_local_file(cfg_path).read_text())
         if previous_cfg.get('run_id') != context['run_id']:
             raise RuntimeError(f'Run-id mismatch inside output directory: {cfg_path}')
         if previous_cfg.get('recipe_sha256') != _run_recipe(context, dataset)['recipe_sha256']:
@@ -1301,10 +1304,10 @@ def _run_one(context: dict, dataset: str, subject: int, seed: int, init_mode: st
                 f'{run_dir}; choose a new --run-id'
             )
     if formal and metrics_path.is_file() and checkpoint_path.is_file():
-        prior = json.loads(metrics_path.read_text())
+        prior = json.loads(resolve_local_file(metrics_path).read_text())
         cfg_on_disk = None
         if cfg_path.is_file():
-            cfg_on_disk = json.loads(cfg_path.read_text())
+            cfg_on_disk = json.loads(resolve_local_file(cfg_path).read_text())
         required_files = (
             cfg_path,
             run_dir / 'split_manifest.json',
@@ -1438,7 +1441,7 @@ def _run_one(context: dict, dataset: str, subject: int, seed: int, init_mode: st
     test_score = _score(test_y, test_logits)
     predictions_path = run_dir / 'test_predictions.npz'
     np.savez_compressed(
-        predictions_path,
+        require_external_output(predictions_path),
         logits=test_logits.astype(np.float32),
         y_true=test_y,
         y_pred=test_score['predicted_labels'],
@@ -1446,7 +1449,7 @@ def _run_one(context: dict, dataset: str, subject: int, seed: int, init_mode: st
     )
     train_predictions_path = run_dir / 'train_predictions.npz'
     np.savez_compressed(
-        train_predictions_path,
+        require_external_output(train_predictions_path),
         logits=train_logits.astype(np.float32),
         y_true=train_y,
         y_pred=train_logits.argmax(axis=1).astype(np.int64),
@@ -1685,7 +1688,7 @@ def _aggregate(context: dict, datasets: list[str], seeds: list[int],
                 metrics_path = run_dir / 'metrics.json'
                 if not metrics_path.is_file():
                     raise FileNotFoundError(f'Missing CodeBrain result: {metrics_path}')
-                run_metrics = json.loads(metrics_path.read_text())
+                run_metrics = json.loads(resolve_local_file(metrics_path).read_text())
                 if not run_metrics.get('formal_result'):
                     raise ValueError(f'Not a formal run: {metrics_path}')
                 target = artifacts.load(

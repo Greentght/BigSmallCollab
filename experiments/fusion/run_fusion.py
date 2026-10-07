@@ -255,7 +255,7 @@ def main(argv=None):
     device = (f'cuda:{args.gpu}' if args.gpu is not None and torch.cuda.is_available()
               else 'cpu')
     out_csv = args.out_csv or os.path.join(
-        'results',
+        '/data1/llx/BigSmallCollab_results',
         f'{args.dataset}_{protocol}_fusion_{args.big}_{args.small}.csv')
 
     print(

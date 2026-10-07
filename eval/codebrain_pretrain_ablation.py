@@ -3,7 +3,7 @@
 
 The subject is the statistical unit. Each pair is admitted only when labels,
 sample UIDs, and split policy match exactly. Reports are written to
-``results/codebrain/pretrain_ablation_seed666`` by default.
+``/data1/llx/BigSmallCollab_results/codebrain/pretrain_ablation_seed666`` by default.
 """
 
 from __future__ import annotations
@@ -12,6 +12,7 @@ import argparse
 import csv
 import json
 import math
+import sys
 import zlib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -21,8 +22,12 @@ import numpy as np
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_ARTIFACT_ROOT = PROJECT_ROOT / "results" / "artifacts"
-DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "results" / "codebrain" / "pretrain_ablation_seed666"
+sys.path.insert(0, str(PROJECT_ROOT))
+from experiments.storage import (RESULTS_ROOT, external_path,
+                                 require_external_output, resolve_local_file)
+
+DEFAULT_ARTIFACT_ROOT = RESULTS_ROOT / "artifacts"
+DEFAULT_OUTPUT_DIR = RESULTS_ROOT / "codebrain" / "pretrain_ablation_seed666"
 DATASET_SUBJECTS = {
     "BNCI2014001": 9,
     "BNCI2014004": 9,
@@ -175,12 +180,13 @@ class Artifact:
 
 def _load_artifact(dataset: str, subject0: int, seed: int, model: str,
                    path: Path) -> Artifact:
+    path = external_path(path)
     result = Artifact(dataset, subject0, seed, model, path)
     if not path.is_file():
         return result
     result.exists = True
     try:
-        with np.load(path, allow_pickle=False) as data:
+        with np.load(resolve_local_file(path), allow_pickle=False) as data:
             fields = set(data.files)
             required = {"logits", "y", "sample_uid", "split_policy"}
             missing = sorted(required - fields)
@@ -413,6 +419,7 @@ def _csv_value(value: Any) -> Any:
 
 
 def _write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
+    path = require_external_output(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     fields: list[str] = []
     for row in rows:
@@ -473,6 +480,8 @@ def _markdown(summary_rows: list[dict[str, Any]], seed: int, output_dir: Path) -
 
 
 def build_report(artifact_root: Path, output_dir: Path, seed: int) -> dict[str, Any]:
+    artifact_root = external_path(artifact_root).resolve()
+    output_dir = require_external_output(output_dir)
     artifacts: list[Artifact] = []
     pairs: list[dict[str, Any]] = []
     summaries: list[dict[str, Any]] = []

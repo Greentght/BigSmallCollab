@@ -5,6 +5,7 @@ import json
 from collections import defaultdict
 from pathlib import Path
 import numpy as np
+from experiments.storage import external_path, require_external_output, resolve_local_file
 
 ROOT = Path(__file__).resolve().parents[2]
 SEEDS = (666, 667, 668)
@@ -26,7 +27,7 @@ SOURCES = {
     'BNCI2015001': ('BNCI2015001',),
     'AlexMI': ('AlexMI',),
 }
-OUT = ROOT / 'results/distill/warmup_mi_combo_three_seed'
+OUT = Path('/data1/llx/BigSmallCollab_results/distill/warmup_mi_combo_three_seed')
 OUT.mkdir(parents=True, exist_ok=True)
 
 
@@ -50,12 +51,12 @@ def write_csv(path, rows):
 
 def seed_root(seed):
     if seed == 666:
-        return ROOT / 'results/distill/seed666_three_ablation'
-    return ROOT / f'results/distill/three_seed_ablation_seed{seed}'
+        return Path('/data1/llx/BigSmallCollab_results/distill/seed666_three_ablation')
+    return ROOT / f'/data1/llx/BigSmallCollab_results/distill/three_seed_ablation_seed{seed}'
 
 
 def combo_root(seed):
-    return ROOT / f'results/distill/warmup_mi_combo_seed{seed}'
+    return ROOT / f'/data1/llx/BigSmallCollab_results/distill/warmup_mi_combo_seed{seed}'
 
 
 # Validate each run and index baseline/combination results by the matched unit.
@@ -74,7 +75,7 @@ for seed in SEEDS:
                for r in base_rows)
     base_by = {(r['dataset'], int(r['subject_index']), r['condition']): r for r in base_rows}
     assert len(base_by) == 235
-    prov = json.loads((combo_root(seed) / 'execution_provenance.json').read_text())
+    prov = json.loads((resolve_local_file(combo_root(seed) / 'execution_provenance.json')).read_text())
     assert prov['status'] == 'complete' and prov['new_runs'] == 47, (seed, prov)
     for ds in TASKS:
         for subject in range(SUBJECTS[ds]):

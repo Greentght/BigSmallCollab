@@ -6,7 +6,7 @@ MOABB 1.2.0 的 `0train`；新缓存中同时保留 `1test`。
 
 ## 新源缓存
 
-目录：`data_cache/loso_source_v3/BNCI2014001/`。
+目录：`/data1/llx/data_cache/loso_source_v3/BNCI2014001/`。
 
 - `X.npy`：真实 float64 NPY，形状 `(5184, 22, 1001)`，250 Hz，单位 µV。
 - 源信号处理：连续 MOABB Raw 上 0.1–75 Hz IIR 滤波，再按事件提取 epoch。
@@ -27,7 +27,7 @@ MOABB 1.2.0 的 `0train`；新缓存中同时保留 `1test`。
 ## 模型输入与划分
 
 生成入口为 `experiments/finetune/prepare_bnci14001_wideband_inputs.py`。
-输入路径为 `data_cache/eegfm_alignment_v2/model_inputs/wideband_npy_v3/`，
+输入路径为 `/data1/llx/data_cache/eegfm_alignment_v2/model_inputs/wideband_npy_v3/`，
 与旧输入缓存隔离；每份输入从新的全场次源 NPY 读取并记录其哈希。
 
 | 任务 | 所选 trial 数 | 每折训练 | 每折测试 |
@@ -73,9 +73,23 @@ seeds 为 0、1、2；四个模型/任务组合 × 9 折 × 3 seeds，共 108 �
 四个组合分别进行独立预检，再开始正式 seed worker。断点检查输入 manifest、
 配置和预训练权重哈希。状态记录 PID、GPU、已完成折数和失败日志。
 
-- 状态：`results/reproductions/loso_source_v3/execution_logs/wideband_14001_loso_status.json`
-- 结果：`results/reproductions/loso_config_alignment_v2/wideband_npy_v3/`
+- 状态：`/data1/llx/BigSmallCollab_results/reproductions/loso_source_v3/execution_logs/wideband_14001_loso_status.json`
+- 结果：`/data1/llx/BigSmallCollab_results/reproductions/loso_config_alignment_v2/wideband_npy_v3/`
 - 每折保存固定轮数历史、最终权重、预测和最终指标。
 - 最终汇总先对每 seed 的九被试等权平均，再报告三 seed 均值和样本标准差。
 - CBraMod 四分类与近期窄带 NPY 和宽带 MOABB 对照比较实际 UID、标签、
   初始化及 batch 顺序；其他组合单独报告，避免混用不同种子的旧结果。
+
+## 外置存储
+
+按用户要求，数据缓存和模型产物统一保存到 `/data1/llx`。项目中只保留代码、
+配置及说明。共享路径定义在 `experiments/storage.py`，同时映射历史 manifest
+中的旧路径；历史 manifest 保持原字节内容，以保留实验输入身份和哈希。
+
+- 数据缓存：`/data1/llx/data_cache/`。
+- 结果、checkpoint 与预测：`/data1/llx/BigSmallCollab_results/`。
+- 原 `weights/`：`/data1/llx/BigSmallCollab_weights/`。
+- Git LFS 实体：`/data1/llx/BigSmallCollab_git_lfs/`。
+- 迁移校验记录：`/data1/llx/storage_migration_20261007.json`。
+
+存储路径切换不改变数据值、session、类别、模型超参数或实验随机种子。

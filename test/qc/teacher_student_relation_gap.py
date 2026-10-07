@@ -11,7 +11,7 @@ pool is constructed.
 
 Examples
 --------
-Analysis (the default output is under test/qc/artifacts/relation_gap/...):
+Analysis (the default output is under /data1/llx/BigSmallCollab_results/qc_artifacts/relation_gap/...):
 
     python test/qc/teacher_student_relation_gap.py analyze
 
@@ -43,8 +43,10 @@ import numpy as np
 
 
 ROOT = Path(__file__).resolve().parents[2]
+
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+from experiments.storage import external_path, require_external_output, resolve_local_file
 
 DEFAULT_DATASET = "BNCI2015001"
 DEFAULT_SUBJECT = 0  # S1 in the repository's zero-based convention.
@@ -92,6 +94,7 @@ def jsonable(value: Any) -> Any:
 
 
 def write_json(path: Path, value: Any) -> None:
+    path = require_external_output(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as f:
         json.dump(jsonable(value), f, indent=2, ensure_ascii=False, allow_nan=False)
@@ -99,21 +102,23 @@ def write_json(path: Path, value: Any) -> None:
 
 
 def read_json(path: Path) -> Any:
+    path = external_path(path)
     with path.open(encoding="utf-8") as f:
         return json.load(f)
 
 
 def default_output_root(dataset: str, subject: int, protocol: str = "fewshot") -> Path:
-    return (ROOT / "test" / "qc" / "artifacts" / "relation_gap" / "teacher_student_relation_gap"
+    return (Path('/data1/llx/BigSmallCollab_results/qc_artifacts') / "relation_gap" / "teacher_student_relation_gap"
             / dataset / f"S{int(subject) + 1}" / protocol)
 
 
 def artifact_file(root: Path, dataset: str, model: str, subject: int,
                   seed: int, split: str) -> Path:
-    return root / dataset / model / f"{subject}_{seed}_{split}.npz"
+    return external_path(root) / dataset / model / f"{subject}_{seed}_{split}.npz"
 
 
 def sha256_file(path: Path, chunk_size: int = 1 << 20) -> str:
+    path = resolve_local_file(path)
     h = hashlib.sha256()
     with path.open("rb") as f:
         while True:
@@ -143,9 +148,10 @@ def git_provenance() -> dict[str, Any]:
 
 
 def load_npz_artifact(path: Path, expected_n: int = N_EXPECTED_TRIALS) -> dict[str, Any]:
+    path = external_path(path)
     if not path.exists():
         raise FileNotFoundError(f"missing artifact: {path}")
-    with np.load(path, allow_pickle=False) as z:
+    with np.load(resolve_local_file(path), allow_pickle=False) as z:
         required = {"logits", "feats", "y", "sample_uid"}
         missing = sorted(required - set(z.files))
         if missing:
@@ -412,6 +418,7 @@ def compute_sample_rows(seed: int, teacher: Mapping[str, Any],
 
 
 def write_csv(path: Path, rows: Iterable[Mapping[str, Any]], fieldnames: Sequence[str]) -> None:
+    path = require_external_output(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=list(fieldnames), extrasaction="ignore")
@@ -588,11 +595,12 @@ def make_seed_selection(rows: Sequence[Mapping[str, Any]], seed: int,
 
 
 def save_relation_npz(out_dir: Path, seed: int, arrays: Mapping[str, np.ndarray]) -> Path:
+    out_dir = require_external_output(out_dir)
     path = out_dir / f"relation_matrices_seed{seed}.npz"
     payload = dict(arrays)
     if "uid" in payload:
         payload["sample_uid"] = payload["uid"]
-    np.savez_compressed(path, **payload)
+    np.savez_compressed(require_external_output(path), **payload)
     return path
 
 
@@ -654,6 +662,7 @@ def provenance_for_analysis(dataset: str, subject: int, seeds: Sequence[int],
 
 
 def save_resolved_config(path: Path, args: argparse.Namespace) -> None:
+    path = require_external_output(path)
     import config
     import yaml
 
@@ -695,6 +704,7 @@ def save_resolved_config(path: Path, args: argparse.Namespace) -> None:
 def generate_figures(out_dir: Path, all_rows: Sequence[Mapping[str, Any]],
                      seed_summaries: Mapping[int, Mapping[str, Any]],
                      bad_uid: tuple[int, int]) -> list[str]:
+    out_dir = require_external_output(out_dir)
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -928,6 +938,7 @@ def print_analysis_console(summary: Mapping[str, Any], selections: Mapping[str, 
 
 def write_analysis_report(out_dir: Path, summary: Mapping[str, Any],
                           all_rows: Sequence[Mapping[str, Any]]) -> None:
+    out_dir = require_external_output(out_dir)
     lines = [
         "# MIRepNet–IFNet relation-gap diagnostic",
         "",
@@ -1339,6 +1350,7 @@ def run_retraining(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def write_final_report(out_dir: Path, summary: Mapping[str, Any]) -> None:
+    out_dir = require_external_output(out_dir)
     analysis = summary.get("known_bad", {})
     retr = summary.get("retraining", {})
     lines = [
@@ -1406,7 +1418,7 @@ def add_common_arguments(p: argparse.ArgumentParser) -> None:
     p.add_argument("--bad-uid", type=int, nargs=2, default=list(DEFAULT_BAD_UID),
                    metavar=("SUBJECT_ID", "TRIAL_ID"))
     p.add_argument("--artifact-root", type=Path,
-                   default=ROOT / "results" / "artifacts")
+                   default=Path('/data1/llx/BigSmallCollab_results') / "artifacts")
     p.add_argument("--out-dir", type=Path, default=None)
     p.add_argument("--val-split", type=float, default=DEFAULT_VAL_SPLIT)
     p.add_argument("--n-random-masks", type=int, default=DEFAULT_N_RANDOM_MASKS)
@@ -1427,8 +1439,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     args = parser.parse_args(argv)
     if args.out_dir is None:
         args.out_dir = default_output_root(args.dataset, args.subject)
-    args.out_dir = args.out_dir.resolve()
-    args.artifact_root = args.artifact_root.resolve()
+    args.out_dir = require_external_output(args.out_dir)
+    args.artifact_root = external_path(args.artifact_root).resolve()
     if args.n_random_masks < 1:
         raise ValueError("--n-random-masks must be >= 1")
     if not (0.0 < args.val_split < 1.0):

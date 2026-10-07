@@ -28,7 +28,7 @@ EXPORT_TRAIN=1
 EXECUTE=0
 RUN_TS="${RUN_TS:-$(date +%Y%m%d_%H%M%S)}"
 LOG_DIR="${LOG_DIR:-logs/artifact_export_uid/${RUN_TS}}"
-RESULTS_DIR="${RESULTS_DIR:-results}"
+RESULTS_DIR="${RESULTS_DIR:-/data1/llx/BigSmallCollab_results}"
 
 usage() {
   cat <<'EOF'
