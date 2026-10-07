@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Reference-aligned EEGNet / CBraMod LOSO runs with resumable fold checkpoints.
+"""Reference-aligned LOSO runs with resumable fold checkpoints.
 
 The worker deliberately accepts physical CUDA indices and refuses GPU 0. A
 formal worker owns one (dataset, model, seed) stream and processes LOSO subjects
@@ -36,8 +36,13 @@ INPUT_ROOT = ROOT / 'data_cache/eegfm_alignment_v2/model_inputs'
 RESULT_ROOT = ROOT / 'results/reproductions/loso_config_alignment_v2'
 REFERENCE_ROOT = Path('/home/lixinli/EEG-FM-Benchmark')
 WEIGHT_PATH = Path('/data1/llx/pre_weight/cbramod.pth')
+MIREPNET_WEIGHT_PATH = Path('/data1/llx/pre_weight/mirepnet.pth')
+WIDEBAND_PROFILE = 'wideband_npy_v3'
+WIDEBAND_VARIANT = 'all_sessions_source_train_session'
 DATASET_ALIASES = {
-    '001-4': 'BNCI2014001-4', '004': 'BNCI2014004', '5001': 'BNCI2015001',
+    '001': 'BNCI2014001', '001-4': 'BNCI2014001-4',
+    '004': 'BNCI2014004', '5001': 'BNCI2015001',
+    'BNCI2014001': 'BNCI2014001',
     'BNCI2014001-4': 'BNCI2014001-4', 'BNCI2014004': 'BNCI2014004',
     'BNCI2015001': 'BNCI2015001',
 }
@@ -138,6 +143,36 @@ def canonical_dataset(value: str) -> str:
 
 
 def profile_config(profile: str, model: str, dataset: str, spec: dict) -> dict:
+    if profile == WIDEBAND_PROFILE:
+        if dataset not in ('BNCI2014001', 'BNCI2014001-4'):
+            raise ValueError(f'{profile} supports 001 and 001-4 only')
+        if model == 'mirepnet':
+            import config
+            c = config.load_model_config(model, dataset, 'loso')
+            return {
+                'optimizer': c['optimizer'], 'lr': float(c['lr']),
+                'weight_decay': float(c['weight_decay']),
+                'batch_size': int(c['batch_size']), 'epochs': int(c['epochs']),
+                # MIRepNet's native architecture owns dropout; make_model does
+                # not override its 0.5 embedding/transformer dropout.
+                'dropout': 0.5, 'dropout_policy': 'native_architecture_unchanged',
+                'class_weights': False, 'label_smoothing': 0.0,
+                'min_lr': 0.0, 'warmup_epochs': 0,
+                'lr_schedule': 'epoch_cosine', 'duration_seconds': 4.0,
+                'parameter_source': 'configs/models/mirepnet.yaml::' + dataset + '.loso',
+            }
+        if model != 'cbramod':
+            raise ValueError(f'{profile} supports MIRepNet and CBraMod only')
+        # Keep the completed four-class reference-aligned recipe. Its transfer
+        # to the binary setting is explicit and does not alter the v2 spec.
+        cfg = profile_config('reference_aligned', model, 'BNCI2014001-4', spec)
+        cfg['parameter_source'] = 'reference_aligned.cbramod.BNCI2014001-4'
+        cfg['parameter_transfer'] = (
+            'four_class_recipe_transferred_to_binary_loso'
+            if dataset == 'BNCI2014001' else 'same_four_class_recipe')
+        return cfg
+    if model == 'mirepnet':
+        raise ValueError('MIRepNet is supported only by wideband_npy_v3')
     if profile == 'source_bridge':
         block = spec['source_bridge']['legacy_profiles'][model]
         return {
@@ -205,11 +240,33 @@ def load_fold_data(profile: str, dataset: str, model: str, variant: str):
         raise RuntimeError(f'{folder}: trial subjects differ from subjects.npy')
     if trials.trial_uid.duplicated().any():
         raise RuntimeError(f'{folder}: trial_uid is not unique')
+    if profile == WIDEBAND_PROFILE:
+        expected_classes = 2 if dataset == 'BNCI2014001' else 4
+        expected_shape = (45, 1000) if model == 'mirepnet' else (22, 4, 200)
+        if tuple(x.shape[1:]) != expected_shape:
+            raise RuntimeError(f'{folder}: expected input shape {expected_shape}, got {x.shape[1:]}')
+        if not np.array_equal(np.unique(y), np.arange(expected_classes)):
+            raise RuntimeError(f'{folder}: expected {expected_classes} contiguous classes')
+        if not np.array_equal(np.unique(subjects), np.arange(9)):
+            raise RuntimeError(f'{folder}: expected all nine zero-based subjects')
     return x, np.asarray(y), np.asarray(subjects), trials, manifest
 
 
 def make_model(model: str, dataset: str, n_classes: int, input_shape: tuple,
                dropout: float, profile: str) -> nn.Module:
+    if model == 'mirepnet':
+        if profile != WIDEBAND_PROFILE:
+            raise ValueError('MIRepNet is supported only by wideband_npy_v3')
+        if tuple(input_shape) != (45, 1000):
+            raise RuntimeError(f'MIRepNet expects [45,1000], received {input_shape}')
+        if not MIREPNET_WEIGHT_PATH.is_file():
+            raise FileNotFoundError(f'MIRepNet checkpoint not found: {MIREPNET_WEIGHT_PATH}')
+        import config
+        from models.mirepnet.adapter import MIRepNetAdapter
+        model_cfg = config.load_model_config(model, dataset, 'loso')
+        model_cfg.update(dataset_name=dataset, skip_preprocess=True,
+                         pretrain=str(MIREPNET_WEIGHT_PATH))
+        return MIRepNetAdapter(device='cpu', **model_cfg).build(n_classes)
     if model == 'eegnet':
         if len(input_shape) != 2:
             raise RuntimeError(f'EEGNet expects [C,T], received {input_shape}')
@@ -238,6 +295,17 @@ def make_model(model: str, dataset: str, n_classes: int, input_shape: tuple,
                              dropout=dropout, pretrain=str(WEIGHT_PATH),
                              feature_head='flatten')
     raise ValueError(f'Unsupported model {model}')
+
+
+def pretrained_checkpoint(model: str) -> Path | None:
+    return {'cbramod': WEIGHT_PATH, 'mirepnet': MIREPNET_WEIGHT_PATH}.get(model)
+
+
+def validate_wideband_checkpoint(saved: dict, identity: dict, path: Path) -> None:
+    """Refuse reuse when source inputs or pretrained weights have changed."""
+    for key, value in identity.items():
+        if saved.get(key) != value:
+            raise RuntimeError(f'{path}: {key} changed or is missing from checkpoint')
 
 
 def optimizer_for(model: nn.Module, cfg: dict) -> torch.optim.Optimizer:
@@ -306,6 +374,7 @@ def train_one_fold(profile: str, dataset: str, model_name: str, seed: int,
     if not len(train_rows) or not len(test_rows):
         raise RuntimeError(f'{dataset}: empty train or test fold for subject {subject + 1}')
     expected_subject_trials = {
+        'BNCI2014001': [144] * 9,
         'BNCI2014001-4': [288] * 9,
         'BNCI2014004': [160, 120, 160, 160, 160, 160, 160, 160, 160],
         'BNCI2015001': [200] * 12,
@@ -326,6 +395,16 @@ def train_one_fold(profile: str, dataset: str, model_name: str, seed: int,
     epochs = int(fold_cfg['epochs'])
     batch_size = int(fold_cfg['batch_size'])
     n_classes = len(classes)
+    input_manifest_path = input_dir(profile, dataset, model_name, variant) / 'manifest.json'
+    input_manifest_hash = sha256_file(input_manifest_path)
+    pretrained_path = pretrained_checkpoint(model_name)
+    pretrained_hash = sha256_file(pretrained_path) if pretrained_path else None
+    source_identity = ({
+        'dataset': dataset, 'model': model_name,
+        'input_manifest_sha256': input_manifest_hash,
+        'pretrained_checkpoint_sha256': pretrained_hash,
+        'input_shape': list(x_all.shape[1:]), 'num_classes': n_classes,
+    } if profile == WIDEBAND_PROFILE else {})
     fold_seed = int(seed)
     if profile == 'source_bridge':
         # Independent-fold seed: both source variants reset to this exact state.
@@ -392,7 +471,9 @@ def train_one_fold(profile: str, dataset: str, model_name: str, seed: int,
             'initial_state_sha256': init_hash,
             'loss_last_batch': losses[-1],
             'trainable_parameters': sum(p.numel() for p in model.parameters() if p.requires_grad),
-            'pretrained_hash': sha256_file(WEIGHT_PATH) if model_name == 'cbramod' else None,
+            'pretrained_hash': pretrained_hash,
+            'pretrained_checkpoint': str(pretrained_path) if pretrained_path else None,
+            'input_manifest_sha256': input_manifest_hash,
             'gpu': device.index,
         }
 
@@ -407,12 +488,15 @@ def train_one_fold(profile: str, dataset: str, model_name: str, seed: int,
             raise RuntimeError(f'{ckpt_path}: checkpoint identity mismatch')
         if saved.get('variant') != variant or saved.get('seed') != seed:
             raise RuntimeError(f'{ckpt_path}: source variant/seed mismatch')
+        if source_identity:
+            validate_wideband_checkpoint(saved, source_identity, ckpt_path)
         if saved.get('config_fingerprint') != hashlib.sha256(
                 json.dumps(fold_cfg, sort_keys=True).encode()).hexdigest():
             raise RuntimeError(f'{ckpt_path}: training configuration changed')
         model.load_state_dict(saved['model_state'])
         optimizer.load_state_dict(saved['optimizer_state'])
         history = saved.get('history', [])
+        init_hash = saved.get('initial_state_sha256', init_hash)
         global_step = int(saved.get('global_step', 0))
         first_epoch = int(saved.get('next_epoch', 0))
         restore_rng(saved['rng_state'], device)
@@ -429,6 +513,7 @@ def train_one_fold(profile: str, dataset: str, model_name: str, seed: int,
             'next_epoch': 0, 'global_step': 0, 'history': [], 'completed': False,
             'model_state': model.state_dict(), 'optimizer_state': optimizer.state_dict(),
             'rng_state': capture_rng(device), 'initial_state_sha256': init_hash,
+            **source_identity,
         })
 
     class_counts = np.bincount(train_labels, minlength=n_classes).tolist()
@@ -438,7 +523,7 @@ def train_one_fold(profile: str, dataset: str, model_name: str, seed: int,
         'held_out_subject': subject + 1, 'variant': variant,
         'epoch': first_epoch, 'epochs': epochs, 'train_trials': len(train_rows),
         'test_trials': len(test_rows), 'train_class_counts': class_counts,
-        'input_manifest_sha256': sha256_file(input_dir(profile, dataset, model_name, variant) / 'manifest.json'),
+        'input_manifest_sha256': input_manifest_hash,
         'started_or_resumed_utc_epoch_s': time.time(),
         'gpu_physical_index': device.index,
     })
@@ -505,6 +590,7 @@ def train_one_fold(profile: str, dataset: str, model_name: str, seed: int,
             'model_state': model.state_dict(), 'optimizer_state': optimizer.state_dict(),
             'rng_state': capture_rng(device), 'initial_state_sha256': init_hash,
             'train_order_first_epoch_sha256': history[0]['train_order_sha256'],
+            **source_identity,
         })
         set_status(out, {
             'status': 'running', 'profile': profile, 'dataset': dataset,
@@ -547,7 +633,6 @@ def train_one_fold(profile: str, dataset: str, model_name: str, seed: int,
                         predictions=pred)
     model_file = out / 'final_model.pt'
     checkpoint_save(model_file, model.state_dict())
-    input_manifest_path = input_dir(profile, dataset, model_name, variant) / 'manifest.json'
     reference_files = [
         REFERENCE_ROOT / 'models/DL/EEGNet/Model_EEGNet.py',
         REFERENCE_ROOT / 'models/DL/EEGNet/Loader_EEGNet.py',
@@ -556,6 +641,11 @@ def train_one_fold(profile: str, dataset: str, model_name: str, seed: int,
         ROOT / 'models/cbramod/adapter.py', ROOT / 'experiments/finetune/run_loso_config_alignment.py',
         ROOT / 'models/eegnet/residual_eegnet.py',
     ]
+    if model_name == 'mirepnet':
+        reference_files.extend([
+            ROOT / 'models/mirepnet/adapter.py', ROOT / 'models/mirepnet/mlm.py',
+            ROOT / 'configs/models/mirepnet.yaml',
+        ])
     result = {
         'status': 'complete', 'profile': profile, 'dataset': dataset,
         'model': model_name, 'seed': seed, 'fold_seed': fold_seed,
@@ -563,7 +653,7 @@ def train_one_fold(profile: str, dataset: str, model_name: str, seed: int,
         'train_trials': len(train_rows), 'test_trials': len(test_rows),
         'train_class_counts': class_counts, 'test_class_counts': np.bincount(test_labels, minlength=n_classes).tolist(),
         'metrics': metrics, 'input_shape': list(x_all.shape[1:]),
-        'input_manifest_sha256': sha256_file(input_manifest_path),
+        'input_manifest_sha256': input_manifest_hash,
         'input_manifest': str(input_manifest_path),
         'input_files': manifest.get('files'),
         'class_weights': None if class_weight is None else class_weight.tolist(),
@@ -575,7 +665,8 @@ def train_one_fold(profile: str, dataset: str, model_name: str, seed: int,
         'trainable_parameter_count': sum(p.numel() for p in model.parameters() if p.requires_grad),
         'initial_state_sha256': init_hash,
         'first_epoch_train_order_sha256': history[0]['train_order_sha256'] if history else None,
-        'reference_pretrained_sha256': sha256_file(WEIGHT_PATH) if model_name == 'cbramod' else None,
+        'reference_pretrained_sha256': pretrained_hash,
+        'pretrained_checkpoint': str(pretrained_path) if pretrained_path else None,
         'training_seconds': float(sum(row['epoch_seconds'] for row in history)),
         'wall_seconds': time.time() - start_time,
         'final_model_sha256': sha256_file(model_file),
@@ -585,6 +676,10 @@ def train_one_fold(profile: str, dataset: str, model_name: str, seed: int,
             for p in reference_files if p.is_file()
         },
         'rng_scope_note': (
+            'dataset/model/seed stream continues over sorted folds; one unused model build and '
+            'per-epoch sequential test-loader base-seed draw emulated; final-only evaluation; '
+            'new seeds 0/1/2 are not paired with older 666/667/668 runs'
+            if profile == WIDEBAND_PROFILE else
             'dataset/model/seed stream continues over sorted folds; reference per-epoch test loader '
             'base-seed draw emulated; only final test metrics are evaluated and used'
             if profile in ('reference_aligned', 'reference_aligned_npy') else
@@ -602,6 +697,7 @@ def train_one_fold(profile: str, dataset: str, model_name: str, seed: int,
         'completed': True, 'rng_state': capture_rng(device),
         'model_state': model.state_dict(), 'optimizer_state': optimizer.state_dict(),
         'initial_state_sha256': init_hash,
+        **source_identity,
     })
     set_status(out, {**result, 'status': 'complete', 'completed_utc_epoch_s': time.time()})
     return result
@@ -632,6 +728,7 @@ def run_worker(args, spec: dict, device: torch.device) -> None:
     dataset, model = canonical_dataset(args.dataset), args.model
     cfg = profile_config(args.profile, model, dataset, spec)
     variants = (['legacy_cache', 'rebuilt_source'] if args.profile == 'source_bridge'
+                else [WIDEBAND_VARIANT] if args.profile == WIDEBAND_PROFILE
                 else ['npy_source'] if args.profile == 'reference_aligned_npy'
                 else ['rebuilt_source'])
     if args.profile == 'source_bridge' and dataset != 'BNCI2014001-4':
@@ -647,7 +744,8 @@ def run_worker(args, spec: dict, device: torch.device) -> None:
     dummy.to(device)
     del dummy
     del x0, y0, s0
-    subjects = range(int(spec['data']['datasets'][dataset]['subjects']))
+    subjects = range(9 if args.profile == WIDEBAND_PROFILE else
+                     int(spec['data']['datasets'][dataset]['subjects']))
     if args.profile == 'source_bridge':
         # The bridge intentionally resets the stream per held-out fold and per
         # source variant, allowing one-to-one paired initialization/batches.
@@ -723,6 +821,20 @@ def run_worker(args, spec: dict, device: torch.device) -> None:
         result_file = out / 'result.json'
         if ckpt.exists():
             state = torch.load(ckpt, map_location='cpu', weights_only=False)
+            if args.profile == WIDEBAND_PROFILE:
+                active_cfg = dict(cfg)
+                if args.epochs_override is not None:
+                    active_cfg['epochs'] = int(args.epochs_override)
+                active_manifest = input_dir(args.profile, dataset, model, variants[0]) / 'manifest.json'
+                pretrained_path = pretrained_checkpoint(model)
+                validate_wideband_checkpoint(state, {
+                    'profile': args.profile, 'dataset': dataset, 'model': model,
+                    'seed': args.seed, 'subject': subject + 1, 'variant': variants[0],
+                    'input_manifest_sha256': sha256_file(active_manifest),
+                    'pretrained_checkpoint_sha256': sha256_file(pretrained_path),
+                    'config_fingerprint': hashlib.sha256(
+                        json.dumps(active_cfg, sort_keys=True).encode()).hexdigest(),
+                }, ckpt)
             if state.get('completed') and result_file.exists():
                 restore_from = state.get('rng_state')
                 with result_file.open() as f:
@@ -766,9 +878,9 @@ def run_worker(args, spec: dict, device: torch.device) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--profile', choices=('reference_aligned', 'reference_aligned_npy',
-                                               'source_bridge'), required=True)
+                                               'source_bridge', WIDEBAND_PROFILE), required=True)
     parser.add_argument('--dataset', required=True, choices=tuple(DATASET_ALIASES))
-    parser.add_argument('--model', choices=('cbramod', 'eegnet'), required=True)
+    parser.add_argument('--model', choices=('cbramod', 'eegnet', 'mirepnet'), required=True)
     parser.add_argument('--seed', type=int, required=True)
     parser.add_argument('--gpu', type=int, required=True, help='physical CUDA index; GPU 0 is prohibited')
     parser.add_argument('--epochs-override', type=int)
@@ -786,6 +898,13 @@ def main() -> None:
     if args.gpu >= torch.cuda.device_count():
         raise SystemExit(f'GPU index {args.gpu} outside visible range 0..{torch.cuda.device_count()-1}')
     canonical = canonical_dataset(args.dataset)
+    if args.profile == WIDEBAND_PROFILE:
+        if canonical not in ('BNCI2014001', 'BNCI2014001-4'):
+            raise SystemExit('wideband_npy_v3 supports only 001 and 001-4')
+        if args.model not in ('mirepnet', 'cbramod'):
+            raise SystemExit('wideband_npy_v3 supports only MIRepNet and CBraMod')
+        if args.seed not in (0, 1, 2):
+            raise SystemExit('wideband_npy_v3 uses seeds 0, 1, 2')
     lock_dir = RESULT_ROOT / args.profile / canonical / args.model / f'seed_{args.seed}'
     lock_dir.mkdir(parents=True, exist_ok=True)
     lock_handle = (lock_dir / 'worker.lock').open('a')
