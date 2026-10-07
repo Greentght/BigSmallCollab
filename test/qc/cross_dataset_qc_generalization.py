@@ -2,7 +2,7 @@
 """Cross-dataset external validation of MIRepNet-QC and Signal-QC.
 
 This is intentionally a diagnostic runner under ``test/qc``.  It does not
-modify the formal experiment runners and it treats ``/data1/llx/BigSmallCollab_results/artifacts`` as a
+modify the formal experiment runners and it treats ``/data1/llx/BigSmallcollab/results/artifacts`` as a
 read-only input directory.  The two QC implementations are imported from the
 previous single-dataset experiment so that this experiment cannot silently
 change the frozen feature, distance, or robust-z rules.
@@ -17,7 +17,7 @@ Stages are restartable:
     --stage aggregate
 
 The default output is the only directory this script is allowed to write:
-``/data1/llx/BigSmallCollab_results/qc_artifacts/qc_v1/cross_dataset_qc_generalization``.
+``/data1/llx/BigSmallcollab/results/qc_artifacts/qc_v1/cross_dataset_qc_generalization``.
 """
 from __future__ import annotations
 
@@ -90,11 +90,11 @@ SIGNAL_THRESHOLD = 3.5
 RANDOM_MASKS = 5
 METHOD_VERSION = "mirepnet_signal_qc_v1_cross_dataset"
 DEFAULT_OUTPUT = (
-    Path('/data1/llx/BigSmallCollab_results/qc_artifacts') / "qc_v1"
+    Path('/data1/llx/BigSmallcollab/results/qc_artifacts') / "qc_v1"
     / "cross_dataset_qc_generalization"
 )
-INPUT_ARTIFACT_ROOT = Path('/data1/llx/BigSmallCollab_results') / "artifacts"
-OLD_QC_ROOT = Path('/data1/llx/BigSmallCollab_results/qc_artifacts') / "qc_v1" / "mirepnet_vs_signal_qc"
+INPUT_ARTIFACT_ROOT = Path('/data1/llx/BigSmallcollab/results') / "artifacts"
+OLD_QC_ROOT = Path('/data1/llx/BigSmallcollab/results/qc_artifacts') / "qc_v1" / "mirepnet_vs_signal_qc"
 OLD_REGRESSION_DIR = OLD_QC_ROOT / "BNCI2015001" / "S1" / "fewshot"
 SESSION_BY_DATASET = {
     "BNCI2014001": "sessionT",
@@ -1553,7 +1553,7 @@ def _report(output_dir: Path, plan: Sequence[Mapping[str, Any]],
         "",
         "## artifact 覆盖", "",
         f"- MIRepNet train artifact 可用且 UID 集合严格对齐：{coverage}/{len(inventory)} folds。详细输入 SHA256 在 `artifact_inventory.csv` 和 `artifact_sha256_check.json`。",
-        "- 本脚本没有写入、覆盖或生成 `/data1/llx/BigSmallCollab_results/artifacts/` 中的任何文件；没有保存过滤后的 EEG 或 MIRepNet feature。",
+        "- 本脚本没有写入、覆盖或生成 `/data1/llx/BigSmallcollab/results/artifacts/` 中的任何文件；没有保存过滤后的 EEG 或 MIRepNet feature。",
         "",
         "## QC 规则", "",
         "- MIRepNet：`feats` 的最终 mean-pooled、classifier 前表征；float64、逐 trial L2、cosine、leave-self-out 5-NN 距离均值，fold 内 modified robust-z > 3.5。",

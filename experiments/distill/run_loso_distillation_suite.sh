@@ -6,7 +6,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${repo_root}"
 gpu="${GPU:-0}"
 conda_bin="/home/lixinli/anaconda3/bin/conda"
-result_root="/data1/llx/BigSmallCollab_results/distill/loso_five_settings_kd_feature_warmup10_v1"
+result_root="/data1/llx/BigSmallcollab/results/distill/loso_five_settings_kd_feature_warmup10_v1"
 log_dir="${result_root}/execution_logs"
 mkdir -p "${log_dir}"
 export OMP_NUM_THREADS=4 MKL_NUM_THREADS=4 OPENBLAS_NUM_THREADS=4 TORCH_NUM_THREADS=4

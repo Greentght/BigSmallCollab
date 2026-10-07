@@ -493,8 +493,8 @@ def _write_report(output_dir: Path, results: list[dict], resolved: Mapping,
         "```bash",
         "conda run -n mirepnet python test/qc/minimal_causal_diagnostic.py \\",
         "  --exclude-uid 0 1 --device cpu \\",
-        "  --artifact-root /data1/llx/BigSmallCollab_results/artifacts \\",
-        "  --output-dir /data1/llx/BigSmallCollab_results/qc_artifacts/qc_v1/test-15001-S1-seed666",
+        "  --artifact-root /data1/llx/BigSmallcollab/results/artifacts \\",
+        "  --output-dir /data1/llx/BigSmallcollab/results/qc_artifacts/qc_v1/test-15001-S1-seed666",
         "```",
         "",
         "smoke test 可加 `--epochs 2 --output-dir /tmp/test-15001-S1-seed666-smoke`；该结果不能代替正式 100 epoch 结果。",
@@ -515,9 +515,9 @@ def parse_args(argv=None):
                         metavar=("SUBJECT", "TRIAL"),
                         help="UID to remove in clean conditions")
     parser.add_argument("--artifact-root", type=Path,
-                        default=Path('/data1/llx/BigSmallCollab_results') / "artifacts")
+                        default=Path('/data1/llx/BigSmallcollab/results') / "artifacts")
     parser.add_argument("--output-dir", type=Path,
-                        default=Path('/data1/llx/BigSmallCollab_results/qc_artifacts') / "qc_v1" / "test-15001-S1-seed666")
+                        default=Path('/data1/llx/BigSmallcollab/results/qc_artifacts') / "qc_v1" / "test-15001-S1-seed666")
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--epochs", type=int, default=None,
                         help="only for smoke tests; omit for resolved formal epochs")
@@ -615,7 +615,7 @@ def run(args) -> int:
     if not np.array_equal(filtered_teacher["y"], data_pack["y_train"][clean_mask]):
         raise AssertionError("filtered teacher labels do not match clean student labels")
 
-    prior_result_path = Path('/data1/llx/BigSmallCollab_results') / "BNCI2015001_fewshot_distill_mirepnet_to_eegnet.csv"
+    prior_result_path = Path('/data1/llx/BigSmallcollab/results') / "BNCI2015001_fewshot_distill_mirepnet_to_eegnet.csv"
     config_payload = {
         "experiment": "minimal_bad_trial_causal_diagnostic",
         "dataset": DATASET,

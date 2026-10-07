@@ -38,7 +38,7 @@ import data
 from models import get_adapter
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-METRICS = os.path.join(ROOT, '/data1/llx/BigSmallCollab_results', 'metrics')
+METRICS = os.path.join(ROOT, '/data1/llx/BigSmallcollab/results', 'metrics')
 
 
 def _set_seed(seed):

@@ -16,8 +16,8 @@ students:
 - ifnet
 - eegnet
 - adfcnn
-output_dir: /data1/llx/BigSmallCollab_results/distill/task_feature_logit_kd_six_pairs_seed666_cbramod200
-artifact_root: /data1/llx/BigSmallCollab_results/distill/task_feature_logit_kd_six_pairs_seed666_cbramod200/teacher_artifacts
+output_dir: /data1/llx/BigSmallcollab/results/distill/task_feature_logit_kd_six_pairs_seed666_cbramod200
+artifact_root: /data1/llx/BigSmallcollab/results/distill/task_feature_logit_kd_six_pairs_seed666_cbramod200/teacher_artifacts
 epochs: 100
 warmup_epochs: 10
 optimizer: native_student_config

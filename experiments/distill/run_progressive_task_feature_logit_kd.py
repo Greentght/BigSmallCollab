@@ -61,7 +61,7 @@ OLD_CONDITIONS = (
     'PREALIGN_THEN_KD',
 )
 ALL_CONDITIONS = OLD_CONDITIONS + NEW_CONDITIONS
-OLD_ROOT = Path('/data1/llx/BigSmallCollab_results') / 'distill' / 'prealign_delayed_kd_pilot'
+OLD_ROOT = Path('/data1/llx/BigSmallcollab/results') / 'distill' / 'prealign_delayed_kd_pilot'
 
 
 def parse_args(argv=None):
@@ -690,7 +690,7 @@ def _validate_old_controls():
             try:
                 artifact_path = _artifact_path(
                     row['dataset'], int(row['subject_index']), int(row['seed']),
-                    str(Path('/data1/llx/BigSmallCollab_results') / 'artifacts'))
+                    str(Path('/data1/llx/BigSmallcollab/results') / 'artifacts'))
                 if row.get('ft_teacher_artifact_sha256') != _hash_file(artifact_path):
                     reason.append('teacher_artifact_sha256_mismatch')
             except Exception as exc:

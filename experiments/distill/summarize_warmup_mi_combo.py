@@ -27,7 +27,7 @@ SOURCES = {
     'BNCI2015001': ('BNCI2015001',),
     'AlexMI': ('AlexMI',),
 }
-OUT = Path('/data1/llx/BigSmallCollab_results/distill/warmup_mi_combo_three_seed')
+OUT = Path('/data1/llx/BigSmallcollab/results/distill/warmup_mi_combo_three_seed')
 OUT.mkdir(parents=True, exist_ok=True)
 
 
@@ -51,12 +51,12 @@ def write_csv(path, rows):
 
 def seed_root(seed):
     if seed == 666:
-        return Path('/data1/llx/BigSmallCollab_results/distill/seed666_three_ablation')
-    return ROOT / f'/data1/llx/BigSmallCollab_results/distill/three_seed_ablation_seed{seed}'
+        return Path('/data1/llx/BigSmallcollab/results/distill/seed666_three_ablation')
+    return ROOT / f'/data1/llx/BigSmallcollab/results/distill/three_seed_ablation_seed{seed}'
 
 
 def combo_root(seed):
-    return ROOT / f'/data1/llx/BigSmallCollab_results/distill/warmup_mi_combo_seed{seed}'
+    return ROOT / f'/data1/llx/BigSmallcollab/results/distill/warmup_mi_combo_seed{seed}'
 
 
 # Validate each run and index baseline/combination results by the matched unit.

@@ -11,7 +11,7 @@ CodeBrain 的独立复现已完成，但在当前被试内 few-shot 协议下接
 环境。所以：
 
 1. **每个模型在自己的 env 里 finetune**，对每个 `(dataset, subject, seed, split)`
-   导出标准化产物 `{logits, feats, y}`（`/data1/llx/BigSmallCollab_results/artifacts/`）。
+   导出标准化产物 `{logits, feats, y}`（`/data1/llx/BigSmallcollab/results/artifacts/`）。
 2. **Hub 消费产物**做协同（任意 env，纯数组）：
    - **离线 KD + 特征对齐** — student 对着**冻结的缓存 teacher** feats/logits 训练，
      大模型无需在线。（测试时集成/融合线已归档，见 git tag `pre-consolidation`。）
@@ -48,18 +48,22 @@ envs/      各模型 conda 环境说明
   与上游仓解耦——删掉 ~/MIRepNet 等不受影响)，
   由 `config.weight_path()` 解析,可用 `MIREPNET_WEIGHT` / `CBRAMOD_WEIGHT` /
   `LABRAM_WEIGHT` 环境变量覆盖(如指向新微调的 checkpoint)。CodeBrain 权重默认是
-  `/data1/llx/BigSmallCollab_weights/codebrain.pth`,可用 `CODEBRAIN_WEIGHT` 覆盖；输入适配、官方权重版本和复现实验命令见
+  `/data1/llx/BigSmallcollab/weights/codebrain.pth`,可用 `CODEBRAIN_WEIGHT` 覆盖；输入适配、官方权重版本和复现实验命令见
   [CodeBrain 复现与结果记录](docs/codebrain_reproduction.md)。
 
-**存储位置：** 数据、模型和实验产物保存到 `/data1/llx`，工作树只保存代码、配置和文档。
+**存储位置：** 共享数据集独立存放在 `/data1/llx/<数据集名称>/`；本项目专用文件统一放在 `/data1/llx/BigSmallcollab/`，工作树只保存代码、配置和文档。
 
 | 内容 | 路径 |
 |---|---|
-| 新数据来源与模型输入缓存 | `/data1/llx/data_cache/` |
-| 实验结果、预测、教师缓存和训练 checkpoint | `/data1/llx/BigSmallCollab_results/` |
-| CodeBrain 等外置权重 | `/data1/llx/BigSmallCollab_weights/` |
+| 共享数据集 | `/data1/llx/BNCI2014001/`、`BNCI2014004/`、`BNCI2015001/`、`AlexMI/` |
+| 新 14001 全场次宽带 NPY | `/data1/llx/BNCI2014001/broadband_0p1_75hz/` |
+| 项目模型输入及协议缓存 | `/data1/llx/BigSmallcollab/cache/` |
+| 实验结果、预测、教师缓存和训练 checkpoint | `/data1/llx/BigSmallcollab/results/` |
+| CodeBrain 等外置权重 | `/data1/llx/BigSmallcollab/weights/` |
 | 现有 MIRepNet／CBraMod／LaBraM 预训练权重 | `/data1/llx/pre_weight/` |
-| Git LFS 本地对象 | `/data1/llx/BigSmallCollab_git_lfs/` |
+| Git LFS 本地对象 | `/data1/llx/BigSmallcollab/git_lfs/` |
+
+完整目录规则见 [共享数据集与项目文件存储](docs/storage_layout.md)。
 
 `experiments/storage.py` 将历史 `results/...`、`data_cache/...`、`weights/...` 路径映射到上述目录；
 实验写入接口拒绝把数据或模型保存进项目工作树。
@@ -167,7 +171,7 @@ experiments/fusion/run_fusion.py — YAML 融合入口
 
 ```text
 原始数据 -> data/split.py(规范切分) -> models/<name>/adapter.py(预处理/前向)
-  -> experiments/finetune/*.py(微调+导出工件 .npz) -> experiments/*(编排) -> collab/*(算法) -> eval/*(统计) -> /data1/llx/BigSmallCollab_results/
+  -> experiments/finetune/*.py(微调+导出工件 .npz) -> experiments/*(编排) -> collab/*(算法) -> eval/*(统计) -> /data1/llx/BigSmallcollab/results/
 ```
 
 几个最容易混淆的点：

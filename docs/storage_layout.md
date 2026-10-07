@@ -1,44 +1,70 @@
-# 数据与模型存储位置
+# 共享数据集与项目文件存储
 
-用户要求：数据、模型权重及训练 checkpoint 保存到 `/data1/llx`，不再写入
-BigSmallCollab 项目目录。运行入口使用 `experiments/storage.py` 的共享路径。
+数据根目录为 `/data1/llx`。按用户要求，数据集独立存放，各项目可以复用；
+BigSmallCollab 的预处理输入、教师缓存、模型和结果统一放在
+`/data1/llx/BigSmallcollab`。注意项目数据目录的大小写为 `BigSmallcollab`。
+代码工作树 `/home/lixinli/BigSmallCollab` 只保留代码、配置和文档。
 
-| 内容 | 保存位置 |
-|---|---|
-| 原有数据集 NPY | `/data1/llx/BNCI2014001`、`BNCI2014004`、`BNCI2015001`、`AlexMI` |
-| 新 14001 全场次宽带 NPY | `/data1/llx/data_cache/loso_source_v3/BNCI2014001` |
-| 模型输入缓存与参考源缓存 | `/data1/llx/data_cache/eegfm_alignment_v2` |
-| 实验结果、权重、checkpoint、预测和教师缓存 | `/data1/llx/BigSmallCollab_results` |
-| 预训练权重 | `/data1/llx/pre_weight` |
-| 原项目 `weights/` 中的权重 | `/data1/llx/BigSmallCollab_weights` |
-| 本地 Git LFS 实体文件 | `/data1/llx/BigSmallCollab_git_lfs` |
+## 共享数据集
 
-## 原 data_cache 内的内容
+每个数据集有独立目录：`/data1/llx/<数据集名称>/`。现有
+`BNCI2014001`、`BNCI2014004`、`BNCI2015001`、`AlexMI` 的根目录
+NPY 保持原样。不同频段或生成流程使用明确的版本子目录，避免覆盖旧版本。
 
-迁移前该目录实际占约 2.5 GB。其中新全场次源目录约 1.6 GB，包含约
-871 MiB 的 float64 EEG 数组，以及约 744 MiB 的原始 MAT 文件；另外约
-930 MiB 是二分类和四分类分别对应 MIRepNet、CBraMod 的四份模型输入。
+新 14001 全场次宽带数据位置：
 
-- `loso_source_v3/BNCI2014001`：9 位被试、`0train` 与 `1test` 的全部
-  5184 trials。250 Hz，22 通道，每 trial 1001 点，源频带 0.1–75 Hz。
-  同时保存标签、场次/run 元信息、旧 trial 映射和来源哈希。
-- `loso_source_v3/BNCI2014001/raw`：重新导出全 session 时使用的本地原始
-  MAT 文件。它们是原始下载缓存，与已经滤波、分段的 NPY 用途不同。
-- `eegfm_alignment_v2/rebuilt`：001-4、004、5001 的参考源 NPY 与 trial
-  映射。它们用于此前数据来源及配置对齐实验。
-- `eegfm_alignment_v2/model_inputs`：按实验 profile 和模型区分的预处理
-  输入。最新 `wideband_npy_v3` 在全场次源上只选择 `0train`。
-- `eegfm_alignment_v2/mne_data`：此前参考流程的原始下载缓存。
+```text
+/data1/llx/BNCI2014001/broadband_0p1_75hz/
+├── X.npy
+├── labels.npy
+├── y.npy
+├── meta.csv
+├── trials.csv
+├── legacy_row_mapping.csv
+├── manifest.json
+├── verification.json
+└── raw/
+```
 
-旧参考文件有一部分是 Git LFS 指针，其真实内容曾存于 `.git/lfs`。
-共享读取函数会验证并解析外置 LFS 实体，避免把指针当作 NPY/MAT 读取。
+该版本包含 9 位被试、`0train` 与 `1test` 的全部 5184 trials。
+`X.npy` 为 float64，形状 `(5184, 22, 1001)`，250 Hz，源频带 0.1–75 Hz。
+`raw/` 保存生成该版本使用的原始 MAT。标签、通道顺序、场次/run、物理
+trial UID、软件版本及文件哈希一同保存，其他项目可以直接读取。
+共享源不按某个模型的要求执行 CAR、EA、重采样或通道插值。
 
-## 路径切换与校验
+已有预训练权重继续使用 `/data1/llx/pre_weight/`。
 
-迁移记录保存到 `/data1/llx/storage_migration_20261007.json`。复制采用
-rsync，并逐目录执行 checksum 比较；清理旧副本必须以完整校验为前提。
-历史 manifest 不改字节内容，以保留已记录的来源和哈希；其中旧绝对路径
-通过共享函数映射到外置位置。迁移不修改数据值、session 或训练超参数。
+## 项目专用文件
 
-数据写入、原子 checkpoint 写入及训练输出入口执行外置路径检查。
-项目目录保留代码、配置、trial 清单和文档，不建立数据目录兼容软链接。
+```text
+/data1/llx/BigSmallcollab/
+├── cache/        # 模型预处理输入、协议筛选输入等
+├── results/      # 实验日志、指标、预测、教师目标、训练 checkpoint
+├── weights/      # 项目维护的模型权重
+├── git_lfs/      # 历史实验产物的本地 Git LFS 实体
+└── migrations/   # 目录迁移与校验记录
+```
+
+模型输入存放在
+`cache/eegfm_alignment_v2/model_inputs/`。最新 `wideband_npy_v3` 从共享
+14001 全场次 NPY 中只选择 `0train`；二分类再选择左右手。MIRepNet 和
+CBraMod 各有自己的预处理输入，不复制一份新的共享数据集。
+
+历史 `cache/eegfm_alignment_v2/rebuilt/` 已经筛选实验所需的单个场次，
+其中 001-4 还裁至 1000 点。它们属于此前配置对齐实验的协议输入，保留在
+项目目录下。历史 `mne_data/` 和对应 LFS 实体也按旧实验来源保存。
+
+## 路径迁移与数据身份
+
+`experiments/storage.py` 集中定义共享数据集根目录、项目数据根目录和
+新版 14001 路径。读取历史项目路径和此前的外置路径时，通过 resolver
+映射到新目录；不创建工作树内的数据兼容软链接。
+
+历史 manifest、trial 表及结果记录保留原字节内容和哈希，避免影响已完成
+实验的追溯以及训练断点恢复。迁移只调整存储位置，不改变 EEG 数值、
+session、类别、模型超参数或随机种子。实际目录移动前先保存训练断点，
+完成后按原实验配置恢复后台队列。
+
+数据写入和原子 checkpoint 写入经过外置路径检查。新增通用源数据放入
+对应独立数据集目录；新增项目输入、教师目标、训练权重和结果放入
+`/data1/llx/BigSmallcollab` 的相应子目录。

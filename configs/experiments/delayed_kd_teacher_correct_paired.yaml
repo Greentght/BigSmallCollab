@@ -13,8 +13,8 @@ val_split: 0.7
 seed: 666
 teacher: mirepnet
 student: ifnet
-artifact_root: /data1/llx/BigSmallCollab_results/artifacts
-output_dir: /data1/llx/BigSmallCollab_results/distill/delayed_kd_teacher_correct_paired
+artifact_root: /data1/llx/BigSmallcollab/results/artifacts
+output_dir: /data1/llx/BigSmallcollab/results/distill/delayed_kd_teacher_correct_paired
 
 epochs: 100
 warmup_epochs: 10

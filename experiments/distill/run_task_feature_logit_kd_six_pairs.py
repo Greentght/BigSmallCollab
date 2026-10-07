@@ -60,8 +60,8 @@ TEMPERATURE_KD = 2.0
 LAM_KD = 0.5
 LAM_FEATURE = 1.0
 FEATURE_EPS = 1e-8
-OUTPUT_ROOT = Path('/data1/llx/BigSmallCollab_results') / 'distill' / 'task_feature_logit_kd_six_pairs_seed666'
-MAIN_CSV = Path('/data1/llx/BigSmallCollab_results') / 'distill' / 'task_feature_logit_kd_six_pairs_seed666.csv'
+OUTPUT_ROOT = Path('/data1/llx/BigSmallcollab/results') / 'distill' / 'task_feature_logit_kd_six_pairs_seed666'
+MAIN_CSV = Path('/data1/llx/BigSmallcollab/results') / 'distill' / 'task_feature_logit_kd_six_pairs_seed666.csv'
 
 
 def parse_args(argv=None):
@@ -908,7 +908,7 @@ def main(argv=None):
         raise RuntimeError(f'output directory is non-empty; use --resume or --force: {output_root}')
     if args.force:
         resolved = output_root.resolve()
-        allowed = (Path('/data1/llx/BigSmallCollab_results') / 'distill' / 'task_feature_logit_kd_six_pairs_seed666').resolve()
+        allowed = (Path('/data1/llx/BigSmallcollab/results') / 'distill' / 'task_feature_logit_kd_six_pairs_seed666').resolve()
         if resolved != allowed:
             raise ValueError('--force is restricted to the dedicated six-pair output directory')
     device = device_for(args.gpu)

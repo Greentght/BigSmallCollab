@@ -22,7 +22,7 @@ import time
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
-from experiments.storage import (DATA_CACHE_ROOT, RESULTS_ROOT,
+from experiments.storage import (BNCI14001_SOURCE_ROOT, DATA_CACHE_ROOT, RESULTS_ROOT,
                                  require_external_output, resolve_local_file)
 PYTHONS = {
     'cbramod': Path('/home/lixinli/anaconda3/envs/cbramod/bin/python'),
@@ -44,7 +44,7 @@ SUBJECTS = tuple(range(1, 10))
 TASKS = tuple((dataset, model, seed) for seed in SEEDS for dataset, model in COMBINATIONS)
 EXPECTED_EPOCHS = {(dataset, model): (10 if model == 'mirepnet' and dataset == 'BNCI2014001' else 20)
                    for dataset, model in COMBINATIONS}
-SOURCE_MANIFEST = DATA_CACHE_ROOT / 'loso_source_v3/BNCI2014001/manifest.json'
+SOURCE_MANIFEST = BNCI14001_SOURCE_ROOT / 'manifest.json'
 PREFLIGHT_LOGS = RESULT_ROOT / PROFILE / 'audit/preflight'
 WORKER_LOGS = EXEC / 'wideband_14001_loso_workers'
 ALLOWED_GPUS = tuple(range(1, 10))

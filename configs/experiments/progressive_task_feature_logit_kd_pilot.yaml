@@ -14,8 +14,8 @@ seed: 666
 pre_teacher: mirepnet
 ft_teacher: mirepnet
 student: ifnet
-artifact_root: /data1/llx/BigSmallCollab_results/artifacts
-output_dir: /data1/llx/BigSmallCollab_results/distill/progressive_task_feature_logit_kd_pilot
+artifact_root: /data1/llx/BigSmallcollab/results/artifacts
+output_dir: /data1/llx/BigSmallcollab/results/distill/progressive_task_feature_logit_kd_pilot
 
 epochs: 100
 prealign_epochs: 10

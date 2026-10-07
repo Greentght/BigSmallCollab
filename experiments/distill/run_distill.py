@@ -580,7 +580,7 @@ def _default_out_csv(args, datasets, teachers, students, protocol):
     out_dir = os.environ.get(
         'REPRO_OUT',
         os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-                     '/data1/llx/BigSmallCollab_results'),
+                     '/data1/llx/BigSmallcollab/results'),
     )
     if len(datasets) == len(teachers) == len(students) == 1:
         name = f'{datasets[0]}_{protocol}_distill_{teachers[0]}_to_{students[0]}.csv'

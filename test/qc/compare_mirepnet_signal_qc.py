@@ -59,7 +59,7 @@ ZERO_DIFF_EPS_MULTIPLIER = 10.0
 RANDOM_MASKS = 20
 METHOD_VERSION = "mirepnet_signal_qc_v1"
 DEFAULT_OUTPUT = (
-    Path('/data1/llx/BigSmallCollab_results/qc_artifacts') / "qc_v1"
+    Path('/data1/llx/BigSmallcollab/results/qc_artifacts') / "qc_v1"
     / "mirepnet_vs_signal_qc" / DATASET / SUBJECT_NAME / PROTOCOL
 )
 SIGNAL_FEATURES = (
@@ -1045,7 +1045,7 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     mode.add_argument("--score-only", action="store_true")
     mode.add_argument("--smoke", action="store_true")
     mode.add_argument("--formal", action="store_true")
-    parser.add_argument("--artifact-root", type=Path, default=Path('/data1/llx/BigSmallCollab_results') / "artifacts")
+    parser.add_argument("--artifact-root", type=Path, default=Path('/data1/llx/BigSmallcollab/results') / "artifacts")
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--epochs", type=int, default=None,

@@ -37,7 +37,7 @@ from experiments.storage import external_path, require_external_output, resolve_
 DATASET = 'BNCI2014004'
 PROJECT_PROTOCOL = 'loso_benchmark_session3_4s_v1'
 EEGFM_CB_FULL_PROTOCOL = 'loso_eegfm_cbfull_session3_4s_v1'
-RESULTS_ROOT = Path('/data1/llx/BigSmallCollab_results') / 'reproductions'
+RESULTS_ROOT = Path('/data1/llx/BigSmallcollab/results') / 'reproductions'
 EEGFM_CONFIG = Path('/home/lixinli/EEG-FM-Benchmark/config/BNCI2014004.json')
 SEEDS = (666, 667, 668)
 EEGFM_SEEDS = (0, 1, 2)

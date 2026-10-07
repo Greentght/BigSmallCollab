@@ -60,10 +60,10 @@ WARMUP_EPOCHS = 10
 PROTO_EPS = 1e-12
 INIT_ARGS = SimpleNamespace(epochs=None, lr=None, weight_decay=None, batch_size=None)
 DEFAULT_CONFIG = ROOT / "configs/experiments/distill_kd_mi_proto_mask_warmup10.yaml"
-DEFAULT_OUTPUT = Path("/data1/llx/BigSmallCollab_results/distill/kd_mi_proto_mask_warmup10")
-MAIN_CSV = Path("/data1/llx/BigSmallCollab_results/distill/kd_mi_proto_mask_warmup10_pairs.csv")
-OLD_MI_CSV = Path("/data1/llx/BigSmallCollab_results/distill/distill_mi.csv")
-OLD_MASK_ROOT = Path("/data1/llx/BigSmallCollab_results/distill/kd_mi_teacher_correct_mask_pilot")
+DEFAULT_OUTPUT = Path("/data1/llx/BigSmallcollab/results/distill/kd_mi_proto_mask_warmup10")
+MAIN_CSV = Path("/data1/llx/BigSmallcollab/results/distill/kd_mi_proto_mask_warmup10_pairs.csv")
+OLD_MI_CSV = Path("/data1/llx/BigSmallcollab/results/distill/distill_mi.csv")
+OLD_MASK_ROOT = Path("/data1/llx/BigSmallcollab/results/distill/kd_mi_teacher_correct_mask_pilot")
 PAIR_TEACHER = "mirepnet"
 PAIR_STUDENT = "ifnet"
 TRAIN_LR = .001
@@ -212,7 +212,7 @@ def _capture_student_state(student_cfg, num_classes):
     return state
 
 def _artifact_path(cfg, dataset, subject_index):
-    root = external_path(cfg.get("artifact_root", "/data1/llx/BigSmallCollab_results/artifacts"))
+    root = external_path(cfg.get("artifact_root", "/data1/llx/BigSmallcollab/results/artifacts"))
     if not root.is_absolute(): root = ROOT / root
     path = root / dataset / PAIR_TEACHER / f"{subject_index}_{SEED}_train.npz"
     _proto.validate_train_path(path)
@@ -722,7 +722,7 @@ def main(argv=None):
     global PAIR_TEACHER, PAIR_STUDENT, MAIN_CSV
     config_path=Path(args.config); config_path=ROOT/config_path if not config_path.is_absolute() else config_path; cfg=yaml.safe_load(resolve_local_file(config_path).read_text()); _validate_config(cfg)
     PAIR_TEACHER=str(cfg['teacher']).lower(); PAIR_STUDENT=str(cfg['student']).lower()
-    main_csv_cfg=cfg.get('main_csv', str(Path('/data1/llx/BigSmallCollab_results/distill') / f'kd_mi_proto_mask_warmup10_{PAIR_TEACHER}__{PAIR_STUDENT}.csv'))
+    main_csv_cfg=cfg.get('main_csv', str(Path('/data1/llx/BigSmallcollab/results/distill') / f'kd_mi_proto_mask_warmup10_{PAIR_TEACHER}__{PAIR_STUDENT}.csv'))
     MAIN_CSV=require_external_output(main_csv_cfg)
     output_root=require_external_output(cfg.get('output_dir',DEFAULT_OUTPUT))
     if output_root.exists() and any(output_root.iterdir()) and not args.resume: raise RuntimeError(f'formal output is non-empty; use --resume: {output_root}')

@@ -29,9 +29,9 @@ import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
-from experiments.storage import (DATA_CACHE_ROOT, RESULTS_ROOT,
+from experiments.storage import (BNCI14001_SOURCE_ROOT, DATA_CACHE_ROOT,
                                  require_external_output, resolve_local_file)
-OUTPUT = DATA_CACHE_ROOT / 'loso_source_v3/BNCI2014001'
+OUTPUT = BNCI14001_SOURCE_ROOT
 V2_ROOT = DATA_CACHE_ROOT / 'eegfm_alignment_v2'
 LEGACY = Path('/data1/llx/BNCI2014001')
 CLASS_MAP = {'left_hand': 0, 'right_hand': 1, 'feet': 2, 'tongue': 3}

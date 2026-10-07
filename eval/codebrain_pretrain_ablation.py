@@ -3,7 +3,7 @@
 
 The subject is the statistical unit. Each pair is admitted only when labels,
 sample UIDs, and split policy match exactly. Reports are written to
-``/data1/llx/BigSmallCollab_results/codebrain/pretrain_ablation_seed666`` by default.
+``/data1/llx/BigSmallcollab/results/codebrain/pretrain_ablation_seed666`` by default.
 """
 
 from __future__ import annotations

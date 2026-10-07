@@ -86,10 +86,10 @@ COMPARISONS = (
     ("KD_MI_TCORRECT_MASK", "CE_MI"),
 )
 DEFAULT_CONFIG = ROOT / "configs/experiments/distill_kd_mi_teacher_correct_mask_pilot.yaml"
-DEFAULT_OUTPUT = Path("/data1/llx/BigSmallCollab_results/distill/kd_mi_teacher_correct_mask_pilot")
-TOTAL_CSV = Path("/data1/llx/BigSmallCollab_results/distill/kd_mi_teacher_correct_mask_pilot.csv")
-OLD_CSV = Path("/data1/llx/BigSmallCollab_results/distill/distill_mi.csv")
-OLD_ROOT = Path("/data1/llx/BigSmallCollab_results/distill/distill_mi")
+DEFAULT_OUTPUT = Path("/data1/llx/BigSmallcollab/results/distill/kd_mi_teacher_correct_mask_pilot")
+TOTAL_CSV = Path("/data1/llx/BigSmallcollab/results/distill/kd_mi_teacher_correct_mask_pilot.csv")
+OLD_CSV = Path("/data1/llx/BigSmallcollab/results/distill/distill_mi.csv")
+OLD_ROOT = Path("/data1/llx/BigSmallcollab/results/distill/distill_mi")
 INIT_ARGS = SimpleNamespace(
     epochs=None, lr=None, weight_decay=None, batch_size=None,
 )
@@ -388,7 +388,7 @@ def _preflight_units(cfg):
 
 
 def configured_artifact_path(cfg, dataset, subject_index):
-    root = external_path(cfg.get("artifact_root", "/data1/llx/BigSmallCollab_results/artifacts"))
+    root = external_path(cfg.get("artifact_root", "/data1/llx/BigSmallcollab/results/artifacts"))
     if not root.is_absolute():
         root = ROOT / root
     return root / dataset / "mirepnet" / f"{subject_index}_{SEED}_train.npz"

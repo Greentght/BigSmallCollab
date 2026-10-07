@@ -37,7 +37,7 @@ from experiments.storage import external_path, require_external_output, resolve_
 
 DATASETS = ("BNCI2014001", "BNCI2014004", "BNCI2015001", "AlexMI")
 CONDITIONS = ("DELAYED_KD_ALL", "DELAYED_KD_TCORRECT")
-LEGACY_CSV = Path("/data1/llx/BigSmallCollab_results/distill/prealign_delayed_kd_pilot.csv")
+LEGACY_CSV = Path("/data1/llx/BigSmallcollab/results/distill/prealign_delayed_kd_pilot.csv")
 
 
 def _args():

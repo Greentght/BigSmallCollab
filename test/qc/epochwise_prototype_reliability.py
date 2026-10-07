@@ -4,7 +4,7 @@
 This is an independent, train-only diagnostic.  It reproduces the existing
 adapter training loop with the resolved model configuration, takes fixed
 epoch snapshots, and immediately evaluates those snapshots on the same 30%
-train split.  It never writes ``/data1/llx/BigSmallCollab_results/artifacts`` and it has no test-split
+train split.  It never writes ``/data1/llx/BigSmallcollab/results/artifacts`` and it has no test-split
 input path or test-evaluation branch.
 
 The current BNCI2015001 configuration has different training lengths
@@ -62,8 +62,8 @@ DEFAULT_PROTOCOL = "fewshot"
 DEFAULT_FM = "mirepnet"
 DEFAULT_SM = "ifnet"
 DEFAULT_SEEDS = (666, 667, 668)
-DEFAULT_ARTIFACT_ROOT = Path('/data1/llx/BigSmallCollab_results') / "artifacts"
-FORMAL_OUTPUT_ROOT = Path('/data1/llx/BigSmallCollab_results/qc_artifacts') / "relation_gap" / "epochwise_prototype_reliability"
+DEFAULT_ARTIFACT_ROOT = Path('/data1/llx/BigSmallcollab/results') / "artifacts"
+FORMAL_OUTPUT_ROOT = Path('/data1/llx/BigSmallcollab/results/qc_artifacts') / "relation_gap" / "epochwise_prototype_reliability"
 EXPECTED_N = 60
 BASE_OBSERVATION_EPOCHS = (1, 2, 3, 5, 10)
 MIN_DISAGREEMENT_DESCRIPTIVE = 2
@@ -970,7 +970,7 @@ def build_report(config: Mapping[str, Any], summary: Mapping[str, Any],
              f"- Fixed shared observations: `{config['base_observation_epochs']}`; configured schedule: `{[r['epoch'] for r in config['observation_schedule']]}`",
              f"- Feature dimensions: `{config['feature_dimensions']}`", "",
              "## Snapshot and data provenance", "",
-             "No formal training code, loss, KD/fusion logic, checkpoint, baseline, or `/data1/llx/BigSmallCollab_results/artifacts` file was modified. Snapshots are independent `.npz` inference exports written below this diagnostic directory.",
+             "No formal training code, loss, KD/fusion logic, checkpoint, baseline, or `/data1/llx/BigSmallcollab/results/artifacts` file was modified. Snapshots are independent `.npz` inference exports written below this diagnostic directory.",
              "Only train artifacts were opened. No `*_test.npz` was opened and no test feature, label, logit, prediction, threshold, or routing decision was used.",
              f"Snapshot method: {provenance['snapshot_method']}",
              f"Session provenance: {provenance['session_provenance']}",

@@ -7,9 +7,9 @@ val_split: 0.7
 seed: 666
 teacher: mirepnet
 student: ifnet
-artifact_root: /data1/llx/BigSmallCollab_results/artifacts
-output_dir: /data1/llx/BigSmallCollab_results/distill/bnci2014001_4_supplement/stage3_proto_no_warmup
-main_csv: /data1/llx/BigSmallCollab_results/distill/bnci2014001_4_supplement/stage3_proto_no_warmup.csv
+artifact_root: /data1/llx/BigSmallcollab/results/artifacts
+output_dir: /data1/llx/BigSmallcollab/results/distill/bnci2014001_4_supplement/stage3_proto_no_warmup
+main_csv: /data1/llx/BigSmallcollab/results/distill/bnci2014001_4_supplement/stage3_proto_no_warmup.csv
 supplement_mode: true
 epochs: 100
 optimizer: adamw

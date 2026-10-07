@@ -9,7 +9,7 @@ data:
   reference_session: 0train
   subjects: 9
   trials: 2592
-  trial_mapping: /data1/llx/data_cache/eegfm_alignment_v2/rebuilt/BNCI2014001-4/legacy_row_mapping.csv
+  trial_mapping: /data1/llx/BigSmallcollab/cache/eegfm_alignment_v2/rebuilt/BNCI2014001-4/legacy_row_mapping.csv
   mapping_policy: preserve_moabb_trial_uid_order_and_reference_class_map
   npy_source_window: first_1000_samples_from_1001_sample_legacy_epochs
   native_sampling_rate_hz: 250

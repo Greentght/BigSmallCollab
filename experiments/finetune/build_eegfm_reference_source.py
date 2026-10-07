@@ -4,8 +4,8 @@
 Run with the isolated MOABB 1.2 overlay and a writable MNE_DATA directory:
 
   PYTHONPATH=/tmp/loso_alignment_deps_moabb \
-  MNE_DATA=/data1/llx/data_cache/eegfm_alignment_v2/mne_data \
-  MNE_DATASETS_BNCI_PATH=/data1/llx/data_cache/eegfm_alignment_v2/mne_data \
+  MNE_DATA=/data1/llx/BigSmallcollab/cache/eegfm_alignment_v2/mne_data \
+  MNE_DATASETS_BNCI_PATH=/data1/llx/BigSmallcollab/cache/eegfm_alignment_v2/mne_data \
   conda run -n cbramod python experiments/finetune/build_eegfm_reference_source.py
 
 This script only builds reference-source arrays and a verified row mapping. It

@@ -38,8 +38,8 @@ SPEC_PATH = ROOT / 'configs/reproductions/loso_five_datasets_v1.yaml'
 SNAPSHOT_PATH = ROOT / 'configs/reproductions/manifests/loso_five_datasets_v1_sources.json'
 TRIALS_PATH = ROOT / 'configs/reproductions/manifests/loso_five_datasets_v1_trials.csv'
 PROTOCOL = 'loso_five_settings_canonical4s_v1'
-RESULTS_ROOT = Path('/data1/llx/BigSmallCollab_results/reproductions') / PROTOCOL
-LEGACY_004 = Path('/data1/llx/BigSmallCollab_results/reproductions/loso_benchmark_session3_4s_v1')
+RESULTS_ROOT = Path('/data1/llx/BigSmallcollab/results/reproductions') / PROTOCOL
+LEGACY_004 = Path('/data1/llx/BigSmallcollab/results/reproductions/loso_benchmark_session3_4s_v1')
 DATASET_NAMES = ('BNCI2014001', 'BNCI2014001-4', 'BNCI2014004',
                  'BNCI2015001', 'AlexMI')
 MODEL_NAMES = ('mirepnet', 'cbramod')

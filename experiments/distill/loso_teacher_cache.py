@@ -28,7 +28,7 @@ from experiments.storage import external_path, require_external_output, resolve_
 
 ROOT = protocol.ROOT
 PROTOCOL = 'loso_five_settings_kd_feature_warmup10_v1'
-CACHE_ROOT = Path('/data1/llx/BigSmallCollab_results/distill') / PROTOCOL / 'teacher_cache'
+CACHE_ROOT = Path('/data1/llx/BigSmallcollab/results/distill') / PROTOCOL / 'teacher_cache'
 TEACHERS = ('mirepnet', 'cbramod')
 CACHE_VERSION = 1
 _HASHES = {}

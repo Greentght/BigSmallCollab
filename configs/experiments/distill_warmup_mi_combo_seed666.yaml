@@ -12,9 +12,9 @@ val_split: 0.7
 seed: 666
 teacher: mirepnet
 student: ifnet
-artifact_root: /data1/llx/BigSmallCollab_results/artifacts
-output_dir: /data1/llx/BigSmallCollab_results/distill/warmup_mi_combo_seed666
-main_csv: /data1/llx/BigSmallCollab_results/distill/warmup_mi_combo_seed666.csv
+artifact_root: /data1/llx/BigSmallcollab/results/artifacts
+output_dir: /data1/llx/BigSmallcollab/results/distill/warmup_mi_combo_seed666
+main_csv: /data1/llx/BigSmallcollab/results/distill/warmup_mi_combo_seed666.csv
 epochs: 100
 optimizer: adamw
 lr: 0.001

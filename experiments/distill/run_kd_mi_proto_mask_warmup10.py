@@ -62,10 +62,10 @@ WARMUP_EPOCHS = 10
 PROTO_EPS = 1e-12
 INIT_ARGS = SimpleNamespace(epochs=None, lr=None, weight_decay=None, batch_size=None)
 DEFAULT_CONFIG = ROOT / "configs/experiments/distill_kd_mi_proto_mask_warmup10.yaml"
-DEFAULT_OUTPUT = Path("/data1/llx/BigSmallCollab_results/distill/kd_mi_proto_mask_warmup10")
-MAIN_CSV = Path("/data1/llx/BigSmallCollab_results/distill/kd_mi_proto_mask_warmup10.csv")
-OLD_MI_CSV = Path("/data1/llx/BigSmallCollab_results/distill/distill_mi.csv")
-OLD_MASK_ROOT = Path("/data1/llx/BigSmallCollab_results/distill/kd_mi_teacher_correct_mask_pilot")
+DEFAULT_OUTPUT = Path("/data1/llx/BigSmallcollab/results/distill/kd_mi_proto_mask_warmup10")
+MAIN_CSV = Path("/data1/llx/BigSmallcollab/results/distill/kd_mi_proto_mask_warmup10.csv")
+OLD_MI_CSV = Path("/data1/llx/BigSmallcollab/results/distill/distill_mi.csv")
+OLD_MASK_ROOT = Path("/data1/llx/BigSmallcollab/results/distill/kd_mi_teacher_correct_mask_pilot")
 
 
 def _json(x):
@@ -199,7 +199,7 @@ def _student_cfg(dataset):
 
 
 def _artifact_path(cfg, dataset, subject_index):
-    root = external_path(cfg.get("artifact_root", "/data1/llx/BigSmallCollab_results/artifacts"))
+    root = external_path(cfg.get("artifact_root", "/data1/llx/BigSmallcollab/results/artifacts"))
     if not root.is_absolute(): root = ROOT / root
     path = root / dataset / "mirepnet" / f"{subject_index}_{SEED}_train.npz"
     _proto.validate_train_path(path)

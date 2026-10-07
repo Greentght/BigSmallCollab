@@ -2,7 +2,7 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-log_dir="/data1/llx/BigSmallCollab_results/reproductions/loso_five_settings_canonical4s_v1/execution_logs"
+log_dir="/data1/llx/BigSmallcollab/results/reproductions/loso_five_settings_canonical4s_v1/execution_logs"
 conda_bin="/home/lixinli/anaconda3/bin/conda"
 gpu="${GPU:-8}"
 mkdir -p "${log_dir}"

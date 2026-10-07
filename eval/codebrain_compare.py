@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Strict, sample-aligned comparison of CodeBrain and EEG baselines.
 
-Artifacts are read from ``/data1/llx/BigSmallCollab_results/artifacts/<dataset>/<model>/`` by default.
+Artifacts are read from ``/data1/llx/BigSmallcollab/results/artifacts/<dataset>/<model>/`` by default.
 Each expected file is ``<subject0>_<seed>_test.npz`` with ``logits``, ``y``,
 ``sample_uid`` and ``split_policy`` fields. Results are written to
-``/data1/llx/BigSmallCollab_results/codebrain/comparison``. Model-specific roots can be supplied with
+``/data1/llx/BigSmallcollab/results/codebrain/comparison``. Model-specific roots can be supplied with
 ``--model-root MODEL=PATH``; each root must contain the usual
 ``<dataset>/<model>/<subject0>_<seed>_test.npz`` layout.
 

@@ -11,7 +11,7 @@ pool is constructed.
 
 Examples
 --------
-Analysis (the default output is under /data1/llx/BigSmallCollab_results/qc_artifacts/relation_gap/...):
+Analysis (the default output is under /data1/llx/BigSmallcollab/results/qc_artifacts/relation_gap/...):
 
     python test/qc/teacher_student_relation_gap.py analyze
 
@@ -108,7 +108,7 @@ def read_json(path: Path) -> Any:
 
 
 def default_output_root(dataset: str, subject: int, protocol: str = "fewshot") -> Path:
-    return (Path('/data1/llx/BigSmallCollab_results/qc_artifacts') / "relation_gap" / "teacher_student_relation_gap"
+    return (Path('/data1/llx/BigSmallcollab/results/qc_artifacts') / "relation_gap" / "teacher_student_relation_gap"
             / dataset / f"S{int(subject) + 1}" / protocol)
 
 
@@ -1418,7 +1418,7 @@ def add_common_arguments(p: argparse.ArgumentParser) -> None:
     p.add_argument("--bad-uid", type=int, nargs=2, default=list(DEFAULT_BAD_UID),
                    metavar=("SUBJECT_ID", "TRIAL_ID"))
     p.add_argument("--artifact-root", type=Path,
-                   default=Path('/data1/llx/BigSmallCollab_results') / "artifacts")
+                   default=Path('/data1/llx/BigSmallcollab/results') / "artifacts")
     p.add_argument("--out-dir", type=Path, default=None)
     p.add_argument("--val-split", type=float, default=DEFAULT_VAL_SPLIT)
     p.add_argument("--n-random-masks", type=int, default=DEFAULT_N_RANDOM_MASKS)

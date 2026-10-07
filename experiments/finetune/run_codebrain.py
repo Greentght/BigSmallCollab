@@ -96,7 +96,7 @@ SESSIONS = {
 SPLIT_POLICY = split_utils.FEWSHOT_SPLIT_POLICY
 REFERENCE_MODELS = ('mirepnet', 'cbramod')
 ARTIFACT_MODEL = {'pretrained': 'codebrain', 'random': 'codebrain_random'}
-RESULTS_ROOT = Path('/data1/llx/BigSmallCollab_results') / 'codebrain'
+RESULTS_ROOT = Path('/data1/llx/BigSmallcollab/results') / 'codebrain'
 MODEL_YAML = Path(__file__).resolve().parents[2] / 'configs' / 'models' / 'codebrain.yaml'
 DATASET_YAMLS = {
     dataset: Path(__file__).resolve().parents[2] / 'configs' / 'datasets' / f'{dataset}.yaml'

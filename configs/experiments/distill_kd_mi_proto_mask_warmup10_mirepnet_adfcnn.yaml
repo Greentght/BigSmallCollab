@@ -12,8 +12,8 @@ val_split: 0.7
 seed: 666
 teacher: mirepnet
 student: adfcnn
-artifact_root: /data1/llx/BigSmallCollab_results/artifacts
-output_dir: /data1/llx/BigSmallCollab_results/distill/kd_mi_proto_mask_warmup10/mirepnet__adfcnn
+artifact_root: /data1/llx/BigSmallcollab/results/artifacts
+output_dir: /data1/llx/BigSmallcollab/results/distill/kd_mi_proto_mask_warmup10/mirepnet__adfcnn
 epochs: 100
 warmup_epochs: 10
 optimizer: adamw
@@ -33,4 +33,4 @@ conditions:
   - KD_PROTO
   - MI_PROTO
   - KD_MI_PROTO
-main_csv: /data1/llx/BigSmallCollab_results/distill/kd_mi_proto_mask_warmup10_mirepnet__adfcnn.csv
+main_csv: /data1/llx/BigSmallcollab/results/distill/kd_mi_proto_mask_warmup10_mirepnet__adfcnn.csv

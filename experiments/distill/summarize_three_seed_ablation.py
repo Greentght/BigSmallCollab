@@ -20,7 +20,7 @@ SOURCES = {
     'BNCI2015001': ('BNCI2015001',),
     'AlexMI': ('AlexMI',),
 }
-OUT = Path('/data1/llx/BigSmallCollab_results/distill/three_seed_ablation')
+OUT = Path('/data1/llx/BigSmallcollab/results/distill/three_seed_ablation')
 OUT.mkdir(parents=True, exist_ok=True)
 
 
@@ -41,8 +41,8 @@ def write_csv(path, rows):
 
 
 def seed_root(seed):
-    if seed == 666: return Path('/data1/llx/BigSmallCollab_results/distill/seed666_three_ablation')
-    return ROOT / f'/data1/llx/BigSmallCollab_results/distill/three_seed_ablation_seed{seed}'
+    if seed == 666: return Path('/data1/llx/BigSmallcollab/results/distill/seed666_three_ablation')
+    return ROOT / f'/data1/llx/BigSmallcollab/results/distill/three_seed_ablation_seed{seed}'
 
 
 all_rows=[]; teacher_rows=[]; perf_by_seed={}; delta_by_seed={}; source_arrays={}

@@ -17,13 +17,13 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
-from experiments.storage import (DATA_CACHE_ROOT, RESULTS_ROOT,
+from experiments.storage import (BNCI14001_SOURCE_ROOT,
                                  require_external_output, resolve_local_file)
 
 from experiments.finetune.export_bnci14001_all_sessions import entity, sha256, write_json
 from experiments.finetune import prepare_loso_alignment_inputs as reference
 
-SOURCE = DATA_CACHE_ROOT / 'loso_source_v3/BNCI2014001'
+SOURCE = BNCI14001_SOURCE_ROOT
 PROFILE = 'wideband_npy_v3'
 VARIANT = 'all_sessions_source_train_session'
 DATASETS = ('BNCI2014001', 'BNCI2014001-4')

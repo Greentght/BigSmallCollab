@@ -7,9 +7,9 @@ val_split: 0.7
 seed: 666
 teacher: mirepnet
 student: ifnet
-artifact_root: /data1/llx/BigSmallCollab_results/artifacts
-output_dir: /data1/llx/BigSmallCollab_results/distill/bnci2014001_4_supplement/stage2_teacher_correct_mask
-main_csv: /data1/llx/BigSmallCollab_results/distill/bnci2014001_4_supplement/stage2_teacher_correct_mask.csv
+artifact_root: /data1/llx/BigSmallcollab/results/artifacts
+output_dir: /data1/llx/BigSmallcollab/results/distill/bnci2014001_4_supplement/stage2_teacher_correct_mask
+main_csv: /data1/llx/BigSmallcollab/results/distill/bnci2014001_4_supplement/stage2_teacher_correct_mask.csv
 supplement_mode: true
 epochs: 100
 optimizer: adamw

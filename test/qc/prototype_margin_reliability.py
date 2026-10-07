@@ -39,8 +39,8 @@ DEFAULT_PROTOCOL = "fewshot"
 DEFAULT_FM = "mirepnet"
 DEFAULT_SM = "ifnet"
 DEFAULT_SEEDS = (666, 667, 668)
-DEFAULT_ARTIFACT_ROOT = Path('/data1/llx/BigSmallCollab_results') / "artifacts"
-FORMAL_OUTPUT_ROOT = Path('/data1/llx/BigSmallCollab_results/qc_artifacts') / "relation_gap" / "prototype_margin_reliability"
+DEFAULT_ARTIFACT_ROOT = Path('/data1/llx/BigSmallcollab/results') / "artifacts"
+FORMAL_OUTPUT_ROOT = Path('/data1/llx/BigSmallcollab/results/qc_artifacts') / "relation_gap" / "prototype_margin_reliability"
 DEFAULT_EPSILON = 1e-12
 EXPECTED_N = 60
 

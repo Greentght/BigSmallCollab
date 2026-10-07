@@ -4,9 +4,14 @@
 
 - User requirement: never save datasets, raw EEG downloads, preprocessing caches,
   teacher targets, model weights, or training checkpoints inside this checkout.
-- Store those files under `/data1/llx`. Defaults are
-  `/data1/llx/data_cache`, `/data1/llx/BigSmallCollab_results`,
-  `/data1/llx/BigSmallCollab_weights`, and `/data1/llx/BigSmallCollab_git_lfs`.
+- Shared datasets belong in `/data1/llx/<dataset-name>/` and must be reusable
+  across projects. Preserve existing versions; put new source variants in
+  clearly named subdirectories, such as
+  `/data1/llx/BNCI2014001/broadband_0p1_75hz/` for all-session broadband NPYs.
+- Project-specific inputs, caches, teacher targets, results and checkpoints
+  belong under `/data1/llx/BigSmallcollab/`, with `cache`, `results`, `weights`,
+  `git_lfs` and `migrations` subdirectories. Do not create another top-level
+  `data_cache` or scattered `BigSmallCollab_*` directories.
 - Existing datasets in `/data1/llx/BNCI*` and pretrained weights in
   `/data1/llx/pre_weight` remain valid inputs.
 - Use `experiments.storage` to resolve historical artifact paths and enforce

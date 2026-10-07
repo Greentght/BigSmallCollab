@@ -250,8 +250,8 @@ def _validate_common(raw: Mapping, kind: str) -> dict:
     seeds = _int_list(raw.get("seeds"), "seeds", allow_none=True)
     if subjects is not None and any(subject < 0 for subject in subjects):
         _fail("subjects", "must contain only non-negative indices")
-    artifact_root = raw.get("artifact_root", "/data1/llx/BigSmallCollab_results/artifacts")
-    output_dir = raw.get("output_dir", f"/data1/llx/BigSmallCollab_results/{kind}")
+    artifact_root = raw.get("artifact_root", "/data1/llx/BigSmallcollab/results/artifacts")
+    output_dir = raw.get("output_dir", f"/data1/llx/BigSmallcollab/results/{kind}")
     for field, value in (("artifact_root", artifact_root), ("output_dir", output_dir)):
         if not isinstance(value, str) or not value:
             _fail(field, "must be a non-empty string")

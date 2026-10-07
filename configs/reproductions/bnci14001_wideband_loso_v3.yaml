@@ -2,7 +2,7 @@ protocol_id: bnci14001_wideband_loso_v3_20261007
 worker_profile: wideband_npy_v3
 input_variant: all_sessions_source_train_session
 source:
-  directory: /data1/llx/data_cache/loso_source_v3/BNCI2014001
+  directory: /data1/llx/BNCI2014001/broadband_0p1_75hz
   dataset: BNCI2014001
   export_script: experiments/finetune/export_bnci14001_all_sessions.py
   array_shape: [5184, 22, 1001]
@@ -98,5 +98,5 @@ execution:
   minimum_free_memory_mib: 10000
   maximum_gpu_utilization_percent: 40
   resume: checkpoint_validated_against_config_input_and_weight_hashes
-  results_directory: /data1/llx/BigSmallCollab_results/reproductions/loso_config_alignment_v2/wideband_npy_v3
-  status_path: /data1/llx/BigSmallCollab_results/reproductions/loso_source_v3/execution_logs/wideband_14001_loso_status.json
+  results_directory: /data1/llx/BigSmallcollab/results/reproductions/loso_config_alignment_v2/wideband_npy_v3
+  status_path: /data1/llx/BigSmallcollab/results/reproductions/loso_source_v3/execution_logs/wideband_14001_loso_status.json

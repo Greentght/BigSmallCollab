@@ -1,4 +1,4 @@
-"""Shared paths for experiment data and artifacts stored outside the checkout.
+"""Shared datasets and project-owned artifacts stored outside the checkout.
 
 Historical paths in manifests may still name ``data_cache``, ``results`` or
 ``weights`` inside the project. Resolve them here before reading or writing.
@@ -12,10 +12,24 @@ import re
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-DATA_CACHE_ROOT = Path('/data1/llx/data_cache')
-RESULTS_ROOT = Path('/data1/llx/BigSmallCollab_results')
-WEIGHTS_ROOT = Path('/data1/llx/BigSmallCollab_weights')
-LFS_ROOT = Path('/data1/llx/BigSmallCollab_git_lfs')
+SHARED_DATA_ROOT = Path('/data1/llx')
+PROJECT_DATA_ROOT = SHARED_DATA_ROOT / 'BigSmallcollab'
+DATA_CACHE_ROOT = PROJECT_DATA_ROOT / 'cache'
+RESULTS_ROOT = PROJECT_DATA_ROOT / 'results'
+WEIGHTS_ROOT = PROJECT_DATA_ROOT / 'weights'
+LFS_ROOT = PROJECT_DATA_ROOT / 'git_lfs'
+BNCI14001_SOURCE_ROOT = SHARED_DATA_ROOT / 'BNCI2014001/broadband_0p1_75hz'
+
+_SOURCE_RELATIVE = Path('loso_source_v3/BNCI2014001')
+_LEGACY_ABSOLUTE_ROOTS = (
+    (SHARED_DATA_ROOT / 'data_cache' / _SOURCE_RELATIVE, BNCI14001_SOURCE_ROOT),
+    (DATA_CACHE_ROOT / _SOURCE_RELATIVE, BNCI14001_SOURCE_ROOT),
+    (SHARED_DATA_ROOT / 'data_cache', DATA_CACHE_ROOT),
+    (SHARED_DATA_ROOT / 'BigSmallCollab_results', RESULTS_ROOT),
+    (SHARED_DATA_ROOT / 'BigSmallCollab_weights', WEIGHTS_ROOT),
+    (SHARED_DATA_ROOT / 'BigSmallCollab_git_lfs', LFS_ROOT),
+    (PROJECT_ROOT / '.git/lfs', LFS_ROOT),
+)
 
 _ROOTS = {
     'data_cache': DATA_CACHE_ROOT,
@@ -29,17 +43,25 @@ _VERIFIED_BLOBS: set[tuple[str, int, int, int, str]] = set()
 def external_path(path: str | os.PathLike[str]) -> Path:
     """Map historical project artifact paths to their external locations.
 
-    Absolute paths outside this checkout, including existing ``/data1/llx``
-    datasets and pretrained weights, retain their original location.
+    Existing shared datasets and pretrained weights retain their locations.
+    The earlier external flat directories also map to the new layout, so
+    historical manifest bytes and training input hashes remain unchanged.
     """
     value = Path(path).expanduser()
     if value.is_absolute():
+        for old_root, new_root in _LEGACY_ABSOLUTE_ROOTS:
+            try:
+                return new_root / value.relative_to(old_root)
+            except ValueError:
+                pass
         try:
             relative = value.relative_to(PROJECT_ROOT)
         except ValueError:
             return value
     else:
         relative = value
+    if relative.parts[:3] == ('data_cache', 'loso_source_v3', 'BNCI2014001'):
+        return BNCI14001_SOURCE_ROOT.joinpath(*relative.parts[3:])
     if relative.parts[:3] == ('test', 'qc', 'artifacts'):
         return (RESULTS_ROOT / 'qc_artifacts').joinpath(*relative.parts[3:])
     if relative.parts and relative.parts[0] in _ROOTS:
