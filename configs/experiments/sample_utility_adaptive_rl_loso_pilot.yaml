@@ -1,0 +1,56 @@
+protocol_id: sample_utility_adaptive_rl_loso_pilot_v1
+dataset: BNCI2014004
+teacher: mirepnet
+student: ifnet
+seed: 666
+split: target_t_feedback_next_subject_train_remaining_7
+epochs: 100
+warmup_epochs: 10
+conditions:
+  - BASE_CE
+  - DELAYED_KD_ALL
+  - ADAPTIVE_WEIGHT_KD
+  - RL_GATE_KD
+  - ADAPTIVE_SHUFFLE
+  - RL_SHUFFLE
+model_selection: final_epoch
+loss:
+  ce_weight: 1.0
+  lam_kd: 0.5
+  temperature: 2.0
+  lam_feature: 0.0
+  kd_denominator: actual_batch_size
+controller:
+  hidden_dims: [128, 64]
+  activation: silu
+  output_min: 0.05
+  output_max: 0.95
+  optimizer: adam
+  lr: 0.001
+  weight_decay: 0.0
+  betas: [0.9, 0.999]
+  eps: 1.0e-8
+  scheduler: none
+  update_every_student_batches: 1
+  feedback_batch_size: 16
+  entropy_coefficient: 0.0
+  gradient_clip: null
+rl:
+  baseline_initial: 0.0
+  baseline_ema_decay: 0.9
+  advantage_normalization: none
+  log_prob_reduction: sum
+execution:
+  precision: fp32
+  amp: false
+  student_optimizer_foreach: false
+  student_optimizer_fused: false
+  gradient_accumulation: 1
+  checkpoint_every_epochs: 1
+  num_workers: 0
+report:
+  primary_metric: balanced_accuracy
+  bootstrap_draws: 10000
+  bootstrap_seed: 666
+  primary_pvalue_family: [adaptive_vs_kd_all, rl_vs_kd_all]
+  primary_pvalue_correction: holm

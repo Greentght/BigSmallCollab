@@ -1,14 +1,16 @@
 # EEG 样本价值学习：BNCI2014004 实施方案
 
-日期：2026-10-08。状态：仓库接入审阅完成；本文为实施规格，新增配置、runner、控制器和测试尚未实现，未启动本方案训练。
+日期：2026-10-08。状态：控制器、runner、配置和针对性测试已接入；九折静态 preflight 通过；单折 smoke 与正式训练尚未启动。
 
 ## 1. 当前环境与固定范围
 
-本次实际检查到 `/home/lixinli/BigSmallCollab`、`/data1/llx/BNCI2014004/{X.npy,labels.npy,meta004.csv}` 和 `/data1/llx/pre_weight/mirepnet.pth` 存在。原设计第 9 节的环境缺失描述已不适用于这里。阅读基准 commit 为 `2662a2a41cefcebe368fbb9bbdffe473aa3ce031`；开始时有未跟踪的 `docs/prompt.txt`，实施提交不得包含该文件。
+本次实际检查到 `/home/lixinli/BigSmallCollab`、`/data1/llx/BNCI2014004/{X.npy,labels.npy,meta004.csv}` 和 `/data1/llx/pre_weight/mirepnet.pth` 存在。原设计第 9 节的环境缺失描述已不适用于这里。实现基准之前的项目 commit 为 `aa5b0cc11f62146be854c4fda5aa16a06512f3fa`；开始时有未跟踪的 `docs/prompt.txt`，实施提交不得包含该文件。
 
-已确认 `mirepnet` 环境为 Python 3.10.18、PyTorch 2.1.0+cu118，支持 `torch.func.functional_call`，CUDA 可用。GPU 为 RTX 3090 24 GiB，当前有其他进程占用；正式调度前重新检查空闲显存。这里没有完成数据 hash 重算、模型构建或训练可用性测试。
+已确认 `mirepnet` 环境为 Python 3.10.18、PyTorch 2.1.0+cu118，支持 `torch.func.functional_call`，CUDA 可用。九折 preflight 已重算数据与预训练文件 hash、验证 1400 条 trial 的形状/标签及 split 计数，并将 manifest 写入外置 artifact store。GPU 为 RTX 3090 24 GiB，检查时所有设备均有高利用率任务；smoke 前重新检查资源。
 
 第一轮沿用 [canonical LOSO 数据规格](../configs/reproductions/loso_five_datasets_v1.yaml)：**仅 session_3，3 通道、250 Hz、每 trial 前 1000 点、左右手两类**。所谓完整目标被试，指该选定 session 的全部 trial。改为全部 session 必须另建数据协议并重跑全部条件。
+
+实施时发现：该 canonical YAML 当前 SHA256 与伴随 source snapshot 中记录的 `spec_sha256` 不一致，原 canonical runner 因而拒绝加载。pilot 不修改或刷新历史 snapshot；新 runner 会将两个实际值都写入 resolved config，严格锁定所需 session/形状/试次数/类别字段，并逐文件验证 snapshot 中的数据源 hash 和 trial UID/标签。九折 preflight 已通过。报告保留 `canonical_manifest_spec_hash_matches=false` 的事实。
 
 | 项目 | 已解析的既有设定 | 来源 |
 |---|---|---|
@@ -52,13 +54,14 @@ MIRepNet 预训练权重的历史 snapshot 记录 SHA256 为 `432288958007e344a5
 
 ## 3. 代码接入与存储
 
-新增文件职责如下；下列 Python/YAML 路径目前只是实现目标。
+已接入文件职责如下；正式训练和报告仍须通过后续放行门槛。
 
 | 文件 | 职责 |
 |---|---|
 | `configs/experiments/sample_utility_adaptive_rl_loso_pilot.yaml` | 六条件、七源 split、继承配置、控制器与 RNG/报告规格 |
 | `collab/sample_utility.py` | MLP、detach 状态输入、per-trial KD、meta/REINFORCE 更新 |
 | `collab/lookahead.py` | 参数/buffer/RNG 隔离、IFNet 约束模型视图、可微 AdamW 单步 |
+| `experiments/distill/sample_utility_splits.py` | 无模型依赖的固定九折划分和 batch 内 replay 置换函数 |
 | `experiments/distill/sample_utility_protocol.py` | split、Teacher cache、共享 warm-up、schedule、replay、manifest/汇总 |
 | `experiments/distill/run_sample_utility_adaptive_rl_loso.py` | 分阶段 CLI、依赖与完成门槛、resume/失败处理 |
 | `tests/test_sample_utility_adaptive_rl_loso.py` | 划分、optimizer/meta/policy、状态隔离、shuffle/恢复验证 |
@@ -97,7 +100,8 @@ MIRepNet 预训练权重的历史 snapshot 记录 SHA256 为 `432288958007e344a5
       history.csv / step_metrics.* / replay_epoch_*.npz
       predictions.npz / metrics.json / manifest.json
     metrics_by_subject.csv / paired_comparisons.csv / report.md
-    smoke/<smoke_id>/
+    smoke/<smoke_id>/                 # 环境、代码和 resolved config
+    folds/<target...>/smoke/<smoke_id>/ # 每折隔离的 smoke 产物
 ```
 
 共享原始数据仍在 `/data1/llx/BNCI2014004/`。不创建 checkout 内的 `results/`、训练缓存或 symlink。这里的 `BigSmallcollab` 大小写按 storage 模块使用。
@@ -279,7 +283,7 @@ checkpoint 至少保存 model/optimizer/scheduler、controller及其optimizer、
 
 ## 10. 拟定 CLI 与运行顺序
 
-**以下命令是待实现 runner 的验收接口，当前不能执行；不是已经存在或已运行的命令。** CLI 须支持 `--stage`、`--folds`（0..8）、`--conditions`、`--gpu`、`--resume`、`--smoke-only`、`--assert-complete`；默认拒绝覆盖配置不一致的产物。不要用 `--force` 覆盖旧实验。
+runner 已支持 `--stage`、`--folds`（0..8）、`--conditions`、`--gpu`、`--resume`、`--smoke-only`、`--smoke-id`、`--assert-complete`；配置冲突时停止，不覆盖旧实验。
 
 ```bash
 SAMPLE_UTILITY_CFG=configs/experiments/sample_utility_adaptive_rl_loso_pilot.yaml
@@ -289,7 +293,7 @@ SAMPLE_UTILITY_RUNNER=experiments/distill/run_sample_utility_adaptive_rl_loso.py
 conda run --no-capture-output -n mirepnet python "$SAMPLE_UTILITY_RUNNER" --config "$SAMPLE_UTILITY_CFG" --stage preflight
 conda run --no-capture-output -n mirepnet python -m pytest tests/test_sample_utility_adaptive_rl_loso.py -q
 
-# 挑选空闲 GPU；0 是接口示例，启动前按占用修改
+# 挑选空闲 GPU；启动前按占用修改。smoke-id 自动由配置 hash 和 commit 生成
 conda run --no-capture-output -n mirepnet python "$SAMPLE_UTILITY_RUNNER" --config "$SAMPLE_UTILITY_CFG" --smoke-only --folds 0 --gpu 0
 
 # smoke 放行后，正式九折；每个 stage 成功才进入下一个
@@ -334,4 +338,4 @@ epoch100固定评测保存目标UID/y/logits/probabilities/predictions、Accurac
 - [Shu et al., NeurIPS 2019](https://papers.nips.cc/paper_files/paper/2019/hash/e58cc5ca94270acaceed13bc82dfedf7-Abstract.html)：用元数据训练MLP权重函数。
 - [Fan et al., ICLR 2018](https://www.microsoft.com/en-us/research/publication/learning-to-teach/)：用Student反馈优化教学策略。
 
-本文交付的是基于当前仓库的实施规格和命令接口。只有新增算法、验证门槛及正式训练真实完成后，才将状态改为 implemented / validated / completed 并填写实验结论。
+本轮单元测试为 7 项；静态 preflight 九折通过。smoke、正式训练与目标评测完成后再填写方法结论，不能把当前实现状态当作有效性证据。
