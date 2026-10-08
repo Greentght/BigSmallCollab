@@ -1,14 +1,16 @@
 # EEG 样本价值学习：BNCI2014004 实施方案
 
-日期：2026-10-08。状态：控制器、runner、配置和针对性测试已接入；九折静态 preflight 通过；单折 smoke 与正式训练尚未启动。
+日期：2026-10-08。状态：控制器、runner、配置和针对性测试已接入；九折静态 preflight 与 fold 0 单折 smoke 通过；正式训练尚未启动。
 
 ## 1. 当前环境与固定范围
 
 本次实际检查到 `/home/lixinli/BigSmallCollab`、`/data1/llx/BNCI2014004/{X.npy,labels.npy,meta004.csv}` 和 `/data1/llx/pre_weight/mirepnet.pth` 存在。原设计第 9 节的环境缺失描述已不适用于这里。实现基准之前的项目 commit 为 `aa5b0cc11f62146be854c4fda5aa16a06512f3fa`；开始时有未跟踪的 `docs/prompt.txt`，实施提交不得包含该文件。
 
-已确认 `mirepnet` 环境为 Python 3.10.18、PyTorch 2.1.0+cu118，支持 `torch.func.functional_call`，CUDA 可用。九折 preflight 已重算数据与预训练文件 hash、验证 1400 条 trial 的形状/标签及 split 计数，并将 manifest 写入外置 artifact store。GPU 为 RTX 3090 24 GiB，检查时所有设备均有高利用率任务；smoke 前重新检查资源。
+已确认 `mirepnet` 环境为 Python 3.10.18、PyTorch 2.1.0+cu118，支持 `torch.func.functional_call`，CUDA 可用。九折 preflight 已重算数据与预训练文件 hash、验证 1400 条 trial 的形状/标签及 split 计数，并将 manifest 写入外置 artifact store。fold 0 smoke 使用 CPU 四线程完成 Teacher 10 epoch、Student warm-up 10 epoch 和六条件各 3 epoch，没有运行目标评测。最近检查时 10 张 RTX 3090 均有 99–100% 利用率；正式训练尚未启动，需等到有足够 GPU 余量再调度。
 
 第一轮沿用 [canonical LOSO 数据规格](../configs/reproductions/loso_five_datasets_v1.yaml)：**仅 session_3，3 通道、250 Hz、每 trial 前 1000 点、左右手两类**。所谓完整目标被试，指该选定 session 的全部 trial。改为全部 session 必须另建数据协议并重跑全部条件。
+
+当前放行状态：P0 九折 preflight 通过；P1 7 项针对性测试、`mirepnet` 编译与配置解析通过；P2 fold 0 CPU smoke 六条件、replay、控制器和无目标评测检查通过。P3–P7 正式 Teacher、Student 矩阵、目标评测和报告尚未运行。
 
 实施时发现：该 canonical YAML 当前 SHA256 与伴随 source snapshot 中记录的 `spec_sha256` 不一致，原 canonical runner 因而拒绝加载。pilot 不修改或刷新历史 snapshot；新 runner 会将两个实际值都写入 resolved config，严格锁定所需 session/形状/试次数/类别字段，并逐文件验证 snapshot 中的数据源 hash 和 trial UID/标签。九折 preflight 已通过。报告保留 `canonical_manifest_spec_hash_matches=false` 的事实。
 
@@ -338,4 +340,4 @@ epoch100固定评测保存目标UID/y/logits/probabilities/predictions、Accurac
 - [Shu et al., NeurIPS 2019](https://papers.nips.cc/paper_files/paper/2019/hash/e58cc5ca94270acaceed13bc82dfedf7-Abstract.html)：用元数据训练MLP权重函数。
 - [Fan et al., ICLR 2018](https://www.microsoft.com/en-us/research/publication/learning-to-teach/)：用Student反馈优化教学策略。
 
-本轮单元测试为 7 项；静态 preflight 九折通过。smoke、正式训练与目标评测完成后再填写方法结论，不能把当前实现状态当作有效性证据。
+本轮单元测试为 7 项；静态 preflight 九折通过；fold 0 smoke 的每组 3 epoch、controller/reward、shuffle UID 多重集合和“无目标评测”检查通过。正式九折训练和目标评测尚未开始，因此没有方法效果结论。
