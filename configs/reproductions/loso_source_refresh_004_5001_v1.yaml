@@ -1,0 +1,107 @@
+spec_version: 1
+kind: loso_source_refresh
+protocol_id: loso_source_refresh_004_5001_v1
+created: '2026-10-08'
+status: executing
+
+storage:
+  shared_sources:
+    BNCI2014004: /data1/llx/BNCI2014004/broadband_0_120hz
+    BNCI2015001: /data1/llx/BNCI2015001/broadband_0p1_75hz
+  project_inputs: /data1/llx/BigSmallcollab/cache/reproductions/loso_source_refresh_004_5001_v1/model_inputs
+  project_results: /data1/llx/BigSmallcollab/results/reproductions/loso_source_refresh_004_5001_v1
+  legacy_sources_preserved: true
+
+source_generation:
+  exporter: experiments/finetune/export_bnci14004_15001_all_sessions.py
+  all_sessions: true
+  unit: MOABB MotorImagery output as returned; expected microvolts
+  pairing: one_to_one_by_subject_session_run_event_ordinal_and_label
+  session_mapping:
+    BNCI2014004: MOABB session indices 0-4 map to legacy session_0-session_4
+    BNCI2015001: MOABB session indices 0-2 map to legacy session_A-session_C
+  datasets:
+    BNCI2014004:
+      variant: broadband_0_120hz
+      native_sampling_rate_hz: 250
+      source_bandpass_hz: [0.0, 120.0]
+      shape: [6520, 3, 1126]
+      selected_loso_session: session_3
+      selected_loso_trials: 1400
+      trials_per_subject: [160, 120, 160, 160, 160, 160, 160, 160, 160]
+      class_mapping: {left_hand: 0, right_hand: 1}
+    BNCI2015001:
+      variant: broadband_0p1_75hz
+      native_sampling_rate_hz: 512
+      source_bandpass_hz: [0.1, 75.0]
+      shape: [5600, 13, 2561]
+      selected_loso_session: session_A
+      selected_loso_trials: 2400
+      trials_per_subject: [200, 200, 200, 200, 200, 200, 200, 200, 200, 200, 200, 200]
+      class_mapping: {feet: 0, right_hand: 1}
+      reference_class_mapping: {right_hand: 0, feet: 1}
+
+protocol:
+  split: leave_one_subject_out
+  training_trials: all selected-session trials from every non-test subject
+  testing_trials: all selected-session trials from the held-out subject
+  validation: none
+  evaluation: one evaluation after fixed final epoch
+  seeds: [666, 667, 668]
+  seed_scope: independently reset for each held-out subject and seed
+  metrics: [accuracy, balanced_accuracy, kappa, macro_f1, auroc]
+  aggregation: subject_equal_mean_per_seed_then_seed_mean_and_sample_std
+  gpu_policy:
+    allowed_physical_indices: [1, 2, 3, 4, 5, 6, 7, 8, 9]
+    prohibited_physical_indices: [0]
+
+model_inputs:
+  canonical_window: first_1000_samples_after_resampling_to_250hz
+  BNCI2015001_resampling: scipy_signal_resample_512_to_250
+  mirepnet:
+    preprocessing: [8-30_hz_zero_phase, subject_wise_EA, inverse_distance_pad_to_45_channels]
+    test_EA: entire_unlabeled_held_out_subject_pool
+    epochs: 10
+    optimizer: Adam
+    learning_rate: 0.001
+    batch_size: 8
+    weight_decay: 0.000001
+  cbramod:
+    preprocessing: [250_to_200hz, 0.3-75_hz_zero_phase, 60_hz_notch, no_EA, no_CAR]
+    input_shape: [batch, native_channels, 4, 200]
+    epochs: 50
+    optimizer: AdamW
+    learning_rate: 0.0001
+    batch_size: 64
+    weight_decay: 0.05
+    head_dropout: 0.1
+    label_smoothing: 0.1
+    schedule: cosine_per_epoch
+  ifnet:
+    preprocessing: IFNet_internal_filterbank_4-16_and_16-40_hz
+    epochs: 100
+    optimizer: AdamW
+    learning_rate: 0.001
+    batch_size: 16
+    weight_decay: 0.01
+  eegnet:
+    preprocessing: 8-32_hz_zero_phase
+    epochs: 100
+    optimizer: AdamW
+    learning_rate: 0.001
+    batch_size: 32
+    weight_decay: 0.0001
+  adfcnn:
+    preprocessing: 8-32_hz_zero_phase
+    epochs: 100
+    optimizer: AdamW
+    learning_rate: 0.001
+    batch_size: 32
+    weight_decay: 0.0001
+
+workload:
+  models: [mirepnet, cbramod, ifnet, eegnet, adfcnn]
+  datasets: [BNCI2014004, BNCI2015001]
+  fold_seed_cells: 315
+  worker_tasks: 30
+  folds: {BNCI2014004: 9, BNCI2015001: 12}
