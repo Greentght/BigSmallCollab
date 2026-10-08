@@ -614,7 +614,7 @@ def train_condition(condition, paths, fold, feedback, split, train_data,
         model.train()
         batch_records, replay_weights, replay_q, replay_actions = [], [], [], []
         replay_rewards, replay_baselines, replay_batch_ids, replay_uids = [], [], [], []
-        sums = {'loss': 0.0, 'ce': 0.0, 'kd': 0.0, 'raw_kd': 0.0}
+        sums = {'loss': 0.0, 'ce': 0.0, 'kd': 0.0, 'raw_kd_mean': 0.0}
         seen = 0
         virtual_steps = feedback_queries = feedback_query_trials = 0
         lr_used = float(optimizer.param_groups[0]['lr'])
