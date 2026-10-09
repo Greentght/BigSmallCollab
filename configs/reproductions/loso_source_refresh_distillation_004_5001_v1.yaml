@@ -1,0 +1,81 @@
+spec_version: 1
+protocol_id: loso_source_refresh_004_5001_kd_feature_warmup10_v1
+source_protocol: loso_source_refresh_004_5001_v1
+datasets: [BNCI2014004, BNCI2015001]
+seeds: [666, 667, 668]
+
+storage:
+  input_root: /data1/llx/BigSmallcollab/cache/reproductions/loso_source_refresh_004_5001_v1/model_inputs
+  baseline_root: /data1/llx/BigSmallcollab/results/reproductions/loso_source_refresh_004_5001_v1
+  teacher_cache_root: /data1/llx/BigSmallcollab/cache/reproductions/loso_source_refresh_004_5001_distillation_v1/teacher_targets
+  output_root: /data1/llx/BigSmallcollab/results/distill/loso_source_refresh_004_5001_v1
+
+teachers:
+  mirepnet:
+    recipe: source_refreshed_loso_v1
+  cbramod:
+    recipe: source_refreshed_loso_v1
+students: [ifnet, eegnet, adfcnn]
+
+loss:
+  ce_weight: 1.0
+  temperature: 2.0
+  teacher_correct_mask: false
+  teacher_targets: source_training_trials_only
+  feature_metric: cosine
+  feature_transform: native_penultimate
+
+stages:
+  logits_kd:
+    lam_kd: 0.5
+    lam_feat: 0.0
+    distill_warmup_epochs: 0
+  kd_feature:
+    lam_kd: 0.5
+    lam_feat: 0.5
+    distill_warmup_epochs: 0
+  warmup10_kd:
+    lam_kd: 0.5
+    lam_feat: 0.0
+    distill_warmup_epochs: 10
+  warmup10_kd_feature:
+    lam_kd: 0.5
+    lam_feat: 0.5
+    distill_warmup_epochs: 10
+
+student_training:
+  initialization: fresh_seeded_initialization_paired_across_stages_and_teachers
+  baseline_config_source: source_refreshed_loso_v1_student_manifest
+  epochs: 100
+  scheduler: cosine_per_epoch
+  learning_rate: 0.001
+  batch_size: {ifnet: 16, eegnet: 32, adfcnn: 32}
+  optimizer: AdamW
+  weight_decay: {ifnet: 0.01, eegnet: 0.0001, adfcnn: 0.0001}
+
+execution:
+  stage_order: [logits_kd, kd_feature, warmup10_kd, warmup10_kd_feature]
+  checkpoint_every_epochs: 5
+  fail_fast: true
+  allowed_physical_gpus: [1, 2, 3, 4, 5, 6, 7, 8, 9]
+  prohibited_physical_gpus: [0]
+  max_concurrent_workers: 2
+  minimum_free_memory_mib: 7500
+  maximum_gpu_utilization_pct: 100
+
+protocol:
+  split: leave_one_subject_out
+  BNCI2014004: {session: session_3, subjects: 9, trials: 1400}
+  BNCI2015001: {session: session_A, subjects: 12, trials: 2400}
+  test_evaluation: once_after_final_epoch_100
+  validation: none
+  target_label_calibration: false
+  teacher_mode: frozen_eval
+  student_uses_target_subject_data: false
+  aggregation: equal_subject_mean_per_seed_then_mean_and_sample_std_across_seeds
+
+workload:
+  teacher_target_fold_seed_units: 126
+  worker_tasks_per_stage: 36
+  training_fold_seed_units_per_stage: 378
+  total_training_fold_seed_units: 1512
