@@ -12,6 +12,8 @@ import subprocess
 import sys
 import time
 
+import numpy as np
+
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 from experiments.storage import require_external_output, resolve_local_file
