@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Prepare reference-aligned model inputs from the existing NPY source cache.
+"""Historical NPY source-control helpers; the former CLI is retired.
 
 This control intentionally reuses the verified trial mapping and the same
 model-side transforms as the MOABB-source run. The NPY values are used as
@@ -182,4 +182,8 @@ def prepare() -> Path:
 
 
 if __name__ == '__main__':
-    print(prepare(), flush=True)
+    raise SystemExit(
+        'The historical NPY source-control experiment is retired. Current '
+        '001/001-4 inputs use prepare_bnci14001_wideband_inputs.py; current '
+        '004/5001 inputs use prepare_loso_source_refresh_004_5001.py. '
+        'See docs/loso_baseline.md.')

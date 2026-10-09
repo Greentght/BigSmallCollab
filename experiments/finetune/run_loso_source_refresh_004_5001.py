@@ -17,18 +17,17 @@ import numpy as np
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
-import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 import config
 from models import get_adapter
 from experiments.finetune import run_loso_five_datasets as protocol
+from experiments.finetune.prepare_loso_source_refresh_004_5001 import (
+    current_input_policy, validate_input_identity,
+)
 from experiments.storage import require_external_output, resolve_local_file
 
-SPEC_PATH = ROOT / 'configs/reproductions/loso_source_refresh_004_5001_v1.yaml'
-INPUT_ROOT = Path('/data1/llx/BigSmallcollab/cache/reproductions/loso_source_refresh_004_5001_v1/model_inputs')
-RESULT_ROOT = Path('/data1/llx/BigSmallcollab/results/reproductions/loso_source_refresh_004_5001_v1')
 MODELS = ('mirepnet', 'cbramod', 'ifnet', 'eegnet', 'adfcnn')
 DATASETS = ('BNCI2014004', 'BNCI2015001')
 
@@ -54,7 +53,7 @@ def set_seed(seed: int) -> None:
 
 
 def input_paths(dataset: str, model: str) -> dict[str, Path]:
-    folder = INPUT_ROOT / dataset / model
+    folder = Path(config.load_loso_dataset_config(dataset)['input_root']) / dataset / model
     return {name: folder / name for name in
             ('X.npy', 'y.npy', 'subjects.npy', 'trials.csv', 'manifest.json')}
 
@@ -65,6 +64,7 @@ def load_input(dataset: str, model: str):
     if missing:
         raise FileNotFoundError(f'{dataset}/{model}: missing prepared files {missing}')
     manifest = json.loads(resolve_local_file(paths['manifest.json']).read_text())
+    validate_input_identity(dataset, model, manifest)
     for name, record in manifest['files'].items():
         path = paths[name]
         if path.stat().st_size != int(record['bytes']) or sha256(path) != record['sha256']:
@@ -86,18 +86,19 @@ def load_input(dataset: str, model: str):
 
 def model_config(model: str, dataset: str, input_shape: tuple[int, ...]) -> dict:
     cfg = config.load_model_config(model, dataset, 'loso')
+    current_input_policy(dataset, model, cfg)
+    fixed_schedule = {'lr_schedule': 'epoch_cosine', 'schedule_update': 'epoch_end',
+                      'warmup_epochs': 0, 'min_lr': 0.0, 'class_weights': False,
+                      'optimizer_eps': 1e-8}
+    for key, expected in fixed_schedule.items():
+        if cfg.get(key, expected) != expected:
+            raise ValueError(f'{dataset}/{model}: this baseline worker supports '
+                             f'{key}={expected!r}, got {cfg[key]!r}')
+    if str(cfg.get('optimizer', 'adamw')).lower() not in ('adam', 'adamw'):
+        raise ValueError(f'{dataset}/{model}: this baseline worker supports Adam and AdamW only')
     channels = 45 if model == 'mirepnet' else int(input_shape[0])
     cfg.update(dataset_name=dataset, in_channels=channels, samples=1000,
                sample_rate=250, skip_preprocess=model in ('mirepnet', 'cbramod'))
-    if model == 'cbramod':
-        cfg.update(target_fs=200, l_freq=0.3, h_freq=75.0, notch_freq=60.0,
-                   norm_method=None, apply_EA=False, feature_head='flatten',
-                   scale=1.0, warmup_epochs=0, min_lr=0.0,
-                   label_smoothing=0.1)
-    elif model == 'mirepnet':
-        cfg.update(optimizer='adam', weight_decay=1e-6)
-    elif model == 'ifnet':
-        cfg.update(use_filter_bank=True)
     return cfg
 
 
@@ -152,7 +153,8 @@ def write_history(path: Path, rows: list[dict]) -> None:
 
 
 def fold_output(dataset: str, model: str, seed: int, subject: int) -> Path:
-    return RESULT_ROOT / dataset / model / 'source_refreshed_loso_v1' / \
+    root = Path(config.load_loso_dataset_config(dataset)['result_root'])
+    return root / dataset / model / 'source_refreshed_loso_v1' / \
         f'seed_{seed}' / f'subject_{subject + 1:02d}'
 
 
@@ -216,6 +218,9 @@ def train_fold(dataset: str, model_name: str, seed: int, subject: int,
     if model_manifest_path.exists() and not preflight:
         old = json.loads(resolve_local_file(model_manifest_path).read_text())
         for key, value in expected_manifest.items():
+            if key == 'model_config' and config.equivalent_loso_model_config(
+                    model_name, old.get(key, {}), value):
+                continue
             if old.get(key) != value:
                 raise RuntimeError(f'{model_manifest_path}: {key} differs from the active run')
         result_path = output / 'result.npz'
@@ -264,7 +269,12 @@ def train_fold(dataset: str, model_name: str, seed: int, subject: int,
             state_path = output / 'training_state.pt'
             if state_path.exists():
                 saved = torch.load(resolve_local_file(state_path), map_location='cpu', weights_only=False)
-                if saved.get('identity') != expected_manifest:
+                saved_identity = dict(saved.get('identity', {}))
+                expected_identity = dict(expected_manifest)
+                saved_cfg = saved_identity.pop('model_config', {})
+                expected_cfg = expected_identity.pop('model_config')
+                if (saved_identity != expected_identity
+                        or not config.equivalent_loso_model_config(model_name, saved_cfg, expected_cfg)):
                     raise RuntimeError(f'{state_path}: cannot resume a different task')
                 model.load_state_dict(saved['model_state'])
                 optimizer.load_state_dict(saved['optimizer_state'])
@@ -385,7 +395,7 @@ def train_fold(dataset: str, model_name: str, seed: int, subject: int,
 
 def summarize_task(dataset: str, model: str, seed: int,
                    n_subjects: int) -> None:
-    root = RESULT_ROOT / dataset / model / 'source_refreshed_loso_v1' / f'seed_{seed}'
+    root = fold_output(dataset, model, seed, 0).parent
     rows = []
     for subject in range(n_subjects):
         path = fold_output(dataset, model, seed, subject) / 'result.npz'

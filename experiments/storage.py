@@ -20,6 +20,27 @@ WEIGHTS_ROOT = PROJECT_DATA_ROOT / 'weights'
 LFS_ROOT = PROJECT_DATA_ROOT / 'git_lfs'
 BNCI14001_SOURCE_ROOT = SHARED_DATA_ROOT / 'BNCI2014001/broadband_0p1_75hz'
 
+# Versioned execution specifications have been removed from the active config
+# tree. Preserve read compatibility for in-flight jobs and historical manifests;
+# the current KD specification is byte-identical at its canonical location.
+_CANONICAL_CONFIGS = {
+    'loso_source_refresh_distillation_004_5001_v1.yaml':
+        PROJECT_ROOT / 'configs/experiments/loso_distillation.yaml',
+    'loso_source_refresh_004_5001_v1.yaml':
+        PROJECT_ROOT / 'configs/protocols/loso.yaml',
+    'bnci14001_wideband_loso_v3.yaml':
+        PROJECT_ROOT / 'configs/protocols/loso_001.yaml',
+}
+_RETIRED_CONFIGS = {
+    name: PROJECT_DATA_ROOT / 'migrations/retired_loso_configs' / name
+    for name in (
+        'loso_five_datasets_v1.yaml', 'loso_distillation_v1.yaml',
+        'loso_config_alignment_v2.yaml',
+        'loso_cbramod_0014_npy_source_control_20261006.yaml',
+        'loso_001_all_models_wideband_v1.yaml',
+    )
+}
+
 _SOURCE_RELATIVE = Path('loso_source_v3/BNCI2014001')
 _LEGACY_ABSOLUTE_ROOTS = (
     (SHARED_DATA_ROOT / 'data_cache' / _SOURCE_RELATIVE, BNCI14001_SOURCE_ROOT),
@@ -60,6 +81,10 @@ def external_path(path: str | os.PathLike[str]) -> Path:
             return value
     else:
         relative = value
+    if relative.parts[:2] == ('configs', 'reproductions'):
+        replacement = (_CANONICAL_CONFIGS | _RETIRED_CONFIGS).get(relative.name)
+        if replacement is not None:
+            return replacement
     if relative.parts[:3] == ('data_cache', 'loso_source_v3', 'BNCI2014001'):
         return BNCI14001_SOURCE_ROOT.joinpath(*relative.parts[3:])
     if relative.parts[:3] == ('test', 'qc', 'artifacts'):

@@ -52,7 +52,7 @@
 
 本地参考仓库仅提供 004、5001 两个 JSON；其中 CBraMod 配置均为 Fewshot。README 的 001 CBraMod 命令也明确为 Fewshot。未找到 CBraMod Cross/LOSO 的完整真实运行参数或历史日志，论文正文也没有给出对应 LR、batch、epoch 的配置表。因而不能把当前迁移配方称为论文 LOSO 官方超参。
 
-证据：[README Fewshot](/home/lixinli/EEG-FM-Benchmark/README.md:88)、[004 JSON](/home/lixinli/EEG-FM-Benchmark/config/BNCI2014004.json:192)、[5001 JSON](/home/lixinli/EEG-FM-Benchmark/config/BNCI2015001.json:192)、[迁移配方声明](/home/lixinli/BigSmallCollab/configs/reproductions/loso_five_datasets_v1.yaml:175)、[运行元信息](/home/lixinli/BigSmallCollab/experiments/finetune/run_loso_five_datasets.py:219)。
+证据：[README Fewshot](/home/lixinli/EEG-FM-Benchmark/README.md:88)、[004 JSON](/home/lixinli/EEG-FM-Benchmark/config/BNCI2014004.json:192)、[5001 JSON](/home/lixinli/EEG-FM-Benchmark/config/BNCI2015001.json:192)、[迁移配方声明](/data1/llx/BigSmallcollab/migrations/retired_loso_configs/loso_five_datasets_v1.yaml:175)、[运行元信息](/home/lixinli/BigSmallCollab/experiments/finetune/run_loso_five_datasets.py:219)。
 
 学习率的实际执行有明确差别。参考代码生成逐 step 的 schedule 数组，但只在 epoch 结束后根据累计 `global_step` 设置下一个 epoch 的 LR；第一 epoch 全程使用基准 LR。当前迁移组在每个 optimizer step 前应用 schedule，从 LR=0 做 5 epoch warmup。这是已经明确记录的调度修正，但不等同于逐字运行参考实现。[参考更新位置](/home/lixinli/EEG-FM-Benchmark/utils/trainer.py:305)、[当前更新位置](/home/lixinli/BigSmallCollab/experiments/finetune/run_loso_five_datasets.py:328)。
 

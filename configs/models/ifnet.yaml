@@ -22,6 +22,19 @@ finetune:
       lr: 0.001
       batch_size: 16
       weight_decay: 0.01
+      optimizer: adamw
+      lr_schedule: epoch_cosine
+      schedule_update: epoch_end
+      duration_seconds: 4.0
+      sample_rate: 250
+      samples: 1000
+      skip_preprocess: false
+      use_filter_bank: true
+      filter_bank_hz:
+      - - 4.0
+        - 16.0
+      - - 16.0
+        - 40.0
   BNCI2014001-4:
     fewshot:
       epochs: 100
@@ -33,6 +46,19 @@ finetune:
       lr: 0.001
       batch_size: 16
       weight_decay: 0.01
+      optimizer: adamw
+      lr_schedule: epoch_cosine
+      schedule_update: epoch_end
+      duration_seconds: 4.0
+      sample_rate: 250
+      samples: 1000
+      skip_preprocess: false
+      use_filter_bank: true
+      filter_bank_hz:
+      - - 4.0
+        - 16.0
+      - - 16.0
+        - 40.0
   BNCI2014004:
     fewshot:
       epochs: 100
@@ -44,6 +70,19 @@ finetune:
       lr: 0.001
       batch_size: 16
       weight_decay: 0.01
+      optimizer: adamw
+      lr_schedule: epoch_cosine
+      schedule_update: epoch_end
+      duration_seconds: 4.0
+      sample_rate: 250
+      samples: 1000
+      skip_preprocess: false
+      use_filter_bank: true
+      filter_bank_hz:
+      - - 4.0
+        - 16.0
+      - - 16.0
+        - 40.0
   BNCI2015001:
     fewshot:
       epochs: 100
@@ -55,6 +94,19 @@ finetune:
       lr: 0.001
       batch_size: 16
       weight_decay: 0.01
+      optimizer: adamw
+      lr_schedule: epoch_cosine
+      schedule_update: epoch_end
+      duration_seconds: 4.0
+      sample_rate: 250
+      samples: 1000
+      skip_preprocess: false
+      use_filter_bank: true
+      filter_bank_hz:
+      - - 4.0
+        - 16.0
+      - - 16.0
+        - 40.0
   AlexMI:
     fewshot:
       epochs: 100

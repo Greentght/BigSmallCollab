@@ -22,8 +22,10 @@ from experiments.storage import (BNCI14001_SOURCE_ROOT,
 
 from experiments.finetune.export_bnci14001_all_sessions import entity, sha256, write_json
 from experiments.finetune import prepare_loso_alignment_inputs as reference
+import config
 
 SOURCE = BNCI14001_SOURCE_ROOT
+SPEC_PATH = ROOT / 'configs/protocols/loso_001.yaml'
 PROFILE = 'wideband_npy_v3'
 VARIANT = 'all_sessions_source_train_session'
 DATASETS = ('BNCI2014001', 'BNCI2014001-4')
@@ -54,13 +56,19 @@ def validate_source() -> tuple[np.ndarray, pd.DataFrame, dict]:
     return x, trials, manifest
 
 
-def recipe(model: str, spec: dict) -> dict:
+def recipe(model: str, dataset: str) -> dict:
+    spec = yaml.safe_load(SPEC_PATH.read_text())
+    reference.validate_001_dataset(
+        dataset, SOURCE, reference.INPUT_ROOT / PROFILE,
+        reference.RESULTS_ROOT / 'reproductions/loso_config_alignment_v2' / PROFILE, spec)
     if model == 'cbramod':
-        cfg = reference.get_profile('reference_aligned', model, 'BNCI2014001-4', spec)
-        cfg['source_cast'] = 'float64_broadband_all_session_npy'
-        return cfg
-    return {'target_fs': 250, 'duration': 4, 'l_freq': 8.0, 'h_freq': 30.0,
-            'filter_order': 4, 'filter_phase': 'zero_phase_filtfilt',
+        return reference.get_profile(PROFILE, model, dataset)
+    cfg = config.load_model_config(model, dataset, 'loso')
+    reference.validate_001_model(model, dataset, cfg)
+    return {'target_fs': int(cfg.get('target_fs', 250)),
+            'duration': int(cfg.get('duration_seconds', 4)),
+            'l_freq': float(cfg.get('l_freq', 8.0)), 'h_freq': float(cfg.get('h_freq', 30.0)),
+            'filter_order': int(cfg.get('filter_order', 4)), 'filter_phase': 'zero_phase_filtfilt',
             'source_cast': 'float64_broadband_all_session_npy',
             'ea': 'separate_covariance_for_each_subject_in_selected_task',
             'ea_test_regime': 'transductive_all_unlabeled_target_trials',
@@ -90,7 +98,7 @@ def compare_reference_cbramod(output: Path) -> dict:
 
 
 def prepare(model: str, dataset: str, x_source, source_trials: pd.DataFrame,
-            source_manifest: dict, spec: dict) -> dict:
+            source_manifest: dict) -> dict:
     selected = source_trials['session'].eq('0train')
     if dataset == 'BNCI2014001':
         selected &= source_trials['class_name'].isin(['left_hand', 'right_hand'])
@@ -105,7 +113,7 @@ def prepare(model: str, dataset: str, x_source, source_trials: pd.DataFrame,
     if not np.array_equal(np.unique(y), np.arange(nclasses)):
         raise RuntimeError('Unexpected class IDs')
     subjects = trials['subject'].to_numpy(dtype=np.int64) - 1
-    cfg = recipe(model, spec)
+    cfg = recipe(model, dataset)
     output = require_external_output(reference.INPUT_ROOT / PROFILE / dataset / model / VARIANT)
     source_sha = sha256(SOURCE / 'manifest.json')
     existing = output / 'manifest.json'
@@ -144,7 +152,9 @@ def prepare(model: str, dataset: str, x_source, source_trials: pd.DataFrame,
         for subject in range(9):
             locations = np.flatnonzero(subjects == subject)
             chunk = np.asarray(x_source[rows[locations], :, :1000], dtype=np.float64)
-            filtered = bandpass(chunk, 250, 8.0, 30.0)
+            if cfg['filter_order'] != 4:
+                raise ValueError('The current MIRepNet input cache uses a fourth-order bandpass')
+            filtered = bandpass(chunk, 250, cfg['l_freq'], cfg['h_freq'])
             result = adapter.ea_pad_per_subject(filtered, np.full(len(locations), subject))
             if not np.isfinite(result).all() or result.shape[1:] != input_shape:
                 raise RuntimeError('Invalid MIRepNet EA/channel interpolation output')
@@ -186,11 +196,13 @@ def main() -> None:
     parser.add_argument('--models', nargs='+', choices=MODELS, default=list(MODELS))
     parser.add_argument('--datasets', nargs='+', choices=DATASETS, default=list(DATASETS))
     args = parser.parse_args()
+    spec = yaml.safe_load(SPEC_PATH.read_text())
+    if spec['source']['directory'] != str(SOURCE) or spec['selection']['loso_session'] != '0train':
+        raise RuntimeError('Current 001 protocol source/session differs from this input preparation')
     x, trials, source = validate_source()
-    spec = yaml.safe_load(reference.SPEC_PATH.read_text())
     for model in args.models:
         for dataset in args.datasets:
-            prepare(model, dataset, x, trials, source, spec)
+            prepare(model, dataset, x, trials, source)
 
 
 if __name__ == '__main__':

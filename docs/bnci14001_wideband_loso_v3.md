@@ -49,7 +49,7 @@ CBraMod：250→200 Hz MNE 重采样 → 0.3–75 Hz → 60 Hz notch → CAR，�
 
 ## 固定训练配置
 
-配置规格：`configs/reproductions/bnci14001_wideband_loso_v3.yaml`。
+配置规格：`configs/protocols/loso_001.yaml`。
 
 | 模型 | Optimizer/LR | Batch/WD | Epochs |
 |---|---|---|---|

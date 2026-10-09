@@ -4,9 +4,9 @@ Trains ONE model under a chosen protocol and writes standardized artifacts
 (logits/feats/y) that the collab hub + Phase-D0 diagnostics consume. Run inside
 that model's conda env (see configs/models/<model>.yaml `env`):
 
-    conda run -n mirepnet python experiments/finetune/finetune.py --model ifnet   --dataset BNCI2014004    --protocol loso   --gpu 2
+    conda run -n mirepnet python experiments/finetune/finetune.py --model ifnet   --dataset BNCI2014004    --protocol fewshot --gpu 2
     conda run -n mirepnet python experiments/finetune/finetune.py --model eegnet  --dataset BNCI2014001-4  --protocol fewshot --gpu 2
-    conda run -n cbramod  python experiments/finetune/finetune.py --model cbramod --dataset BNCI2014004 --protocol loso --gpu 2
+    conda run -n cbramod python experiments/finetune/run_loso_source_refresh_004_5001.py --model cbramod --dataset BNCI2014004 --seed 666 --gpu 2
 
 Protocols
 ---------
@@ -18,6 +18,9 @@ loso   : leave-one-subject-out. Fold f = subject f held out for test, all others
          train. Artifact model dir = ``<model>_loso``; key = fold index. Rows are
          fully determined by the held-out subject (no split randomness), so they
          align with the cached ``mirepnet_loso`` artifacts row-for-row.
+
+The registered broadband LOSO tasks now use the dedicated current-baseline
+entries in docs/loso_baseline.md. This generic entry rejects those tasks.
 
 Finetune hyperparameters are resolved from
 ``configs/models/<model>.yaml`` under ``finetune.<dataset>.<protocol>``.
@@ -165,6 +168,10 @@ def _run(a):
     torch.set_num_threads(int(os.environ.get('TORCH_NUM_THREADS', '4')))
     dcfg = config.load_dataset_config(a.dataset)
     protocol = data.canonical_protocol(a.protocol)
+    if protocol == 'loso' and 'loso' in dcfg:
+        raise ValueError(
+            '该数据集已采用当前宽带 LOSO baseline。请按 docs/loso_baseline.md '
+            '使用专用 baseline 入口，避免通用旧入口加载旧 NPY 或忽略预处理缓存。')
     mcfg = config.load_model_config(a.model, a.dataset, protocol)
     seeds = a.seeds or dcfg['seeds']
     num_classes = dcfg['num_classes']

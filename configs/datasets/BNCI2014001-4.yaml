@@ -7,3 +7,36 @@ num_subjects: 9
 sample_rate: 250
 val_split: 0.7        # TEST fraction: 70% calib / 30% test
 seeds: [666, 667, 668]
+
+# Current LOSO baseline; top-level split values remain the fewshot defaults.
+loso:
+  source_directory: /data1/llx/BNCI2014001/broadband_0p1_75hz
+  native_sampling_rate_hz: 250
+  selected_session: 0train
+  legacy_session: session_T
+  source_bandpass_hz:
+  - 0.1
+  - 75.0
+  duration_seconds: 4.0
+  current_baseline_id: wideband_npy_v3
+  input_root: /data1/llx/BigSmallcollab/cache/eegfm_alignment_v2/model_inputs/wideband_npy_v3
+  result_root: /data1/llx/BigSmallcollab/results/reproductions/loso_config_alignment_v2/wideband_npy_v3
+  seeds:
+  - 0
+  - 1
+  - 2
+  per_subject_trials:
+  - 288
+  - 288
+  - 288
+  - 288
+  - 288
+  - 288
+  - 288
+  - 288
+  - 288
+  class_mapping:
+    left_hand: 0
+    right_hand: 1
+    feet: 2
+    tongue: 3

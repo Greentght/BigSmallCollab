@@ -25,11 +25,12 @@ import config
 from models import get_adapter
 from experiments.finetune import run_loso_small_baselines as small_baseline
 from experiments.finetune import run_loso_five_datasets as protocol
+from experiments.finetune import prepare_loso_alignment_inputs as input_rules
 from experiments.storage import require_external_output, resolve_local_file
 
 
 ROOT = Path(__file__).resolve().parents[2]
-SPEC_PATH = ROOT / 'configs/reproductions/loso_001_all_models_wideband_v1.yaml'
+SPEC_PATH = ROOT / 'configs/protocols/loso_001.yaml'
 SOURCE_ROOT = Path('/data1/llx/BNCI2014001/broadband_0p1_75hz')
 INPUT_ROOT = Path('/data1/llx/BigSmallcollab/cache/eegfm_alignment_v2/model_inputs/wideband_npy_v3')
 RESULTS_ROOT = Path('/data1/llx/BigSmallcollab/results/reproductions/loso_config_alignment_v2/wideband_npy_v3')
@@ -63,6 +64,10 @@ def _sha256(path):
 
 
 def _source_and_task_manifests():
+    import yaml
+    spec = yaml.safe_load(SPEC_PATH.read_text())
+    for dataset in DATASETS:
+        input_rules.validate_001_dataset(dataset, SOURCE_ROOT, INPUT_ROOT, RESULTS_ROOT, spec)
     source_manifest = json.loads(SOURCE_MANIFEST.read_text())
     expected = source_manifest['files']['X.npy']['sha256']
     if _sha256(SOURCE_X) != expected:
@@ -164,16 +169,20 @@ def _load_trials(dataset, snapshot):
     return x, y, subjects, uids, local_uids, task_rows.to_dict('records'), meta, None
 
 
-def _prepare_source(model_name, x):
+def _prepare_source(model_name, x, dataset):
+    cfg = _config_for(model_name, dataset)
     if model_name == 'ifnet':
         return x, 'IFNet adapter filterbank: 4-16 Hz and 16-40 Hz directly from broadband NPY'
     from data.preproc import bandpass
-    filtered = bandpass(np.asarray(x, dtype=np.float64), 250, 8.0, 32.0)
+    filtered = bandpass(np.asarray(x, dtype=np.float64), cfg['sample_rate'],
+                        cfg['l_freq'], cfg['h_freq'])
     return filtered.astype(np.float32), 'epoch Butterworth order-4 zero-phase bandpass 8-32 Hz'
 
 
 def _config_for(model_name, dataset):
     cfg = config.load_model_config(model_name, dataset, 'loso')
+    input_rules.validate_001_model(model_name, dataset, cfg)
+    input_rules.validate_001_dataset(dataset, SOURCE_ROOT, INPUT_ROOT, RESULTS_ROOT)
     cfg.update(dataset_name=dataset, in_channels=22, samples=1000, sample_rate=250)
     return cfg
 
@@ -198,7 +207,7 @@ def _profile(model_name, dataset, cfg):
 def _preflight(model_name, datasets, snapshot, device):
     for dataset in datasets:
         x, y, *_ = _load_trials(dataset, snapshot)
-        x, preprocessing = _prepare_source(model_name, x[:32])
+        x, preprocessing = _prepare_source(model_name, x[:32], dataset)
         cfg = _config_for(model_name, dataset)
         adapter = get_adapter(model_name, device=device, **cfg)
         xb = adapter.preprocess(x)
@@ -222,6 +231,8 @@ def _preflight(model_name, datasets, snapshot, device):
 def _run(args, snapshot, device):
     if not args.seeds or len(set(args.seeds)) != len(args.seeds):
         raise ValueError('--seeds must be non-empty and unique')
+    if any(seed not in (0, 1, 2) for seed in args.seeds):
+        raise ValueError('The current 001/001-4 baseline supports only seeds 0, 1, 2')
     source_payload = {
         'source': snapshot['files'],
         'task_manifests': snapshot['task_hashes'],
@@ -238,7 +249,7 @@ def _run(args, snapshot, device):
                    'source_fs_hz': 250, 'selected_session': '0train',
                    'window': 'first_1000_native_samples_from_broadband_source'}
         x, y, subject_ids, source_uids, local_uids, _records, _meta, _labels = _load_trials(dataset, snapshot)
-        x, preprocessing = _prepare_source(args.model, x)
+        x, preprocessing = _prepare_source(args.model, x, dataset)
         cfg = _config_for(args.model, dataset)
         profile = _profile(args.model, dataset, cfg)
         output_dir = RESULTS_ROOT / dataset / args.model / RECIPE
@@ -268,8 +279,28 @@ def _run(args, snapshot, device):
         split_path = require_external_output(output_dir / 'split_manifest.json')
         if split_path.exists():
             old = json.loads(split_path.read_text())
-            if old != split_manifest:
+            comparison_old = dict(old)
+            comparison_current = dict(split_manifest)
+            old_profile = dict(comparison_old.pop('training_profile'))
+            current_profile = dict(comparison_current.pop('training_profile'))
+            old_cfg = old_profile.pop('resolved_config')
+            current_cfg = current_profile.pop('resolved_config')
+            old_sources = dict(comparison_old.pop('source_files'))
+            current_sources = dict(comparison_current.pop('source_files'))
+            old_sources.pop('runner_sha256', None)
+            current_sources.pop('runner_sha256', None)
+            old_sources.pop('config_sha256', None)
+            current_sources.pop('config_sha256', None)
+            if (comparison_old != comparison_current or old_profile != current_profile
+                    or old_sources != current_sources
+                    or not config.equivalent_loso_model_config(args.model, old_cfg, current_cfg)):
                 raise RuntimeError(f'output directory belongs to another experiment: {split_path}')
+            # Continue the completed baseline's recorded identity after checking
+            # its numerical settings against the canonical source configuration.
+            split_manifest = old
+            source_payload = old['source_files']
+            profile = old['training_profile']
+            cfg = dict(old_cfg, dataset_name=dataset)
         temporary_split = split_path.with_name(f'{split_path.name}.{os.getpid()}.tmp')
         temporary_split.write_text(json.dumps(split_manifest, indent=2, sort_keys=True) + '\n')
         os.replace(temporary_split, split_path)

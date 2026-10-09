@@ -24,7 +24,26 @@ finetune:
       epochs: 10
       lr: 0.001
       batch_size: 8
-      weight_decay: 0.000001
+      weight_decay: 1.0e-06
+      optimizer: adam
+      momentum: 0.9
+      lr_schedule: epoch_cosine
+      schedule_update: epoch_end
+      warmup_epochs: 0
+      min_lr: 0.0
+      label_smoothing: 0.0
+      class_weights: false
+      duration_seconds: 4.0
+      sample_rate: 250
+      samples: 1000
+      in_channels: 45
+      skip_preprocess: true
+      l_freq: 8.0
+      h_freq: 30.0
+      apply_EA: true
+      ea_scope: per_subject
+      test_ea_policy: all_unlabeled_held_out_subject_trials
+      channel_mapping: inverse_distance_to_45_channels
   BNCI2014001-4:
     fewshot:
       epochs: 20
@@ -34,8 +53,27 @@ finetune:
     loso:
       epochs: 20
       lr: 0.001
-      batch_size: 8   
-      weight_decay: 0.000001
+      batch_size: 8
+      weight_decay: 1.0e-06
+      optimizer: adam
+      momentum: 0.9
+      lr_schedule: epoch_cosine
+      schedule_update: epoch_end
+      warmup_epochs: 0
+      min_lr: 0.0
+      label_smoothing: 0.0
+      class_weights: false
+      duration_seconds: 4.0
+      sample_rate: 250
+      samples: 1000
+      in_channels: 45
+      skip_preprocess: true
+      l_freq: 8.0
+      h_freq: 30.0
+      apply_EA: true
+      ea_scope: per_subject
+      test_ea_policy: all_unlabeled_held_out_subject_trials
+      channel_mapping: inverse_distance_to_45_channels
   BNCI2014004:
     fewshot:
       epochs: 10
@@ -46,7 +84,26 @@ finetune:
       epochs: 10
       lr: 0.001
       batch_size: 8
-      weight_decay: 0.000001
+      weight_decay: 1.0e-06
+      optimizer: adam
+      momentum: 0.9
+      lr_schedule: epoch_cosine
+      schedule_update: epoch_end
+      warmup_epochs: 0
+      min_lr: 0.0
+      label_smoothing: 0.0
+      class_weights: false
+      duration_seconds: 4.0
+      sample_rate: 250
+      samples: 1000
+      in_channels: 45
+      skip_preprocess: true
+      l_freq: 8.0
+      h_freq: 30.0
+      apply_EA: true
+      ea_scope: per_subject
+      test_ea_policy: all_unlabeled_held_out_subject_trials
+      channel_mapping: inverse_distance_to_45_channels
   BNCI2015001:
     fewshot:
       epochs: 10
@@ -57,7 +114,26 @@ finetune:
       epochs: 10
       lr: 0.001
       batch_size: 8
-      weight_decay: 0.000001
+      weight_decay: 1.0e-06
+      optimizer: adam
+      momentum: 0.9
+      lr_schedule: epoch_cosine
+      schedule_update: epoch_end
+      warmup_epochs: 0
+      min_lr: 0.0
+      label_smoothing: 0.0
+      class_weights: false
+      duration_seconds: 4.0
+      sample_rate: 250
+      samples: 1000
+      in_channels: 45
+      skip_preprocess: true
+      l_freq: 8.0
+      h_freq: 30.0
+      apply_EA: true
+      ea_scope: per_subject
+      test_ea_policy: all_unlabeled_held_out_subject_trials
+      channel_mapping: inverse_distance_to_45_channels
   AlexMI:
     fewshot:
       epochs: 10

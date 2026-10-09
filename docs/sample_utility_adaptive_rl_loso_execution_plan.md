@@ -8,7 +8,7 @@
 
 已确认 `mirepnet` 环境为 Python 3.10.18、PyTorch 2.1.0+cu118，支持 `torch.func.functional_call`，CUDA 可用。九折 preflight 已重算数据与预训练文件 hash、验证 1400 条 trial 的形状/标签及 split 计数，并将 manifest 写入外置 artifact store。fold 0 smoke 使用 CPU 四线程完成 Teacher 10 epoch、Student warm-up 10 epoch 和六条件各 3 epoch，没有运行目标评测。最近检查时 10 张 RTX 3090 均有 99–100% 利用率；正式训练尚未启动，需等到有足够 GPU 余量再调度。
 
-第一轮沿用 [canonical LOSO 数据规格](../configs/reproductions/loso_five_datasets_v1.yaml)：**仅 session_3，3 通道、250 Hz、每 trial 前 1000 点、左右手两类**。所谓完整目标被试，指该选定 session 的全部 trial。改为全部 session 必须另建数据协议并重跑全部条件。
+第一轮沿用 [canonical LOSO 数据规格](/data1/llx/BigSmallcollab/migrations/retired_loso_configs/loso_five_datasets_v1.yaml)：**仅 session_3，3 通道、250 Hz、每 trial 前 1000 点、左右手两类**。所谓完整目标被试，指该选定 session 的全部 trial。改为全部 session 必须另建数据协议并重跑全部条件。
 
 当前放行状态：P0 九折 preflight 通过；P1 8 项针对性测试、`mirepnet` 编译与配置解析通过；P2 fold 0 CPU smoke 六条件、replay、控制器和无目标评测检查通过；P3–P7 正式 Teacher、Student 矩阵、epoch100 目标评测和最终报告均完成。完整输出位于 `/data1/llx/BigSmallcollab/results/distill/sample_utility_adaptive_rl_loso_pilot_v1/`。
 
@@ -20,7 +20,7 @@
 | Student optimizer | AdamW，lr=0.001，weight_decay=0.01 | `run_loso_small_baselines.py::_optimizer` |
 | batch | 16，drop_last=false，num_workers=0 | 既有 LOSO KD DataLoader |
 | scheduler | CosineAnnealingLR，T_max=100，eta_min=0；每 epoch 末推进一次 | `run_loso_distillation.py::_fit` |
-| KD | CE 系数 1，lambda_KD=0.5，tau=2，feature loss=0 | `configs/reproductions/loso_distillation_v1.yaml` |
+| KD | CE 系数 1，lambda_KD=0.5，tau=2，feature loss=0 | 历史规格：`/data1/llx/BigSmallcollab/migrations/retired_loso_configs/loso_distillation_v1.yaml` |
 | Student 输入 | 4–16 / 16–40 Hz filter bank，通道由 3 变 6；不做目标分布适应 | IFNet YAML / adapter |
 | Teacher | MIRepNet，10 epoch，Adam，lr=0.001，batch=8，weight_decay=1e-6，cosine | MIRepNet YAML / canonical Teacher runner |
 | Teacher 输入 | 8–30 Hz 带通 → 各训练被试独立 EA → IDW 补至 45 通道 | `_prepare_mirepnet` |

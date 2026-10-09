@@ -1,4 +1,4 @@
-# 004/5001 refreshed-source LOSO distillation
+# 当前 004/5001 LOSO 蒸馏
 
 This run repeats four student distillation conditions on the refreshed BNCI
 2014004 and BNCI 2015001 source caches. Data and all generated targets,
@@ -62,4 +62,7 @@ matching refreshed-source CE student baseline.
   the four conditions serially with per-cell resume checkpoints.
 
 The executable configuration is
-`configs/reproductions/loso_source_refresh_distillation_004_5001_v1.yaml`.
+`configs/experiments/loso_distillation.yaml`.
+
+The teacher/student baseline is the current configuration in `configs/models`
+and `configs/datasets`, documented in [loso_baseline.md](loso_baseline.md).

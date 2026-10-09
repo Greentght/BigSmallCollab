@@ -155,7 +155,8 @@ experiments/fusion/run_fusion.py — YAML 融合入口
 - `smoke_test.py` — 数据切分 + 适配器 forward 契约
 
 **`experiments/finetune/` — 单模型微调 + 导出产物**（一切协同实验的共享前置：先把 teacher/student 产物缓存出来）
-- `finetune.py --model <m> --dataset <ds> --protocol fewshot|loso` — 微调单个模型并导出标准产物（**主入口**）
+- 当前 LOSO baseline 以 [正式配置说明](docs/loso_baseline.md) 为准：参数在 `configs/models/*.yaml::finetune.<dataset>.loso`，来源在 `configs/datasets/*.yaml::loso`。004/5001 使用 `configs/protocols/loso.yaml`，001/001-4 使用 `configs/protocols/loso_001.yaml`；四组蒸馏使用 `configs/experiments/loso_distillation.yaml`。
+- `finetune.py --model <m> --dataset <ds> --protocol fewshot` — session 内微调并导出标准产物。当前宽带 LOSO 任务使用上面的专用 baseline 入口。
 - `finetune_teacher_mc.py` — teacher + MC-dropout 不确定度
 - `finetune_teacher_loso.py` — LOSO 逐 fold teacher 微调
 - `finetune_teacher_loso_subjoof.py` — LOSO subject-OOF 交叉拟合 teacher

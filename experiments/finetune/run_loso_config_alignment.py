@@ -1,10 +1,10 @@
 #!/usr/bin/env python
-"""Reference-aligned LOSO runs with resumable fold checkpoints.
+"""Current broadband 001/001-4 LOSO teachers with resumable fold checkpoints.
 
 The worker deliberately accepts physical CUDA indices and refuses GPU 0. A
 formal worker owns one (dataset, model, seed) stream and processes LOSO subjects
-in sorted order. Source-bridge workers compare the two 001-4 input sources using
-the same fold seed, initialization, and shuffled minibatch order.
+in sorted order. Historical alignment/source-bridge CLI profiles are retired;
+the current protocol reads formal model LOSO configurations.
 """
 from __future__ import annotations
 
@@ -31,9 +31,9 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
-from experiments.storage import (DATA_CACHE_ROOT, RESULTS_ROOT,
+from experiments.storage import (BNCI14001_SOURCE_ROOT, DATA_CACHE_ROOT, RESULTS_ROOT,
                                  require_external_output, resolve_local_file)
-SPEC = ROOT / 'configs/reproductions/loso_config_alignment_v2.yaml'
+SPEC = ROOT / 'configs/protocols/loso_001.yaml'
 INPUT_ROOT = DATA_CACHE_ROOT / 'eegfm_alignment_v2/model_inputs'
 RESULT_ROOT = RESULTS_ROOT / 'reproductions/loso_config_alignment_v2'
 REFERENCE_ROOT = Path('/home/lixinli/EEG-FM-Benchmark')
@@ -145,12 +145,22 @@ def canonical_dataset(value: str) -> str:
 
 
 def profile_config(profile: str, model: str, dataset: str, spec: dict) -> dict:
+    if profile != WIDEBAND_PROFILE:
+        raise ValueError(
+            f'{profile} is retired. For 001/001-4 use wideband_npy_v3 and '
+            'configs/protocols/loso_001.yaml; for 004/5001 use '
+            'experiments/finetune/run_loso_source_refresh_004_5001.py.')
     if profile == WIDEBAND_PROFILE:
         if dataset not in ('BNCI2014001', 'BNCI2014001-4'):
             raise ValueError(f'{profile} supports 001 and 001-4 only')
         if model == 'mirepnet':
             import config
+            from experiments.finetune import prepare_loso_alignment_inputs as inputs
             c = config.load_model_config(model, dataset, 'loso')
+            inputs.validate_001_dataset(
+                dataset, BNCI14001_SOURCE_ROOT, INPUT_ROOT / WIDEBAND_PROFILE,
+                RESULT_ROOT / WIDEBAND_PROFILE, spec)
+            inputs.validate_001_model(model, dataset, c)
             return {
                 'optimizer': c['optimizer'], 'lr': float(c['lr']),
                 'weight_decay': float(c['weight_decay']),
@@ -165,57 +175,31 @@ def profile_config(profile: str, model: str, dataset: str, spec: dict) -> dict:
             }
         if model != 'cbramod':
             raise ValueError(f'{profile} supports MIRepNet and CBraMod only')
-        # Keep the completed four-class reference-aligned recipe. Its transfer
-        # to the binary setting is explicit and does not alter the v2 spec.
-        cfg = profile_config('reference_aligned', model, 'BNCI2014001-4', spec)
-        cfg['parameter_source'] = 'reference_aligned.cbramod.BNCI2014001-4'
-        cfg['parameter_transfer'] = (
-            'four_class_recipe_transferred_to_binary_loso'
-            if dataset == 'BNCI2014001' else 'same_four_class_recipe')
-        return cfg
-    if model == 'mirepnet':
-        raise ValueError('MIRepNet is supported only by wideband_npy_v3')
-    if profile == 'source_bridge':
-        block = spec['source_bridge']['legacy_profiles'][model]
-        return {
-            'optimizer': block['optimizer'], 'lr': float(block['lr']),
-            'weight_decay': float(block['weight_decay']),
-            'batch_size': int(block['batch_size']), 'epochs': int(block['epochs']),
-            'dropout': float(block.get('head_dropout', block.get('dropout'))),
-            'class_weights': False, 'label_smoothing': float(block['label_smoothing']),
-            'min_lr': 1e-6 if model == 'cbramod' else 0.0,
-            'warmup_epochs': 5 if model == 'cbramod' else 0,
-            'lr_schedule': 'step_table' if model == 'cbramod' else 'epoch_cosine',
-            'duration_seconds': float(block['duration_seconds']),
-        }
-    models = spec['reference_aligned']['models']
-    if model == 'eegnet':
-        c = models['eegnet']
-        schedule = spec['reference_aligned']['lr_schedule']
+        import config
+        from experiments.finetune import prepare_loso_alignment_inputs as inputs
+        c = config.load_model_config(model, dataset, 'loso')
+        inputs.validate_001_dataset(
+            dataset, BNCI14001_SOURCE_ROOT, INPUT_ROOT / WIDEBAND_PROFILE,
+            RESULT_ROOT / WIDEBAND_PROFILE, spec)
+        inputs.validate_001_model(model, dataset, c)
+        # These two provenance labels are retained in the resolved dictionary
+        # to keep completed checkpoint fingerprints valid. Numeric values
+        # are now read only from the formal model YAML, as documented by SPEC.
         return {
             'optimizer': c['optimizer'], 'lr': float(c['lr']),
             'weight_decay': float(c['weight_decay']),
             'batch_size': int(c['batch_size']), 'epochs': int(c['epochs']),
             'dropout': float(c['dropout']),
             'class_weights': bool(c['class_weights']),
-            'label_smoothing': float(spec['reference_aligned']['label_smoothing']),
-            'min_lr': float(schedule['min_lr']), 'warmup_epochs': int(schedule['warmup_epochs']),
-            'lr_schedule': 'reference_step_table',
+            'label_smoothing': float(c['label_smoothing']),
+            'min_lr': float(c['min_lr']), 'warmup_epochs': int(c['warmup_epochs']),
+            'lr_schedule': c['lr_schedule'],
             'duration_seconds': float(c['duration_seconds']),
+            'parameter_source': 'reference_aligned.cbramod.BNCI2014001-4',
+            'parameter_transfer': (
+                'four_class_recipe_transferred_to_binary_loso'
+                if dataset == 'BNCI2014001' else 'same_four_class_recipe'),
         }
-    c = models['cbramod']
-    ds = c['per_dataset'][dataset]
-    return {
-        'optimizer': c['optimizer'], 'lr': float(c['lr']),
-        'weight_decay': float(ds['weight_decay']),
-        'batch_size': int(ds['batch_size']), 'epochs': int(c['epochs']),
-        'dropout': float(c['head_dropout']), 'class_weights': False,
-        'label_smoothing': float(c['label_smoothing']),
-        'min_lr': float(spec['reference_aligned']['lr_schedule']['min_lr']),
-        'warmup_epochs': int(spec['reference_aligned']['lr_schedule']['warmup_epochs']),
-        'lr_schedule': 'reference_step_table',
-        'duration_seconds': float(ds['duration_seconds']),
-    }
 
 
 def input_dir(profile: str, dataset: str, model: str, variant: str) -> Path:
@@ -747,8 +731,7 @@ def run_worker(args, spec: dict, device: torch.device) -> None:
     dummy.to(device)
     del dummy
     del x0, y0, s0
-    subjects = range(9 if args.profile == WIDEBAND_PROFILE else
-                     int(spec['data']['datasets'][dataset]['subjects']))
+    subjects = range(int(spec['datasets'][dataset]['subjects']))
     if args.profile == 'source_bridge':
         # The bridge intentionally resets the stream per held-out fold and per
         # source variant, allowing one-to-one paired initialization/batches.
@@ -890,6 +873,11 @@ def main() -> None:
     parser.add_argument('--preflight-steps', type=int,
                         help='run a short non-result forward/backward preflight and exit')
     args = parser.parse_args()
+    if args.profile != WIDEBAND_PROFILE:
+        raise SystemExit(
+            f'{args.profile} is retired. For 001/001-4 use --profile '
+            'wideband_npy_v3 and configs/protocols/loso_001.yaml. '
+            'For 004/5001 use experiments/finetune/run_loso_source_refresh_004_5001.py.')
     if args.gpu == 0:
         raise SystemExit('GPU 0 is prohibited for this experiment')
     if args.preflight_steps is not None and args.preflight_steps < 1:
@@ -923,8 +911,6 @@ def main() -> None:
     torch.cuda.set_device(args.gpu)
     device = torch.device(f'cuda:{args.gpu}')
     spec = yaml.safe_load(SPEC.read_text())
-    if args.profile == 'source_bridge' and args.dataset not in ('001-4', 'BNCI2014001-4'):
-        raise SystemExit('source_bridge only supports --dataset 001-4')
     try:
         run_worker(args, spec, device)
     except Exception:

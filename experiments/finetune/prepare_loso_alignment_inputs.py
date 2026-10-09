@@ -1,8 +1,7 @@
 #!/usr/bin/env python
-"""Prepare immutable model-input arrays for the LOSO alignment profiles."""
+"""Shared input transforms; the former alignment CLI has been retired."""
 from __future__ import annotations
 
-import argparse
 import csv
 import hashlib
 import json
@@ -13,7 +12,6 @@ import sys
 import numpy as np
 import pandas as pd
 from scipy import signal
-import yaml
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -21,7 +19,7 @@ sys.path.insert(0, str(ROOT))
 from experiments.storage import (DATA_CACHE_ROOT, RESULTS_ROOT,
                                  require_external_output, resolve_local_file)
 OLD_DATA = Path('/data1/llx')
-SPEC_PATH = ROOT / 'configs/reproductions/loso_config_alignment_v2.yaml'
+SPEC_PATH = ROOT / 'configs/protocols/loso_001.yaml'
 SOURCE_ROOT = DATA_CACHE_ROOT / 'eegfm_alignment_v2/rebuilt'
 INPUT_ROOT = DATA_CACHE_ROOT / 'eegfm_alignment_v2/model_inputs'
 MOABB_OVERLAY = Path('/tmp/loso_alignment_deps_moabb')
@@ -36,6 +34,90 @@ LABELS_REFERENCE = {
 LABELS_LEGACY = {'feet': 0, 'left_hand': 1, 'right_hand': 2, 'tongue': 3}
 DATASETS = ('BNCI2014001-4', 'BNCI2014004', 'BNCI2015001')
 MODELS = ('cbramod', 'eegnet')
+
+
+def _require_config_values(context: str, cfg: dict, expected: dict) -> None:
+    changed = {key: {'configured': cfg.get(key, value), 'supported': value}
+               for key, value in expected.items() if cfg.get(key, value) != value}
+    if changed:
+        raise ValueError(f'{context}: unsupported current 001 baseline settings: {changed}')
+
+
+def validate_001_dataset(dataset: str, source_root: Path, input_root: Path,
+                         result_root: Path, spec: dict | None = None) -> dict:
+    """Reject source/protocol changes that the fixed current 001 pipeline ignores."""
+    import config
+    if dataset not in ('BNCI2014001', 'BNCI2014001-4'):
+        raise ValueError(f'{dataset}: current 001 protocol supports 001 and 001-4 only')
+    data_cfg = config.load_dataset_config(dataset)
+    classes = ({'left_hand': 0, 'right_hand': 1} if dataset == 'BNCI2014001' else
+               {'left_hand': 0, 'right_hand': 1, 'feet': 2, 'tongue': 3})
+    _require_config_values(dataset, data_cfg, {
+        'num_subjects': 9, 'channels': 22, 'sample_rate': 250,
+        'num_classes': len(classes),
+    })
+    loso = data_cfg['loso']
+    _require_config_values(f'{dataset}.loso', loso, {
+        'source_directory': str(source_root), 'input_root': str(input_root),
+        'result_root': str(result_root), 'native_sampling_rate_hz': 250,
+        'selected_session': '0train', 'duration_seconds': 4.0,
+        'source_bandpass_hz': [0.1, 75.0], 'current_baseline_id': 'wideband_npy_v3',
+        'class_mapping': classes, 'seeds': [0, 1, 2],
+        'per_subject_trials': [144 if len(classes) == 2 else 288] * 9,
+    })
+    if spec is not None:
+        _require_config_values('current 001 protocol source', spec['source'], {
+            'directory': str(source_root), 'native_fs_hz': 250,
+            'bandpass_hz': [0.1, 75], 'array_shape': [5184, 22, 1001],
+        })
+        _require_config_values('current 001 protocol selection', spec['selection'], {
+            'loso_session': '0train',
+            'source_window': 'first_1000_native_samples_before_model_resampling',
+        })
+        _require_config_values('current 001 protocol storage', spec['storage'], {
+            'inputs': str(input_root), 'results': str(result_root),
+        })
+        _require_config_values('current 001 protocol seeds', spec['protocol'], {
+            'teacher_seeds': [0, 1, 2], 'student_seeds': [0, 1, 2],
+        })
+    return loso
+
+
+def validate_001_model(model: str, dataset: str, cfg: dict) -> None:
+    """Check fixed preprocessing/scheduler operations before cache reuse or training."""
+    common = {'duration_seconds': 4.0, 'sample_rate': 250, 'samples': 1000}
+    if model == 'mirepnet':
+        fixed = dict(common, target_fs=250, in_channels=45, skip_preprocess=True,
+                     apply_EA=True, ea_scope='per_subject',
+                     test_ea_policy='all_unlabeled_held_out_subject_trials',
+                     channel_mapping='inverse_distance_to_45_channels',
+                     l_freq=8.0, h_freq=30.0, filter_order=4,
+                     lr_schedule='epoch_cosine', schedule_update='epoch_end',
+                     warmup_epochs=0, min_lr=0.0, class_weights=False,
+                     label_smoothing=0.0, dropout=0.5)
+    elif model == 'cbramod':
+        fixed = dict(common, target_fs=200, in_channels=22, skip_preprocess=True,
+                     feature_head='flatten', apply_EA=False, norm_method='car',
+                     l_freq=0.3, h_freq=75.0, notch_freq=60.0, scale=1.0,
+                     filter_order=4, notch_q=30,
+                     lr_schedule='reference_step_table', schedule='step_table',
+                     schedule_update='epoch_end_global_step_table')
+    elif model in ('ifnet', 'eegnet', 'adfcnn'):
+        fixed = dict(common, target_fs=250, in_channels=22, skip_preprocess=False,
+                     lr_schedule='epoch_cosine', schedule_update='epoch_end',
+                     warmup_epochs=0, min_lr=0.0, label_smoothing=0.0,
+                     class_weights=False, apply_EA=False)
+        if model == 'ifnet':
+            fixed.update(use_filter_bank=True, filter_bank_hz=[[4.0, 16.0], [16.0, 40.0]],
+                         filter_order=5, filter_bank_order=5)
+        else:
+            fixed.update(l_freq=8.0, h_freq=32.0, filter_order=4,
+                         preprocessing_stage='cached_input')
+    else:
+        raise ValueError(f'{model}: unsupported current 001 baseline model')
+    _require_config_values(f'{dataset}/{model}.loso', cfg, fixed)
+    if cfg.get('filter_phase', 'zero_phase') not in ('zero_phase', 'zero_phase_filtfilt'):
+        raise ValueError(f'{dataset}/{model}: only zero-phase filtering is supported')
 
 
 def sha256(path: Path) -> str:
@@ -123,72 +205,39 @@ def bridge_info(dataset: str, variant: str):
     }
 
 
-def get_profile(profile: str, model: str, dataset: str, spec: dict) -> dict:
-    if profile == 'source_bridge':
-        if model == 'cbramod':
-            source = spec['source_bridge']['legacy_profiles']['cbramod']
-            return {
-                'optimizer': source['optimizer'], 'lr': source['lr'],
-                'weight_decay': source['weight_decay'], 'batch_size': source['batch_size'],
-                'epochs': source['epochs'], 'dropout': source['head_dropout'],
-                'label_smoothing': source['label_smoothing'], 'target_fs': source['target_fs'],
-                'l_freq': source['bandpass_hz'][0], 'h_freq': source['bandpass_hz'][1],
-                'notch_freq': source['notch_hz'], 'norm_method': source['normalization'],
-                'apply_EA': False, 'duration': source['duration_seconds'],
-            'schedule': 'step_table', 'schedule_update': source['lr_schedule_update'],
-            'warmup_epochs': 5, 'min_lr': 1e-6, 'scale': 1.0,
-            'source_cast': 'float32_legacy_adapter',
-            'crop_before_resample': True,
-            }
-        source = spec['source_bridge']['legacy_profiles']['eegnet']
-        return {
-            'optimizer': source['optimizer'], 'lr': source['lr'],
-            'weight_decay': source['weight_decay'], 'batch_size': source['batch_size'],
-            'epochs': source['epochs'], 'dropout': source['dropout'],
-            'label_smoothing': source['label_smoothing'], 'target_fs': source['target_fs'],
-            'l_freq': None, 'h_freq': None, 'notch_freq': None, 'norm_method': None,
-            'apply_EA': False, 'duration': source['duration_seconds'],
-            'schedule': 'epoch_cosine', 'schedule_update': 'epoch_end',
-            'warmup_epochs': 0, 'min_lr': 0.0, 'scale': 1.0,
-            'source_cast': 'float32_legacy_loader',
-            'crop_before_resample': True,
-        }
+def get_profile(profile: str, model: str, dataset: str, spec: dict | None = None) -> dict:
+    if profile != 'wideband_npy_v3':
+        raise ValueError(
+            f'{profile} is retired. Prepare current 001/001-4 inputs with '
+            'experiments/finetune/prepare_bnci14001_wideband_inputs.py; '
+            'prepare current 004/5001 inputs with '
+            'experiments/finetune/prepare_loso_source_refresh_004_5001.py.')
+    if model != 'cbramod' or dataset not in ('BNCI2014001', 'BNCI2014001-4'):
+        raise ValueError('wideband_npy_v3 shared profile supports CBraMod 001/001-4 only')
+    import config
+    cfg = config.load_model_config(model, dataset, 'loso')
+    validate_001_model(model, dataset, cfg)
+    # Keep the existing immutable input manifest's numeric representation.
+    # Whole-valued duration/cutoffs were exported as integers in this cache.
+    def native_number(value):
+        number = float(value)
+        return int(number) if number.is_integer() else number
 
-    cfg = spec['reference_aligned']['models'][model]
-    if model == 'eegnet':
-        schedule = spec['reference_aligned']['lr_schedule']
-        return {
-            'optimizer': cfg['optimizer'], 'lr': cfg['lr'],
-            'weight_decay': cfg['weight_decay'], 'batch_size': cfg['batch_size'],
-            'epochs': cfg['epochs'], 'dropout': cfg['dropout'],
-            'label_smoothing': spec['reference_aligned']['label_smoothing'],
-            'target_fs': cfg['target_fs'],
-            'l_freq': cfg['bandpass_hz'][0], 'h_freq': cfg['bandpass_hz'][1],
-            'notch_freq': cfg['notch_hz'], 'norm_method': cfg['normalization'],
-            'apply_EA': spec['reference_aligned']['apply_ea'], 'duration': cfg['duration_seconds'],
-            'schedule': 'step_table', 'schedule_update': 'epoch_end_global_step_table',
-            'warmup_epochs': schedule['warmup_epochs'], 'min_lr': schedule['min_lr'], 'scale': 1.0,
-            'source_cast': 'float64_moabb',
-            'crop_before_resample': False,
-            'class_weights': cfg['class_weights'],
-        }
-    per_dataset = cfg['per_dataset'][dataset]
     return {
         'optimizer': cfg['optimizer'], 'lr': cfg['lr'],
-        'weight_decay': per_dataset['weight_decay'],
-        'batch_size': per_dataset['batch_size'], 'epochs': cfg['epochs'],
-        'dropout': cfg['head_dropout'], 'label_smoothing': cfg['label_smoothing'],
-        'target_fs': cfg['target_fs'], 'l_freq': cfg['bandpass_hz'][0],
-        'h_freq': cfg['bandpass_hz'][1], 'notch_freq': cfg['notch_hz'],
-        'norm_method': per_dataset['normalization'],
-        'apply_EA': spec['reference_aligned']['apply_ea'],
-        'duration': per_dataset['duration_seconds'], 'schedule': 'step_table',
-        'schedule_update': 'epoch_end_global_step_table',
-        'warmup_epochs': spec['reference_aligned']['lr_schedule']['warmup_epochs'],
-        'min_lr': spec['reference_aligned']['lr_schedule']['min_lr'], 'scale': 1.0,
-        'source_cast': 'float64_moabb',
+        'weight_decay': cfg['weight_decay'],
+        'batch_size': cfg['batch_size'], 'epochs': cfg['epochs'],
+        'dropout': cfg['dropout'], 'label_smoothing': cfg['label_smoothing'],
+        'target_fs': int(cfg['target_fs']), 'l_freq': float(cfg['l_freq']),
+        'h_freq': native_number(cfg['h_freq']), 'notch_freq': native_number(cfg['notch_freq']),
+        'norm_method': cfg['norm_method'], 'apply_EA': cfg['apply_EA'],
+        'duration': native_number(cfg['duration_seconds']), 'schedule': 'step_table',
+        'schedule_update': cfg['schedule_update'],
+        'warmup_epochs': cfg['warmup_epochs'],
+        'min_lr': cfg['min_lr'], 'scale': float(cfg['scale']),
+        'source_cast': 'float64_broadband_all_session_npy',
         'crop_before_resample': False,
-        'class_weights': False,
+        'class_weights': cfg['class_weights'],
     }
 
 
@@ -320,21 +369,11 @@ def prepare(profile: str, model: str, dataset: str, variant: str, spec: dict,
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--datasets', nargs='+', choices=DATASETS, default=list(DATASETS))
-    parser.add_argument('--include-bridge', action='store_true')
-    parser.add_argument('--chunk-size', type=int, default=96)
-    args = parser.parse_args()
-    spec = yaml.safe_load(SPEC_PATH.read_text())
-    for dataset in args.datasets:
-        for model in MODELS:
-            prepare('reference_aligned', model, dataset, 'rebuilt_source', spec,
-                    chunk_size=args.chunk_size)
-    if args.include_bridge:
-        for model in MODELS:
-            for variant in ('legacy_cache', 'rebuilt_source'):
-                prepare('source_bridge', model, 'BNCI2014001-4', variant, spec,
-                        chunk_size=args.chunk_size)
+    raise SystemExit(
+        'The alignment/source_bridge input CLI is retired. Use '
+        'experiments/finetune/prepare_bnci14001_wideband_inputs.py for 001/001-4 '
+        'or experiments/finetune/prepare_loso_source_refresh_004_5001.py '
+        'for 004/5001. Shared transform_chunk remains available for imports.')
 
 
 if __name__ == '__main__':

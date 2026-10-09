@@ -1,0 +1,90 @@
+# Current 001/001-4 LOSO baseline protocol. Numeric model parameters live only
+# in configs/models/<model>.yaml::finetune.<dataset>.loso.
+spec_version: 1
+kind: current_loso_baseline
+protocol_id: bnci14001_wideband_loso_v3_20261007
+status: baseline_current_completed
+worker_profile: wideband_npy_v3
+supersedes: historical_001_alignment_and_narrowband_source_experiments
+
+source:
+  directory: /data1/llx/BNCI2014001/broadband_0p1_75hz
+  dataset: BNCI2014001
+  export_script: experiments/finetune/export_bnci14001_all_sessions.py
+  array_shape: [5184, 22, 1001]
+  dtype: float64
+  unit: microvolts
+  native_fs_hz: 250
+  bandpass_hz: [0.1, 75]
+  filter_stage: continuous_MOABB_Raw_before_epoching
+  sessions_saved: [0train, 1test]
+  model_preprocessing_at_export: false
+selection:
+  loso_session: 0train
+  equivalent_legacy_session: session_T
+  source_window: first_1000_native_samples_before_model_resampling
+  trial_identity: physical_trial_uid_shared_between_models_and_class_subsets
+
+datasets:
+  BNCI2014001:
+    subjects: 9
+    native_channels: 22
+    classes: {left_hand: 0, right_hand: 1}
+    selected_trials: 1296
+    test_trials_per_fold: 144
+    train_trials_per_fold: 1152
+  BNCI2014001-4:
+    subjects: 9
+    native_channels: 22
+    classes: {left_hand: 0, right_hand: 1, feet: 2, tongue: 3}
+    selected_trials: 2592
+    test_trials_per_fold: 288
+    train_trials_per_fold: 2304
+
+protocol:
+  split: leave_one_subject_out
+  train_scope: all_selected_session_trials_of_other_subjects
+  test_scope: all_selected_session_trials_of_held_out_subject
+  validation: none_for_current_fixed_baseline
+  evaluation: fixed_final_epoch_only
+  selection_using_outer_test: false
+  teacher_seeds: [0, 1, 2]
+  teacher_seed_scope: reference_seed_stream_across_ordered_folds
+  teacher_rng_compatibility: retain_unused_initial_model_build_and_test_iterator_draws
+  student_seeds: [0, 1, 2]
+  student_seed_scope: independently_reset_for_each_fold
+  teacher_student_seed_pairing: same_seed_labels_with_different_model_rng_protocols
+
+models:
+  mirepnet:
+    config: configs/models/mirepnet.yaml
+    config_protocol: loso
+    preprocessing: model_config_bandpass_then_subject_EA_then_inverse_distance_to_45_channels
+    test_EA: all_unlabeled_held_out_subject_trials
+    evaluation_regime: transductive_loso
+    input_shape: [45, 1000]
+  cbramod:
+    config: configs/models/cbramod.yaml
+    config_protocol: loso
+    preprocessing: model_config_resample_filter_notch_CAR_then_native_channel_patchify
+    input_shape: [22, 4, 200]
+    historical_checkpoint_parameter_source_label: reference_aligned.cbramod.BNCI2014001-4
+    historical_label_policy: retain_only_for_completed_checkpoint_fingerprint_compatibility
+    runtime_parameter_source: configs/models/cbramod.yaml::finetune.<dataset>.loso
+  students:
+    models: [ifnet, eegnet, adfcnn]
+    config_protocol: loso
+    config_source: configs/models/{model}.yaml::finetune.{dataset}.loso
+
+storage:
+  inputs: /data1/llx/BigSmallcollab/cache/eegfm_alignment_v2/model_inputs/wideband_npy_v3
+  results: /data1/llx/BigSmallcollab/results/reproductions/loso_config_alignment_v2/wideband_npy_v3
+  path_policy: retain_completed_artifact_paths_to_preserve_existing_baseline_and_cache_identity
+  immutable_cache_policy: reuse_when_source_manifest_and_resolved_profile_match
+execution:
+  input_preparation: experiments/finetune/prepare_bnci14001_wideband_inputs.py
+  teacher_runner: experiments/finetune/run_loso_config_alignment.py
+  teacher_dispatcher: experiments/finetune/dispatch_bnci14001_wideband_loso.py
+  student_runner: experiments/finetune/run_loso_small_wideband_001.py
+  prohibited_gpus: [0]
+  automatic_retraining_on_config_cleanup: false

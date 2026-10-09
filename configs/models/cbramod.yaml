@@ -39,13 +39,30 @@ finetune:
       warmup_epochs: 5
       min_lr: 0.000001
     loso:
-      epochs: 50
-      lr: 0.0001
-      batch_size: 64
-      weight_decay: 0.05
-      dropout: 0.1
-      scale: 1
-      label_smoothing: 0.1
+      epochs: 20
+      lr: 0.001
+      batch_size: 16
+      weight_decay: 0.1
+      optimizer: adamw
+      dropout: 0.5
+      scale: 1.0
+      label_smoothing: 0.0
+      target_fs: 200
+      l_freq: 0.3
+      h_freq: 75.0
+      notch_freq: 60.0
+      norm_method: car
+      apply_EA: false
+      feature_head: flatten
+      warmup_epochs: 5
+      min_lr: 1.0e-06
+      lr_schedule: reference_step_table
+      schedule_update: epoch_end_global_step_table
+      class_weights: false
+      duration_seconds: 4.0
+      sample_rate: 250
+      samples: 1000
+      skip_preprocess: true
   BNCI2014001-4:
     fewshot:
       epochs: 20
@@ -64,13 +81,30 @@ finetune:
       warmup_epochs: 5
       min_lr: 0.000001
     loso:
-      epochs: 50
-      lr: 0.0001
-      batch_size: 64
-      weight_decay: 0.05
-      dropout: 0.1
-      scale: 1
-      label_smoothing: 0.1
+      epochs: 20
+      lr: 0.001
+      batch_size: 16
+      weight_decay: 0.1
+      optimizer: adamw
+      dropout: 0.5
+      scale: 1.0
+      label_smoothing: 0.0
+      target_fs: 200
+      l_freq: 0.3
+      h_freq: 75.0
+      notch_freq: 60.0
+      norm_method: car
+      apply_EA: false
+      feature_head: flatten
+      warmup_epochs: 5
+      min_lr: 1.0e-06
+      lr_schedule: reference_step_table
+      schedule_update: epoch_end_global_step_table
+      class_weights: false
+      duration_seconds: 4.0
+      sample_rate: 250
+      samples: 1000
+      skip_preprocess: true
   BNCI2014004:
     fewshot:
       epochs: 20
@@ -92,9 +126,26 @@ finetune:
       lr: 0.0001
       batch_size: 64
       weight_decay: 0.05
+      optimizer: adamw
       dropout: 0.1
-      scale: 1
+      scale: 1.0
       label_smoothing: 0.1
+      target_fs: 200
+      l_freq: 0.3
+      h_freq: 75.0
+      notch_freq: 60.0
+      norm_method: null
+      apply_EA: false
+      feature_head: flatten
+      warmup_epochs: 0
+      min_lr: 0.0
+      lr_schedule: epoch_cosine
+      schedule_update: epoch_end
+      class_weights: false
+      duration_seconds: 4.0
+      sample_rate: 250
+      samples: 1000
+      skip_preprocess: true
   BNCI2015001:
     fewshot:
       epochs: 20
@@ -117,9 +168,26 @@ finetune:
       lr: 0.0001
       batch_size: 64
       weight_decay: 0.05
+      optimizer: adamw
       dropout: 0.1
-      scale: 1
+      scale: 1.0
       label_smoothing: 0.1
+      target_fs: 200
+      l_freq: 0.3
+      h_freq: 75.0
+      notch_freq: 60.0
+      norm_method: null
+      apply_EA: false
+      feature_head: flatten
+      warmup_epochs: 0
+      min_lr: 0.0
+      lr_schedule: epoch_cosine
+      schedule_update: epoch_end
+      class_weights: false
+      duration_seconds: 4.0
+      sample_rate: 250
+      samples: 1000
+      skip_preprocess: true
   AlexMI:
     fewshot:
       epochs: 50

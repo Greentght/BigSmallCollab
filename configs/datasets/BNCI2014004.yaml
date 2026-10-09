@@ -7,3 +7,35 @@ num_subjects: 9
 sample_rate: 250
 val_split: 0.7        # TEST fraction: 30% calib / 70% test
 seeds: [666, 667, 668]
+
+# Current LOSO baseline; top-level split values remain the fewshot defaults.
+loso:
+  source_directory: /data1/llx/BNCI2014004/broadband_0_120hz
+  native_sampling_rate_hz: 250
+  selected_session: session_3
+  legacy_session: session_3
+  moabb_session: 3test
+  source_bandpass_hz:
+  - 0.0
+  - 120.0
+  duration_seconds: 4.0
+  per_subject_trials:
+  - 160
+  - 120
+  - 160
+  - 160
+  - 160
+  - 160
+  - 160
+  - 160
+  - 160
+  class_mapping:
+    left_hand: 0
+    right_hand: 1
+  current_baseline_id: loso_source_refresh_004_5001_v1
+  input_root: /data1/llx/BigSmallcollab/cache/reproductions/loso_source_refresh_004_5001_v1/model_inputs
+  result_root: /data1/llx/BigSmallcollab/results/reproductions/loso_source_refresh_004_5001_v1
+  seeds:
+  - 666
+  - 667
+  - 668

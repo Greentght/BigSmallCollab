@@ -55,6 +55,51 @@ def load_dataset_config(name):
     return _load_yaml(path)
 
 
+def load_loso_dataset_config(name):
+    """Current source/session and baseline locations for a registered task."""
+    dataset = load_dataset_config(name)
+    if 'loso' not in dataset:
+        raise KeyError(f'no current LOSO source registered for {name!r}')
+    return dict(dataset['loso'])
+
+
+def normalize_loso_model_config(name, cfg):
+    """Normalize explicit descriptions of defaults in completed baselines.
+
+    The former runners omitted these values from their manifests while using
+    exactly these settings. Strip a field only when its value matches that
+    historical effective default. A changed value remains in the comparison,
+    so changing LR, filtering, or any other setting still rejects reuse.
+    """
+    documented = {
+        'optimizer': 'adam' if name == 'mirepnet' else 'adamw',
+        'lr_schedule': 'epoch_cosine', 'schedule_update': 'epoch_end',
+        'duration_seconds': 4.0, 'class_weights': False,
+        'warmup_epochs': 0, 'min_lr': 0.0, 'label_smoothing': 0.0,
+    }
+    if name == 'mirepnet':
+        documented.update(l_freq=8.0, h_freq=30.0, apply_EA=True,
+                          ea_scope='per_subject',
+                          test_ea_policy='all_unlabeled_held_out_subject_trials',
+                          channel_mapping='inverse_distance_to_45_channels')
+    elif name == 'ifnet':
+        documented['filter_bank_hz'] = [[4.0, 16.0], [16.0, 40.0]]
+    elif name in ('eegnet', 'adfcnn'):
+        documented.update(l_freq=8.0, h_freq=32.0, filter_order=4,
+                          filter_phase='zero_phase', preprocessing_stage='cached_input')
+    if name in ('ifnet', 'eegnet', 'adfcnn'):
+        documented['skip_preprocess'] = False
+    result = dict(cfg)
+    for key, value in documented.items():
+        if key in result and result[key] == value:
+            result.pop(key)
+    return result
+
+
+def equivalent_loso_model_config(name, recorded, current):
+    return normalize_loso_model_config(name, recorded) == normalize_loso_model_config(name, current)
+
+
 def load_model_yaml(name):
     """Raw model YAML, including the nested ``finetune`` table."""
     path = os.path.join(CONFIG_DIR, 'models', f'{name}.yaml')
