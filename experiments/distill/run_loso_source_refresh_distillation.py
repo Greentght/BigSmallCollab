@@ -571,28 +571,40 @@ def smoke_task(dataset: str, teacher: str, student: str, seed: int,
     teacher_logits = torch.as_tensor(cache['logits'][:batch_size], device=device)
     teacher_features = torch.as_tensor(cache['feats'][:batch_size], device=device)
     for name in STAGES:
-        model.zero_grad(set_to_none=True)
-        projector.zero_grad(set_to_none=True)
-        features, logits = adapter.forward(model, xb)
-        total, _, kd, feature, active = core._losses(
-            logits, features, labels, teacher_logits, teacher_features, projector,
-            plan['stages'][name], float(plan['loss']['temperature']),
-            int(plan['stages'][name]['distill_warmup_epochs']))
-        if not torch.isfinite(total) or logits.shape != (len(labels), len(student_data['manifest']['class_mapping'])):
-            raise RuntimeError(f'{name}: invalid logits or loss')
-        total.backward()
-        if not any(p.grad is not None and torch.isfinite(p.grad).all()
-                   and p.grad.abs().sum() > 0 for p in model.parameters()):
-            raise RuntimeError(f'{name}: no finite student gradient')
-        if not any(p.grad is not None and torch.isfinite(p.grad).all()
-                   and p.grad.abs().sum() > 0 for p in projector.parameters()):
-            raise RuntimeError(f'{name}: no finite projector gradient')
-        if name.startswith('warmup10') and active:
-            raise RuntimeError('warmup epoch 1 must be CE only')
-        print(f'[smoke-ok] {name} {dataset} {teacher}->{student} '
-              f'input={tuple(xb.shape)} student_dim={features.shape[1]} '
-              f'teacher_dim={teacher_features.shape[1]} '
-              f'peak_mib={torch.cuda.max_memory_allocated(device)/2**20:.1f}', flush=True)
+        stage = plan['stages'][name]
+        warmup_epochs = int(stage['distill_warmup_epochs'])
+        # Check the CE-only first epoch and the first active epoch for warmup
+        # variants. Non-warmup variants are active from epoch zero.
+        probe_epochs = (0, warmup_epochs) if warmup_epochs else (0,)
+        for epoch in probe_epochs:
+            model.zero_grad(set_to_none=True)
+            projector.zero_grad(set_to_none=True)
+            features, logits = adapter.forward(model, xb)
+            total, _, kd, feature, active = core._losses(
+                logits, features, labels, teacher_logits, teacher_features, projector,
+                stage, float(plan['loss']['temperature']), epoch)
+            if not torch.isfinite(total) or logits.shape != (len(labels), len(student_data['manifest']['class_mapping'])):
+                raise RuntimeError(f'{name} epoch={epoch}: invalid logits or loss')
+            if active != (epoch >= warmup_epochs):
+                raise RuntimeError(f'{name} epoch={epoch}: incorrect warmup activation')
+            if epoch == 0 and warmup_epochs and active:
+                raise RuntimeError('warmup epoch 1 must be CE only')
+            total.backward()
+            if not any(p.grad is not None and torch.isfinite(p.grad).all()
+                       and p.grad.abs().sum() > 0 for p in model.parameters()):
+                raise RuntimeError(f'{name} epoch={epoch}: no finite student gradient')
+            expects_projector_grad = active and float(stage['lam_feat']) > 0
+            has_projector_grad = any(
+                p.grad is not None and torch.isfinite(p.grad).all()
+                and p.grad.abs().sum() > 0 for p in projector.parameters())
+            if expects_projector_grad and not has_projector_grad:
+                raise RuntimeError(f'{name} epoch={epoch}: no finite projector gradient')
+            if not expects_projector_grad and has_projector_grad:
+                raise RuntimeError(f'{name} epoch={epoch}: projector used while feature loss is inactive')
+            print(f'[smoke-ok] {name} epoch={epoch} active={active} '
+                  f'{dataset} {teacher}->{student} input={tuple(xb.shape)} '
+                  f'student_dim={features.shape[1]} teacher_dim={teacher_features.shape[1]} '
+                  f'peak_mib={torch.cuda.max_memory_allocated(device)/2**20:.1f}', flush=True)
     del adapter, model, projector, xb, labels, teacher_logits, teacher_features
     gc.collect()
     torch.cuda.empty_cache()
