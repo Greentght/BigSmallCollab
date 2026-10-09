@@ -12,7 +12,8 @@ from collab.lookahead import (FunctionalIFNet, feedback_logits,
                               named_param_groups, optimizer_state_by_name)
 from collab.sample_utility import (SampleUtilityMLP, bernoulli_policy_loss,
                                   build_controller_input, student_loss)
-from experiments.distill.sample_utility_splits import batchwise_shuffle, fold_masks
+from experiments.distill.sample_utility_splits import (align_replay_by_uid,
+                                                       batchwise_shuffle, fold_masks)
 from models.ifnet.ifnet import IFNet
 
 
@@ -175,3 +176,20 @@ def test_batch_shuffle_preserves_each_batch_multiset():
         assert np.array_equal(np.sort(values[start:stop]), np.sort(shuffled[start:stop]))
     assert np.array_equal(np.sort(values), np.sort(shuffled))
     assert float(values.sum()) == float(shuffled.sum())
+
+
+def test_replay_arrays_are_reordered_by_uid_and_reject_ambiguous_identity():
+    expected_uids = np.asarray([[0, 10], [1, 21], [2, 32]], dtype=np.int64)
+    replay_uids = expected_uids[[2, 0, 1]]
+    replay_weights = np.asarray([0.8, 0.2, 0.5], dtype=np.float32)
+    aligned = align_replay_by_uid(
+        replay_uids, expected_uids, weights=replay_weights,
+        actions=np.asarray([1, 0, 1], dtype=np.float32))
+    assert np.array_equal(aligned['weights'], np.asarray([0.2, 0.5, 0.8], dtype=np.float32))
+    assert np.array_equal(aligned['actions'], np.asarray([0, 1, 1], dtype=np.float32))
+    with pytest.raises(ValueError, match='unique'):
+        align_replay_by_uid(replay_uids[[0, 0, 2]], expected_uids,
+                            weights=replay_weights)
+    with pytest.raises(ValueError, match='UID set'):
+        align_replay_by_uid(replay_uids, expected_uids + 100,
+                            weights=replay_weights)

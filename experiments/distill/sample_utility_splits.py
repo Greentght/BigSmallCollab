@@ -26,3 +26,27 @@ def batchwise_shuffle(values, batch_lengths, rng):
         output.append(values[start:stop][rng.permutation(int(length))])
         start = stop
     return np.concatenate(output) if output else values.copy()
+
+
+def align_replay_by_uid(replay_uids, expected_uids, **replay_arrays):
+    """Reorder replay arrays into the requested UID order, rejecting ambiguity."""
+    replay_uids = np.asarray(replay_uids, dtype=np.int64)
+    expected_uids = np.asarray(expected_uids, dtype=np.int64)
+    if replay_uids.ndim != 2 or expected_uids.ndim != 2:
+        raise ValueError('replay and expected UIDs must be two-dimensional')
+    replay_keys = [tuple(uid) for uid in replay_uids.tolist()]
+    expected_keys = [tuple(uid) for uid in expected_uids.tolist()]
+    if (len(set(replay_keys)) != len(replay_keys)
+            or len(set(expected_keys)) != len(expected_keys)):
+        raise ValueError('replay and expected UIDs must be unique')
+    if len(replay_keys) != len(expected_keys) or set(replay_keys) != set(expected_keys):
+        raise ValueError('replay UID set differs from expected UID set')
+    replay_position = {uid: index for index, uid in enumerate(replay_keys)}
+    order = np.asarray([replay_position[uid] for uid in expected_keys], dtype=np.int64)
+    aligned = {}
+    for name, values in replay_arrays.items():
+        values = np.asarray(values)
+        if values.ndim == 0 or len(values) != len(replay_keys):
+            raise ValueError(f'replay array {name!r} does not match the UID count')
+        aligned[name] = values[order]
+    return aligned

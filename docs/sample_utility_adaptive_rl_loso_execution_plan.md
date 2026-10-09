@@ -1,6 +1,6 @@
 # EEG 样本价值学习：BNCI2014004 实施方案
 
-日期：2026-10-08。状态：控制器、runner、配置和针对性测试已接入；九折静态 preflight 与 fold 0 单折 smoke 通过；正式训练尚未启动。
+日期：2026-10-09 更新。状态：P0–P7 已完成。九折 Teacher / shared warm-up / 六条件 Student 矩阵、epoch100 评测和最终报告均已生成；训练隔离、checkpoint 身份、目标 UID、shuffle UID 对齐与 batch 多重集合审计通过。正式结果是 seed666 的 pilot，不是跨 seed 结论。
 
 ## 1. 当前环境与固定范围
 
@@ -10,7 +10,7 @@
 
 第一轮沿用 [canonical LOSO 数据规格](../configs/reproductions/loso_five_datasets_v1.yaml)：**仅 session_3，3 通道、250 Hz、每 trial 前 1000 点、左右手两类**。所谓完整目标被试，指该选定 session 的全部 trial。改为全部 session 必须另建数据协议并重跑全部条件。
 
-当前放行状态：P0 九折 preflight 通过；P1 7 项针对性测试、`mirepnet` 编译与配置解析通过；P2 fold 0 CPU smoke 六条件、replay、控制器和无目标评测检查通过。P3–P7 正式 Teacher、Student 矩阵、目标评测和报告尚未运行。
+当前放行状态：P0 九折 preflight 通过；P1 8 项针对性测试、`mirepnet` 编译与配置解析通过；P2 fold 0 CPU smoke 六条件、replay、控制器和无目标评测检查通过；P3–P7 正式 Teacher、Student 矩阵、epoch100 目标评测和最终报告均完成。完整输出位于 `/data1/llx/BigSmallcollab/results/distill/sample_utility_adaptive_rl_loso_pilot_v1/`。
 
 实施时发现：该 canonical YAML 当前 SHA256 与伴随 source snapshot 中记录的 `spec_sha256` 不一致，原 canonical runner 因而拒绝加载。pilot 不修改或刷新历史 snapshot；新 runner 会将两个实际值都写入 resolved config，严格锁定所需 session/形状/试次数/类别字段，并逐文件验证 snapshot 中的数据源 hash 和 trial UID/标签。九折 preflight 已通过。报告保留 `canonical_manifest_spec_hash_matches=false` 的事实。
 
@@ -56,7 +56,7 @@ MIRepNet 预训练权重的历史 snapshot 记录 SHA256 为 `432288958007e344a5
 
 ## 3. 代码接入与存储
 
-已接入文件职责如下；正式训练和报告仍须通过后续放行门槛。
+已接入文件职责如下；正式训练和报告已经通过后续放行门槛。
 
 | 文件 | 职责 |
 |---|---|
@@ -340,4 +340,49 @@ epoch100固定评测保存目标UID/y/logits/probabilities/predictions、Accurac
 - [Shu et al., NeurIPS 2019](https://papers.nips.cc/paper_files/paper/2019/hash/e58cc5ca94270acaceed13bc82dfedf7-Abstract.html)：用元数据训练MLP权重函数。
 - [Fan et al., ICLR 2018](https://www.microsoft.com/en-us/research/publication/learning-to-teach/)：用Student反馈优化教学策略。
 
-本轮单元测试为 7 项；静态 preflight 九折通过；fold 0 smoke 的每组 3 epoch、controller/reward、shuffle UID 多重集合和“无目标评测”检查通过。正式九折训练和目标评测尚未开始，因此没有方法效果结论。
+本轮针对性测试为 8 项；静态 preflight 九折通过；fold 0 smoke 的每组 3 epoch、controller/reward、shuffle UID 多重集合和“无目标评测”检查通过。正式九折训练、最终 epoch100 评测与报告已完成，实际结果和解释见下一节。
+
+## 13. 正式运行记录与结果（2026-10-09）
+
+### 完成范围与产物
+
+- 按本方案使用 BNCI2014004 `session_3`、MIRepNet / IFNet、seed=666、9 个 LOSO target folds。每折 D_train 为 7 个源被试，D_feedback 为固定下一个源被试，D_test 为目标被试；Teacher 与 Student 普通训练不使用 feedback/test，反馈数据仅用于控制器临时分支，目标数据仅在全部训练 checkpoint 完整后评测。
+- 9 个七源 Teacher 各微调 10 epoch；每折共享一个 Student 10-epoch warm-up；54 个 Student 条件各完成至 epoch100。所有最终评测均为固定最终 epoch checkpoint，没有基于 D_test 的选模。
+- 配置 hash：`95acac7486d2df3bc9025d2d1c41c272c0f9f37f0c477237676c1a0097b94e24`。解析值包括 batch_size=16、lambda_KD=0.5、tau=2、Teacher 10 epoch。每折 split、Teacher、warm-up、checkpoint、预测和 controller provenance 均写入外部结果目录。
+- 最终交付：`resolved.yaml`、环境与执行快照、split / UID manifest、Teacher 和 warm-up provenance、54 份最终 Student checkpoint/history/predictions/metrics、学习控制器 checkpoint、逐 epoch replay 与压缩 step metrics、配对表和 `report.md`。训练产物没有写入 Git checkout。
+
+### Shuffle UID 对齐更正
+
+第一次 shuffle 矩阵运行后，完整日志审计发现 replay 数组按 batch 顺序保存，但旧回放路径把数组位置当作 D_train UID 位置读取。因此旧 ADAPTIVE_SHUFFLE / RL_SHUFFLE 会把策略值分配给错误 UID，旧 batch 检查只能验证错位后向量的守恒，不能代表方案要求的 UID 对齐 shuffle。这 18 个旧 shuffle run 及其旧汇总已保存在 `/data1/llx/BigSmallcollab/migrations/sample_utility_adaptive_rl_loso_pilot_v1/shuffle_pre_uid_alignment_fix_20261009/`，明确不用于正式比较。
+
+回放代码现先按 UID 将权重、概率、动作及其他数组重排到 D_train 顺序，再读取当前 batch。新增 `align_replay_by_uid` 回归测试后，8 项测试通过；修正后的 18 个 shuffle 条件从共享 warm-up 重新训练至 epoch100。最终报告再次逐批核对来源日志与 shuffle 日志的 UID 顺序、策略值对齐、batch 内权重 / 动作多重集合及 RL keep count。两种 shuffle 各验证 55,440 个 minibatch；每个 fold-epoch 的 D_train UID 均恰好出现一次。
+
+### 目标被试成绩与配对结果
+
+| 条件 | Mean BA | Mean Accuracy | Mean Kappa |
+|---|---:|---:|---:|
+| BASE_CE | 0.7375 | 0.7375 | 0.4750 |
+| DELAYED_KD_ALL | 0.7384 | 0.7384 | 0.4769 |
+| ADAPTIVE_WEIGHT_KD | 0.7363 | 0.7363 | 0.4727 |
+| RL_GATE_KD | 0.7331 | 0.7331 | 0.4662 |
+| ADAPTIVE_SHUFFLE | 0.7387 | 0.7387 | 0.4773 |
+| RL_SHUFFLE | 0.7338 | 0.7338 | 0.4676 |
+
+54/54 目标评测行、每个条件 9 个目标被试；collapse=0/54。主要 BA 配对结果为：
+
+- ADAPTIVE_WEIGHT_KD − DELAYED_KD_ALL：mean delta −0.0021，subject bootstrap 95% CI [−0.0118, +0.0090]，Win/Tie/Loss=2/3/4，Holm p=1.0。
+- RL_GATE_KD − DELAYED_KD_ALL：mean delta −0.0053，95% CI [−0.0211, +0.0076]，Win/Tie/Loss=4/1/4，Holm p=1.0。
+- ADAPTIVE_WEIGHT_KD − ADAPTIVE_SHUFFLE：−0.0023，95% CI [−0.0139, +0.0081]，Win/Tie/Loss=3/3/3。
+- RL_GATE_KD − RL_SHUFFLE：−0.0007，95% CI [−0.0139, +0.0097]，Win/Tie/Loss=4/3/2。
+
+四个区间均覆盖零。这个单 seed pilot 没有显示学习的样本分配优于固定 KD 或对应 shuffle；点估计方向也没有显示学习组更好，因此不宣布 ADAPTIVE_WEIGHT_KD 或 RL_GATE_KD 胜出。前两项 Wilcoxon 的小样本 / ties 触发 SciPy 正态近似警告，Holm 校正后均为 1.0；这不足以说明两种方法等效或原理无效。
+
+### 控制器与计算诊断
+
+- ADAPTIVE_WEIGHT_KD：平均权重 0.5432、epoch100 均值 0.5489；平均有效 `lambda_KD * mean(w)` 为 0.2716，epoch100 为 0.2744。记录 55,440 个临时 Student step 和 55,440 个 feedback batch 查询（880,744 个查询 trial）。feedback CE 的 fold-epoch 均值从 epoch11 的 0.5506 到 epoch100 的 0.5140。
+- RL_GATE_KD：平均 keep rate 0.5844、epoch100 为 0.6023；平均有效 KD 系数为 0.2922，epoch100 为 0.3012。记录 110,880 个临时 Student step、110,880 个 feedback batch 查询（1,761,488 个查询 trial）。epoch 平均 reward mean 为 +0.000222，批奖励 epoch 内 std 的 epoch 平均值为 0.000987；feedback CE 均值从 0.5616 到 0.5199。
+- 上述反馈 CE 下降没有转化为目标被试上的优势。RL 平均奖励接近零，且报告保留 reward 方差；该现象应视为本轮策略反馈信号有限，不能外推为 RL 方法普遍无效。
+- 记录 manifest 时长总和：BASE_CE 1.60h、DELAYED_KD_ALL 1.60h、ADAPTIVE_WEIGHT_KD 6.83h、RL_GATE_KD 5.86h；shuffle 缺少历史 manifest 时长字段，报告用 epoch11 replay 到最终 manifest 的文件时间跨度近似为 ADAPTIVE_SHUFFLE 1.65h、RL_SHUFFLE 1.68h。计时不包含恢复运行间等待，A/B 有不同数量的临时分支，不能仅按 epoch 数声称计算公平。
+- 数据预训练暴露情况仍未知；不能据本轮证明 MIRepNet 预训练从未接触 BNCI2014004。反馈源被试参与控制器训练，所以这是“反馈源被试监督的控制器能否泛化到未见目标被试”实验，不是 feedback-independent 的评价器验证。
+
+最终机器可读结果与逐被试指标见 `/data1/llx/BigSmallcollab/results/distill/sample_utility_adaptive_rl_loso_pilot_v1/report.md`、`paired_comparisons.csv` 和 `metrics_by_subject.csv`。主报告的显著性、样本分配和 pilot 限制按第 11 节的预设规则解释。

@@ -37,6 +37,7 @@ from collab.sample_utility import (SampleUtilityMLP, bernoulli_policy_loss,
 from collab.lookahead import (FunctionalIFNet, FunctionalState,
                               feedback_logits, functional_training_step)
 from experiments.distill import sample_utility_protocol as protocol
+from experiments.distill.sample_utility_splits import align_replay_by_uid
 from experiments.finetune import run_loso_small_baselines as small_baselines
 from experiments.storage import require_external_output, resolve_local_file
 from models import get_adapter
@@ -48,6 +49,7 @@ CONTROLLER_CONDITIONS = {'ADAPTIVE_WEIGHT_KD', 'RL_GATE_KD'}
 CONTROL_CONDITIONS = {'BASE_CE', 'DELAYED_KD_ALL'}
 SHUFFLE_SOURCE = {'ADAPTIVE_SHUFFLE': 'ADAPTIVE_WEIGHT_KD',
                   'RL_SHUFFLE': 'RL_GATE_KD'}
+SHUFFLE_REPLAY_ALIGNMENT = 'uid_ordered_train_split_v2'
 OFFSET = {'controller_init': 10000, 'action': 20000, 'feedback': 30000,
           'adaptive_shuffle': 40000, 'rl_shuffle': 50000}
 BATCH_SIZE = 16
@@ -877,6 +879,7 @@ def train_shuffle(condition, source_condition, paths, fold, split, train_data,
     fingerprint = protocol.hash_json({
         'base': _condition_fingerprint(paths, condition, warmup, warmup['schedule_sha256']),
         'source_replay_sha256': source_replay_sha256,
+        'source_replay_alignment': SHUFFLE_REPLAY_ALIGNMENT,
         'continuation_epochs': int(continuation_epochs),
     })
     final_manifest = output_cell / 'manifest.json'
@@ -895,6 +898,10 @@ def train_shuffle(condition, source_condition, paths, fold, split, train_data,
         replay = _load_replay(replay_path, uids, source_condition)
         if len(replay['weights']) != len(uids):
             raise RuntimeError(f'incomplete source replay for epoch {epoch}')
+        aligned_arrays = align_replay_by_uid(
+            replay['uids'], uids,
+            **{key: value for key, value in replay.items() if key != 'uids'})
+        replay = {'uids': uids.copy(), **aligned_arrays}
         replay_by_epoch[epoch] = replay
     source_index = {tuple(uid): i for i, uid in enumerate(uids.tolist())}
     if len(source_index) != len(uids):
@@ -1016,6 +1023,7 @@ def train_shuffle(condition, source_condition, paths, fold, split, train_data,
     })
     manifest = {'status': 'complete', 'condition': condition,
                 'run_fingerprint': fingerprint, 'source_condition': source_condition,
+                'source_replay_alignment': SHUFFLE_REPLAY_ALIGNMENT,
                 'target_subject_id': fold + 1,
                 'feedback_subject_id': int(np.unique(split['feedback']['subjects'])[0]) + 1,
                 'train_uid_sha256': protocol.hash_uids(uids),
@@ -1272,6 +1280,9 @@ def _assert_training_complete(resolved, spec, snapshot, device, source):
                     or manifest.get('warmup_state_sha256') != warmup['warmup_state_sha256']
                     or manifest.get('resolved_config_sha256') != resolved['resolved_config_sha256']):
                 raise RuntimeError(f'condition manifest identity mismatch: {manifest_path}')
+            if (condition in SHUFFLE_SOURCE
+                    and manifest.get('source_replay_alignment') != SHUFFLE_REPLAY_ALIGNMENT):
+                raise RuntimeError(f'shuffle replay is not UID aligned: {manifest_path}')
             checkpoint = torch.load(resolve_local_file(checkpoint_path), map_location='cpu')
             model_hash = state_hash(checkpoint['model'])
             if (checkpoint.get('run_fingerprint') != manifest.get('run_fingerprint')
@@ -1432,6 +1443,127 @@ def _holm(pvalues):
     return adjusted
 
 
+def _history_mean(records, key, epoch=None):
+    values = [float(row[key]) for row in records
+              if row.get(key) is not None and (epoch is None or row.get('epoch') == epoch)]
+    return float(np.mean(values)) if values else None
+
+
+def _recorded_elapsed_seconds(cell, manifest):
+    if manifest.get('elapsed_seconds') is not None:
+        return float(manifest['elapsed_seconds'])
+    first_epoch_replay = cell / f'replay_epoch_{WARMUP_EPOCHS + 1:03d}.npz'
+    manifest_path = cell / 'manifest.json'
+    if not first_epoch_replay.is_file():
+        raise FileNotFoundError(first_epoch_replay)
+    # Shuffle runs predate manifest elapsed-time recording; use the file mtime
+    # span from the first saved continuation replay through final manifest.
+    return max(0.0, manifest_path.stat().st_mtime - first_epoch_replay.stat().st_mtime)
+
+
+def _collect_training_diagnostics():
+    diagnostics = []
+    shuffle_checks = {}
+    for condition in CONDITIONS:
+        manifest_paths = sorted(protocol.RESULT_ROOT.glob(
+            f'folds/target_*/{condition}/manifest.json'))
+        if len(manifest_paths) != 9:
+            raise RuntimeError(f'{condition} requires nine completed fold manifests')
+        histories, manifests = [], []
+        condition_shuffle_batches = 0
+        for manifest_path in manifest_paths:
+            cell = manifest_path.parent
+            manifest = json.loads(manifest_path.read_text())
+            if manifest.get('status') != 'complete' or manifest.get('final_epoch') != TOTAL_EPOCHS:
+                raise RuntimeError(f'incomplete training manifest: {manifest_path}')
+            history_path = cell / 'history.json'
+            history = json.loads(history_path.read_text())
+            if [row.get('epoch') for row in history] != list(range(11, 101)):
+                raise RuntimeError(f'incomplete training history: {history_path}')
+            histories.extend(history)
+            manifests.append(manifest)
+
+            if condition in SHUFFLE_SOURCE:
+                source_condition = SHUFFLE_SOURCE[condition]
+                source_cell = cell.parent / source_condition
+                for epoch in range(11, TOTAL_EPOCHS + 1):
+                    source_path = source_cell / f'step_metrics_epoch_{epoch:03d}.jsonl.gz'
+                    applied_path = cell / f'step_metrics_epoch_{epoch:03d}.jsonl.gz'
+                    seen_uids = []
+                    n_seen = 0
+                    with gzip.open(source_path, 'rt') as source_stream, \
+                            gzip.open(applied_path, 'rt') as applied_stream:
+                        while True:
+                            source_line = source_stream.readline()
+                            applied_line = applied_stream.readline()
+                            if not source_line and not applied_line:
+                                break
+                            if not source_line or not applied_line:
+                                raise RuntimeError(f'shuffle step log row count mismatch: {applied_path}')
+                            source_step = json.loads(source_line)
+                            applied_step = json.loads(applied_line)
+                            source_uids = [tuple(uid) for uid in source_step.get(
+                                'train_uids', source_step.get('uids', []))]
+                            if source_uids != [tuple(uid) for uid in applied_step['uids']]:
+                                raise RuntimeError(f'shuffle UID/batch order mismatch: {applied_path}')
+                            if condition == 'ADAPTIVE_SHUFFLE':
+                                source_values = source_step['weights']
+                                if source_values != applied_step['source_weights']:
+                                    raise RuntimeError(f'shuffle source weights are not UID aligned: {applied_path}')
+                                applied_values = applied_step['applied_weights']
+                            else:
+                                source_values = source_step['actions']
+                                if source_values != applied_step['source_actions']:
+                                    raise RuntimeError(f'shuffle source actions are not UID aligned: {applied_path}')
+                                applied_values = applied_step['applied_weights']
+                                if sum(source_values) != sum(applied_values):
+                                    raise RuntimeError(f'shuffle action count mismatch: {applied_path}')
+                            if (len(source_values) != len(applied_values)
+                                    or sorted(source_values) != sorted(applied_values)):
+                                raise RuntimeError(f'shuffle minibatch multiset mismatch: {applied_path}')
+                            seen_uids.extend(source_uids)
+                            n_seen += len(source_uids)
+                            condition_shuffle_batches += 1
+                    if n_seen != int(history[epoch - 11]['n_train']) or len(set(seen_uids)) != n_seen:
+                        raise RuntimeError(f'shuffle UID coverage mismatch: {applied_path}')
+        effective = _history_mean(histories, 'effective_lam_kd')
+        effective_final = _history_mean(histories, 'effective_lam_kd', TOTAL_EPOCHS)
+        output_key = 'weight_mean' if condition == 'ADAPTIVE_WEIGHT_KD' else \
+            'rl_keep_rate' if condition in ('RL_GATE_KD', 'RL_SHUFFLE') else None
+        controller_mean = _history_mean(histories, output_key) if output_key else None
+        controller_final = _history_mean(histories, output_key, TOTAL_EPOCHS) if output_key else None
+        if condition == 'ADAPTIVE_SHUFFLE':
+            controller_mean = effective / LAMBDA_KD
+            controller_final = effective_final / LAMBDA_KD
+        feedback_initial = _history_mean(histories, 'feedback_loss_mean', 11)
+        feedback_final = _history_mean(histories, 'feedback_loss_mean', TOTAL_EPOCHS)
+        reward_mean = _history_mean(histories, 'reward_mean')
+        reward_std = _history_mean(histories, 'reward_std')
+        diagnostics.append({
+            'condition': condition,
+            'recorded_elapsed_hours': sum(_recorded_elapsed_seconds(
+                manifest_paths[index].parent, manifest)
+                for index, manifest in enumerate(manifests)) / 3600.0,
+            'controller_steps': sum(int(row.get('controller_steps') or 0) for row in histories),
+            'temporary_student_steps': sum(int(row.get('temporary_student_steps') or 0)
+                                           for row in histories),
+            'feedback_queries': sum(int(row.get('feedback_queries') or 0) for row in histories),
+            'feedback_query_trials': sum(int(row.get('feedback_query_trials') or 0)
+                                         for row in histories),
+            'mean_effective_lam_kd': effective,
+            'final_effective_lam_kd': effective_final,
+            'mean_controller_output': controller_mean,
+            'final_controller_output': controller_final,
+            'mean_reward': reward_mean,
+            'mean_reward_std': reward_std,
+            'feedback_loss_epoch_11': feedback_initial,
+            'feedback_loss_epoch_100': feedback_final,
+        })
+        if condition in SHUFFLE_SOURCE:
+            shuffle_checks[condition] = condition_shuffle_batches
+    return diagnostics, shuffle_checks
+
+
 def build_report(rows, resolved):
     frame = pd.DataFrame(rows)
     if len(frame) != 54 or frame.groupby('condition')['target_subject'].nunique().to_dict() != {
@@ -1479,6 +1611,37 @@ def build_report(rows, resolved):
             row['holm_p'] = None
     protocol.atomic_csv(protocol.RESULT_ROOT / 'paired_comparisons.csv', out)
     summary = frame.groupby('condition')[['accuracy', 'balanced_accuracy', 'kappa']].mean()
+    diagnostics, shuffle_checks = _collect_training_diagnostics()
+    diagnostic_lines = [
+        '## 训练开销与控制器诊断', '',
+        '时长为各 fold manifest 记录时长之和；shuffle manifest 尚无时长字段，使用首个 continuation replay 到最终 manifest 的文件时间跨度作为近似。恢复运行之间的等待时间不计入。临时 Student step / feedback query 是算法计算量，不能据此声称两路线计算等价。', '',
+        '| 条件 | 记录时长 (h) | 控制器步数 | 临时 Student 步数 | 反馈查询 / trial | mean λKD / epoch100 | 控制器均值 / epoch100 | reward mean ± epoch内 std | feedback CE epoch11 → 100 |',
+        '|---|---:|---:|---:|---:|---:|---:|---:|---:|',
+    ]
+    for item in diagnostics:
+        def show(value, digits=4):
+            return '—' if value is None else f'{value:.{digits}f}'
+        output_summary = '—' if item['mean_controller_output'] is None else \
+            f'{show(item["mean_controller_output"])} / {show(item["final_controller_output"])}'
+        reward_summary = '—' if item['mean_reward'] is None else \
+            f'{item["mean_reward"]:+.6f} ± {show(item["mean_reward_std"], 6)}'
+        feedback_summary = '—' if item['feedback_loss_epoch_11'] is None else \
+            f'{show(item["feedback_loss_epoch_11"])} → {show(item["feedback_loss_epoch_100"])}'
+        diagnostic_lines.append(
+            f'| {item["condition"]} | {item["recorded_elapsed_hours"]:.2f} | '
+            f'{item["controller_steps"]} | {item["temporary_student_steps"]} | '
+            f'{item["feedback_queries"]} / {item["feedback_query_trials"]} | '
+            f'{show(item["mean_effective_lam_kd"])} / {show(item["final_effective_lam_kd"])} | '
+            f'{output_summary} | {reward_summary} | {feedback_summary} |')
+    adaptive_weight_checks = shuffle_checks.get('ADAPTIVE_SHUFFLE', 0)
+    rl_action_checks = shuffle_checks.get('RL_SHUFFLE', 0)
+    collapsed = int(frame['collapse'].sum()) if 'collapse' in frame else 0
+    diagnostic_lines += [
+        '',
+        f'Shuffle audit：ADAPTIVE_SHUFFLE 在 {adaptive_weight_checks} 个训练 minibatch、RL_SHUFFLE 在 {rl_action_checks} 个训练 minibatch 中逐批核对 UID 顺序及权重/动作多重集合；RL 同时核对 keep count。每个 fold-epoch 的 train UID 均恰好出现一次。',
+        f'epoch100 目标预测塌缩：{collapsed}/54。',
+        '控制器输出和反馈损失按 fold-epoch 等权汇总；RL reward std 是 epoch 内批奖励标准差的 epoch 平均值。', '',
+    ]
     lines = [
         '# BNCI2014004 样本价值蒸馏 pilot 报告', '',
         '协议：session_3；LOSO 目标被试仅在六组 100 epoch checkpoint 齐全后评测；seed=666。',
@@ -1486,6 +1649,7 @@ def build_report(rows, resolved):
         f'配置 hash：`{resolved["resolved_config_sha256"]}`', '',
         '## 逐条件均值', '',
         summary.to_markdown(floatfmt='.4f'), '',
+        *diagnostic_lines,
         '## 配对比较', '',
         '| 指标 | 方法 - 对照 | mean delta | 95% bootstrap CI | Win/Tie/Loss | Holm p |',
         '|---|---|---:|---:|---:|---:|',
