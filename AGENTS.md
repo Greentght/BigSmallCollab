@@ -14,6 +14,18 @@
   `data_cache` or scattered `BigSmallCollab_*` directories.
 - Existing datasets in `/data1/llx/BNCI*` and pretrained weights in
   `/data1/llx/pre_weight` remain valid inputs.
+- Keep one canonical copy of official pretrained weights in
+  `/data1/llx/pre_weight/`. Do not duplicate them for each project or run.
+- Minimize retained training artifacts: do not keep every completed fold's
+  student weights, feature projectors, or optimizer/RNG resume checkpoints
+  permanently. Resume checkpoints are temporary during training. Fine-tuned
+  teachers are temporary inputs when a planned KD run still needs its targets.
+  Keep small metrics, predictions, configuration and provenance for reporting;
+  retain model-input and teacher-target caches only for planned reuse.
+- Before pruning existing trained-model files, make completed-result readers
+  accept the retained metrics and provenance without requiring pruned model
+  files; pruning must not silently trigger retraining. Inspect dependencies and
+  ongoing processes before deleting existing artifacts.
 - User-facing result reports (Excel, CSV and JSON summaries) belong in the
   checkout's real `results/` directory, not `/data1/llx`. This is the user's
   latest storage requirement. Do not use a symlink to external storage for
