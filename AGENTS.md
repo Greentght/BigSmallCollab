@@ -16,6 +16,11 @@
   `/data1/llx/pre_weight` remain valid inputs.
 - Keep one canonical copy of official pretrained weights in
   `/data1/llx/pre_weight/`. Do not duplicate them for each project or run.
+- The user plans further distillation. Preserve the current refreshed-source
+  001/001-4/004/5001 teacher checkpoints, teacher targets, student weights and
+  feature projectors until their reuse or retirement is explicitly decided.
+  A projector being unused for classification inference does not authorize
+  deleting it when continued training or feature analysis may need it.
 - Minimize retained training artifacts: do not keep every completed fold's
   student weights, feature projectors, or optimizer/RNG resume checkpoints
   permanently. Resume checkpoints are temporary during training. Fine-tuned
