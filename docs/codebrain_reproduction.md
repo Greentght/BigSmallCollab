@@ -1,13 +1,18 @@
 # CodeBrain 复现与负结果记录
 
 This document records the reproduction of the authors' public CodeBrain EEGSSM
-encoder under the project's subject-wise few-shot protocol. The completed tuned
-three-seed run is documented in
-[`results/codebrain/codebrain_tuned_d2_cpu_20260929/final_report.md`](../results/codebrain/codebrain_tuned_d2_cpu_20260929/final_report.md).
+encoder under the project's subject-wise few-shot protocol. Its completed tuned
+three-seed report and per-run configurations/histories are retained in the
+[text result archive](../results/archive/codebrain/codebrain_records.zip).
+The [380-run score table](../results/archive/codebrain/codebrain_scores.csv)
+keeps the historical accuracy, seed, initialization and run identity.
 As of 2026-09-29, CodeBrain is excluded from the active BigSmallCollab
 collaboration baseline and teacher sets because its tuned result remained near
-chance and below MIRepNet and CBraMod. The implementation and artifacts remain
-available as a reproducibility record and negative result. This protocol differs
+chance and below MIRepNet and CBraMod. On 2026-10-10 the user authorized removing
+its experiment checkpoints, numerical caches and project pretrained weight.
+The implementation and text records remain available as a negative result.
+Historical `results/codebrain/...` paths below refer to archive members, not
+live model files. This protocol differs
 from the paper's SHU-MI evaluation.
 
 ## Fixed protocol

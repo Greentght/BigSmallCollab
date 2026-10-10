@@ -11,7 +11,7 @@ CodeBrain 的独立复现已完成，但在当前被试内 few-shot 协议下接
 环境。所以：
 
 1. **每个模型在自己的 env 里 finetune**，对每个 `(dataset, subject, seed, split)`
-   导出标准化产物 `{logits, feats, y}`（`/data1/llx/BigSmallcollab/results/artifacts/`）。
+   导出标准化产物 `{logits, feats, y}`（`/data1/llx/BigSmallcollab/cache/artifacts/`）。
 2. **Hub 消费产物**做协同（任意 env，纯数组）：
    - **离线 KD + 特征对齐** — student 对着**冻结的缓存 teacher** feats/logits 训练，
      大模型无需在线。（测试时集成/融合线已归档，见 git tag `pre-consolidation`。）
@@ -47,8 +47,8 @@ envs/      各模型 conda 环境说明
 - 预训练**权重**(非代码)真文件统一存放在 `/data1/llx/pre_weight/`(稳定数据盘,
   与上游仓解耦——删掉 ~/MIRepNet 等不受影响)，
   由 `config.weight_path()` 解析,可用 `MIREPNET_WEIGHT` / `CBRAMOD_WEIGHT` /
-  `LABRAM_WEIGHT` 环境变量覆盖(如指向新微调的 checkpoint)。CodeBrain 权重默认是
-  `/data1/llx/BigSmallcollab/weights/codebrain.pth`,可用 `CODEBRAIN_WEIGHT` 覆盖；输入适配、官方权重版本和复现实验命令见
+  `LABRAM_WEIGHT` 环境变量覆盖(如指向新微调的 checkpoint)。CodeBrain 权重和实验模型已获准清理，
+  当前不提供其权重；重新开展该模型实验时可用 `CODEBRAIN_WEIGHT` 指定外部文件。输入适配、官方权重版本和复现实验命令见
   [CodeBrain 复现与结果记录](docs/codebrain_reproduction.md)。
 
 **存储位置：** 共享数据集独立存放在 `/data1/llx/<数据集名称>/`；本项目训练产物放在 `/data1/llx/BigSmallcollab/`；供查看的 Excel、CSV 和 JSON 汇总报告放在项目真实的 `results/` 目录。
@@ -57,14 +57,18 @@ envs/      各模型 conda 环境说明
 |---|---|
 | 共享数据集 | `/data1/llx/BNCI2014001/`、`BNCI2014004/`、`BNCI2015001/`、`AlexMI/` |
 | 新 14001 全场次宽带 NPY | `/data1/llx/BNCI2014001/broadband_0p1_75hz/` |
-| 项目模型输入及协议缓存 | `/data1/llx/BigSmallcollab/cache/` |
+| 项目模型输入、Hub 产物、教师目标缓存 | `/data1/llx/BigSmallcollab/cache/` |
 | 逐折训练产物、预测和 checkpoint | `/data1/llx/BigSmallcollab/results/` |
 | Excel、CSV 和 JSON 汇总报告 | `/home/lixinli/BigSmallCollab/results/` |
-| CodeBrain 等外置权重 | `/data1/llx/BigSmallcollab/weights/` |
+| 有独立用途的项目权重 | `/data1/llx/BigSmallcollab/weights/` |
 | 现有 MIRepNet／CBraMod／LaBraM 预训练权重 | `/data1/llx/pre_weight/` |
 | Git LFS 本地对象 | `/data1/llx/BigSmallcollab/git_lfs/` |
 
 完整目录规则见 [共享数据集与项目文件存储](docs/storage_layout.md)。
+本轮清理范围及保留规则见 [目录整理方案](docs/storage_cleanup_plan.md)。CodeBrain
+历史成绩与文本记录归档在 `results/archive/codebrain/`；当前新数据源的教师、
+学生、feature 投影层和目标缓存保留，供后续蒸馏复用。完成的 001 教师实验
+用轻量 `completed_state.pt` 保存来源与终态 RNG，不再长期保留优化器续训文件。
 
 `experiments/storage.py` 将历史 `results/...`、`data_cache/...`、`weights/...` 路径映射到上述目录；
 训练写入接口拒绝把数据或模型保存进项目工作树。汇总报告使用独立的

@@ -338,6 +338,80 @@ def checkpoint_save(path: Path, state: dict) -> None:
     os.replace(tmp, path)
 
 
+def compact_completed_state(state: dict) -> dict:
+    """Keep fold identity and terminal RNG, without training tensor payloads.
+
+    This is also the conversion contract for previously completed full resume
+    checkpoints. Preserve every other field, including historical fingerprints.
+    """
+    if state.get('completed') is not True:
+        raise ValueError('Only a completed checkpoint can be compacted')
+    if not isinstance(state.get('rng_state'), dict):
+        raise ValueError('Completed checkpoint must retain its terminal RNG state')
+    return {key: value for key, value in state.items()
+            if key not in ('model_state', 'optimizer_state', 'history')}
+
+
+def completed_fold(output: Path, identity: dict, epochs: int) -> tuple[dict, dict] | None:
+    """Validate retained results before skipping a completed fold.
+
+    A compact completion sidecar takes precedence over an obsolete full resume
+    state. Incomplete folds still use their complete model/optimizer checkpoint.
+    Missing completion provenance must fail explicitly instead of retraining.
+    """
+    compact_path = output / 'completed_state.pt'
+    resume_path = output / 'training_state.pt'
+    state_path = compact_path if compact_path.is_file() else resume_path
+    result_file = output / 'result.json'
+    if not state_path.is_file():
+        if result_file.is_file() and read_json(result_file).get('status') == 'complete':
+            raise RuntimeError(
+                f'{output}: completed result lacks completed_state.pt; refusing retraining')
+        return None
+    state = torch.load(state_path, map_location='cpu', weights_only=False)
+    validate_wideband_checkpoint(state, identity, state_path)
+    if state.get('completed') is not True:
+        if state_path == compact_path:
+            raise RuntimeError(f'{compact_path}: compact state is not completed')
+        return None
+    if int(state.get('next_epoch', -1)) != int(epochs):
+        raise RuntimeError(f'{state_path}: completed epoch count differs from configuration')
+    rng = state.get('rng_state')
+    if not isinstance(rng, dict) or any(
+            key not in rng for key in ('python', 'numpy', 'torch_cpu')):
+        raise RuntimeError(f'{state_path}: terminal fold RNG is incomplete')
+    if not result_file.is_file():
+        raise RuntimeError(f'{output}: completed state lacks result.json')
+    result = read_json(result_file)
+    expected = {
+        'status': 'complete', 'profile': identity['profile'],
+        'dataset': identity['dataset'], 'model': identity['model'],
+        'seed': identity['seed'], 'held_out_subject': identity['subject'],
+        'input_manifest_sha256': identity['input_manifest_sha256'],
+        'reference_pretrained_sha256': identity['pretrained_checkpoint_sha256'],
+        'input_shape': identity['input_shape'],
+    }
+    for key, value in expected.items():
+        if result.get(key) != value:
+            raise RuntimeError(f'{result_file}: {key} changed or is missing')
+    actual_fingerprint = hashlib.sha256(json.dumps(
+        result.get('resolved_training_config'), sort_keys=True).encode()).hexdigest()
+    if actual_fingerprint != identity['config_fingerprint']:
+        raise RuntimeError(f'{result_file}: training configuration changed')
+    if result.get('initial_state_sha256') != state.get('initial_state_sha256'):
+        raise RuntimeError(f'{result_file}: initialization differs from completion state')
+    if not isinstance(result.get('metrics'), dict):
+        raise RuntimeError(f'{result_file}: completed result lacks metrics')
+    for name, hash_key in (
+            ('final_model.pt', 'final_model_sha256'),
+            ('test_predictions.npz', 'test_predictions_sha256')):
+        path = output / name
+        expected_hash = result.get(hash_key)
+        if not path.is_file() or not expected_hash or sha256_file(path) != expected_hash:
+            raise RuntimeError(f'{path}: retained completed artifact is missing or changed')
+    return result, state
+
+
 def result_path(base: Path, subject: int) -> Path:
     return base / f'subject_{subject + 1:02d}'
 
@@ -392,6 +466,20 @@ def train_one_fold(profile: str, dataset: str, model_name: str, seed: int,
         'pretrained_checkpoint_sha256': pretrained_hash,
         'input_shape': list(x_all.shape[1:]), 'num_classes': n_classes,
     } if profile == WIDEBAND_PROFILE else {})
+    checkpoint_identity = {
+        'profile': profile, 'dataset': dataset, 'model': model_name,
+        'subject': subject + 1, 'variant': variant, 'seed': seed,
+        'config_fingerprint': hashlib.sha256(
+            json.dumps(fold_cfg, sort_keys=True).encode()).hexdigest(),
+        **source_identity,
+    }
+    if profile == WIDEBAND_PROFILE and max_batches is None:
+        completion = completed_fold(out, checkpoint_identity, epochs)
+        if completion is not None:
+            final, saved = completion
+            if stream_resume_rng:
+                restore_rng(saved['rng_state'], device)
+            return final
     fold_seed = int(seed)
     if profile == 'source_bridge':
         # Independent-fold seed: both source variants reset to this exact state.
@@ -676,16 +764,19 @@ def train_one_fold(profile: str, dataset: str, model_name: str, seed: int,
     result_tmp = out / 'result.json.partial'
     result_tmp.write_text(json.dumps(result, indent=2, sort_keys=True) + '\n')
     os.replace(result_tmp, out / 'result.json')
-    checkpoint_save(ckpt_path, {
+    completed_state = {
         'profile': profile, 'dataset': dataset, 'model': model_name,
         'subject': subject + 1, 'variant': variant, 'seed': seed,
         'config_fingerprint': hashlib.sha256(json.dumps(fold_cfg, sort_keys=True).encode()).hexdigest(),
-        'next_epoch': epochs, 'global_step': global_step, 'history': history,
+        'next_epoch': epochs, 'global_step': global_step,
         'completed': True, 'rng_state': capture_rng(device),
-        'model_state': model.state_dict(), 'optimizer_state': optimizer.state_dict(),
         'initial_state_sha256': init_hash,
         **source_identity,
-    })
+    }
+    checkpoint_save(out / 'completed_state.pt', compact_completed_state(completed_state))
+    # Results, final weights and the terminal RNG are durable before retiring
+    # the temporary optimizer/model checkpoint used only for interrupted folds.
+    ckpt_path.unlink(missing_ok=True)
     set_status(out, {**result, 'status': 'complete', 'completed_utc_epoch_s': time.time()})
     return result
 
@@ -726,6 +817,8 @@ def run_worker(args, spec: dict, device: torch.device) -> None:
     # then a fresh model at the start of every ordered LOSO split.
     set_seed(args.seed)
     x0, y0, s0, _, _ = load_fold_data(args.profile, dataset, model, variants[0])
+    active_input_shape = list(x0.shape[1:])
+    active_num_classes = int(len(np.unique(y0)))
     dummy = make_model(model, dataset, int(len(np.unique(y0))), tuple(x0.shape[1:]),
                        cfg['dropout'], args.profile)
     dummy.to(device)
@@ -801,31 +894,34 @@ def run_worker(args, spec: dict, device: torch.device) -> None:
     restore_from = None
     expected_subjects = list(subjects)
     pending: list[int] = []
+    active_cfg = dict(cfg)
+    if args.epochs_override is not None:
+        active_cfg['epochs'] = int(args.epochs_override)
+    active_manifest = input_dir(args.profile, dataset, model, variants[0]) / 'manifest.json'
+    pretrained_path = pretrained_checkpoint(model)
+    stream_identity = {
+        'profile': args.profile, 'dataset': dataset, 'model': model,
+        'seed': args.seed, 'variant': variants[0],
+        'input_manifest_sha256': sha256_file(active_manifest),
+        'pretrained_checkpoint_sha256': sha256_file(pretrained_path) if pretrained_path else None,
+        'input_shape': active_input_shape, 'num_classes': active_num_classes,
+        'config_fingerprint': hashlib.sha256(
+            json.dumps(active_cfg, sort_keys=True).encode()).hexdigest(),
+    }
     for subject in expected_subjects:
         out = result_path(root, subject)
         ckpt = out / 'training_state.pt'
-        result_file = out / 'result.json'
+        identity = {**stream_identity, 'subject': subject + 1}
+        completion = completed_fold(out, identity, int(active_cfg['epochs']))
+        if completion is not None:
+            final, state = completion
+            restore_from = state['rng_state']
+            subject_outputs.append(final)
+            continue
         if ckpt.exists():
             state = torch.load(ckpt, map_location='cpu', weights_only=False)
             if args.profile == WIDEBAND_PROFILE:
-                active_cfg = dict(cfg)
-                if args.epochs_override is not None:
-                    active_cfg['epochs'] = int(args.epochs_override)
-                active_manifest = input_dir(args.profile, dataset, model, variants[0]) / 'manifest.json'
-                pretrained_path = pretrained_checkpoint(model)
-                validate_wideband_checkpoint(state, {
-                    'profile': args.profile, 'dataset': dataset, 'model': model,
-                    'seed': args.seed, 'subject': subject + 1, 'variant': variants[0],
-                    'input_manifest_sha256': sha256_file(active_manifest),
-                    'pretrained_checkpoint_sha256': sha256_file(pretrained_path),
-                    'config_fingerprint': hashlib.sha256(
-                        json.dumps(active_cfg, sort_keys=True).encode()).hexdigest(),
-                }, ckpt)
-            if state.get('completed') and result_file.exists():
-                restore_from = state.get('rng_state')
-                with result_file.open() as f:
-                    subject_outputs.append(json.load(f))
-                continue
+                validate_wideband_checkpoint(state, identity, ckpt)
             pending = expected_subjects[subject:]
             break
         pending = expected_subjects[subject:]

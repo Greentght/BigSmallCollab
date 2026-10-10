@@ -31,6 +31,15 @@
   accept the retained metrics and provenance without requiring pruned model
   files; pruning must not silently trigger retraining. Inspect dependencies and
   ongoing processes before deleting existing artifacts.
+- Completed 001 LOSO folds retain a small `completed_state.pt` with provenance
+  and terminal RNG; their full `training_state.pt` is temporary and is removed
+  after completion. Do not remove the small completion record or silently
+  retrain a completed fold when a required identity record is missing.
+- All physical model-input, Hub and teacher-target caches belong under the
+  external `cache/` tree. Historical external path aliases may point there;
+  never create checkout-local cache aliases. CodeBrain experiment artifacts
+  and its project pretrained weight are retired by user authorization; retain
+  its text result archive, not new copies of those models.
 - User-facing result reports (Excel, CSV and JSON summaries) belong in the
   checkout's real `results/` directory, not `/data1/llx`. This is the user's
   latest storage requirement. Do not use a symlink to external storage for
