@@ -8,15 +8,21 @@
   across projects. Preserve existing versions; put new source variants in
   clearly named subdirectories, such as
   `/data1/llx/BNCI2014001/broadband_0p1_75hz/` for all-session broadband NPYs.
-- Project-specific inputs, caches, teacher targets, results and checkpoints
+- Project-specific inputs, caches, teacher targets, training artifacts and checkpoints
   belong under `/data1/llx/BigSmallcollab/`, with `cache`, `results`, `weights`,
   `git_lfs` and `migrations` subdirectories. Do not create another top-level
   `data_cache` or scattered `BigSmallCollab_*` directories.
 - Existing datasets in `/data1/llx/BNCI*` and pretrained weights in
   `/data1/llx/pre_weight` remain valid inputs.
+- User-facing result reports (Excel, CSV and JSON summaries) belong in the
+  checkout's real `results/` directory, not `/data1/llx`. This is the user's
+  latest storage requirement. Do not use a symlink to external storage for
+  reports. Use `experiments.storage.REPORTS_ROOT` and `require_report_output`
+  for report exports; generated reports remain unstaged by default.
 - Use `experiments.storage` to resolve historical artifact paths and enforce
-  external output paths. Do not recreate checkout-local artifact directories
-  or symlinks to them. Keep source code, configs and documentation in Git.
+  external training output paths. Do not recreate checkout-local data or model
+  artifact directories or symlinks to them. The report directory above is the
+  explicit exception. Keep source code, configs and documentation in Git.
 
 ## Git publishing
 

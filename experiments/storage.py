@@ -1,4 +1,4 @@
-"""Shared datasets and project-owned artifacts stored outside the checkout.
+"""External training artifacts and checkout-local result reports.
 
 Historical paths in manifests may still name ``data_cache``, ``results`` or
 ``weights`` inside the project. Resolve them here before reading or writing.
@@ -16,6 +16,7 @@ SHARED_DATA_ROOT = Path('/data1/llx')
 PROJECT_DATA_ROOT = SHARED_DATA_ROOT / 'BigSmallcollab'
 DATA_CACHE_ROOT = PROJECT_DATA_ROOT / 'cache'
 RESULTS_ROOT = PROJECT_DATA_ROOT / 'results'
+REPORTS_ROOT = PROJECT_ROOT / 'results'
 WEIGHTS_ROOT = PROJECT_DATA_ROOT / 'weights'
 LFS_ROOT = PROJECT_DATA_ROOT / 'git_lfs'
 BNCI14001_SOURCE_ROOT = SHARED_DATA_ROOT / 'BNCI2014001/broadband_0p1_75hz'
@@ -170,4 +171,26 @@ def require_external_output(path: str | os.PathLike[str]) -> Path:
             f'禁止把数据、模型或实验产物保存在项目目录内：{destination}。'
             '请使用 /data1/llx 下的路径。'
         )
+    return destination
+
+
+def require_report_output(path: str | os.PathLike[str]) -> Path:
+    """Resolve a user-facing report inside the checkout's real results folder.
+
+    Report exporters use this explicitly instead of the historical external
+    artifact mapper. No directories are created by this function.
+    """
+    value = Path(path).expanduser()
+    if not value.is_absolute():
+        value = (PROJECT_ROOT / value if value.parts and value.parts[0] == 'results'
+                 else REPORTS_ROOT / value)
+    project = PROJECT_ROOT.resolve(strict=False)
+    reports = REPORTS_ROOT.resolve(strict=False)
+    destination = value.resolve(strict=False)
+    if REPORTS_ROOT.is_symlink() or reports != project / 'results':
+        raise ValueError('报告目录必须是项目内真实的 results/ 目录，不能链接到外部存储。')
+    if destination == reports or reports not in destination.parents:
+        raise ValueError(f'结果报告必须保存在 {reports} 下：{destination}')
+    if destination.suffix.lower() not in {'.xlsx', '.csv', '.json', '.md', '.html', '.pdf', '.png', '.svg'}:
+        raise ValueError(f'该文件不是汇总报告；数据、缓存和模型请使用外部存储：{destination}')
     return destination

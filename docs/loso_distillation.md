@@ -1,8 +1,9 @@
 # 当前 004/5001 LOSO 蒸馏
 
 This run repeats four student distillation conditions on the refreshed BNCI
-2014004 and BNCI 2015001 source caches. Data and all generated targets,
-checkpoints, logs, and results are stored under `/data1/llx`.
+2014004 and BNCI 2015001 source caches. Data, generated targets, checkpoints,
+and training-run artifacts are stored under `/data1/llx`. User-facing Excel,
+CSV and JSON summaries are exported to the checkout's real `results/` folder.
 
 ## Data and folds
 
@@ -56,6 +57,9 @@ matching refreshed-source CE student baseline.
   `/data1/llx/BigSmallcollab/cache/reproductions/`.
 - Distillation outputs and dispatcher logs:
   `/data1/llx/BigSmallcollab/results/distill/loso_source_refresh_004_5001_v1/`.
+- User-facing reports:
+  `results/loso_source_refresh_004_5001/` inside the checkout. Export with
+  `experiments.storage.require_report_output`, without external-path mapping.
 - The dispatcher uses at most two workers and GPUs 1–9; GPU0 is prohibited.
   It validates refreshed inputs and baselines, exports source-only teacher
   targets, smoke-checks each teacher/student/dataset combination, then runs

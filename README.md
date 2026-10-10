@@ -51,14 +51,15 @@ envs/      各模型 conda 环境说明
   `/data1/llx/BigSmallcollab/weights/codebrain.pth`,可用 `CODEBRAIN_WEIGHT` 覆盖；输入适配、官方权重版本和复现实验命令见
   [CodeBrain 复现与结果记录](docs/codebrain_reproduction.md)。
 
-**存储位置：** 共享数据集独立存放在 `/data1/llx/<数据集名称>/`；本项目专用文件统一放在 `/data1/llx/BigSmallcollab/`，工作树只保存代码、配置和文档。
+**存储位置：** 共享数据集独立存放在 `/data1/llx/<数据集名称>/`；本项目训练产物放在 `/data1/llx/BigSmallcollab/`；供查看的 Excel、CSV 和 JSON 汇总报告放在项目真实的 `results/` 目录。
 
 | 内容 | 路径 |
 |---|---|
 | 共享数据集 | `/data1/llx/BNCI2014001/`、`BNCI2014004/`、`BNCI2015001/`、`AlexMI/` |
 | 新 14001 全场次宽带 NPY | `/data1/llx/BNCI2014001/broadband_0p1_75hz/` |
 | 项目模型输入及协议缓存 | `/data1/llx/BigSmallcollab/cache/` |
-| 实验结果、预测、教师缓存和训练 checkpoint | `/data1/llx/BigSmallcollab/results/` |
+| 逐折训练产物、预测和 checkpoint | `/data1/llx/BigSmallcollab/results/` |
+| Excel、CSV 和 JSON 汇总报告 | `/home/lixinli/BigSmallCollab/results/` |
 | CodeBrain 等外置权重 | `/data1/llx/BigSmallcollab/weights/` |
 | 现有 MIRepNet／CBraMod／LaBraM 预训练权重 | `/data1/llx/pre_weight/` |
 | Git LFS 本地对象 | `/data1/llx/BigSmallcollab/git_lfs/` |
@@ -66,7 +67,8 @@ envs/      各模型 conda 环境说明
 完整目录规则见 [共享数据集与项目文件存储](docs/storage_layout.md)。
 
 `experiments/storage.py` 将历史 `results/...`、`data_cache/...`、`weights/...` 路径映射到上述目录；
-实验写入接口拒绝把数据或模型保存进项目工作树。
+训练写入接口拒绝把数据或模型保存进项目工作树。汇总报告使用独立的
+`REPORTS_ROOT` 和 `require_report_output()`，直接写入本地 `results/`，不经过历史产物路径映射。
 
 各大模型仍需在**自己的 conda 环境**里跑(依赖不兼容:MIRepNet 的 numpy/mne pin vs LaBraM 的
 timm0.4.12 vs CBraMod 的 einops);框架靠 artifact hub 解耦——见下。

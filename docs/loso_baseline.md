@@ -41,6 +41,10 @@ cosine，warmup=0。001/001-4 使用已完成的宽带输入配方；其当前�
 `configs/experiments/loso_distillation.yaml`，三个学生和四组方法共用
 126 份教师目标。配置路径整理保持已有训练与缓存身份兼容。
 
+供查看的 Excel、CSV 和 JSON 汇总报告保存在项目真实的 `results/` 目录，
+通过 `experiments.storage.require_report_output` 导出。本轮报告为
+`results/loso_source_refresh_004_5001/loso_distillation_accuracy_3seed.xlsx`。
+
 输入缓存按来源 manifest、所选场次、类别、窗口和预处理方式核对，修改
 LR 或训练轮数可以继续复用相同输入。当前入口会明确拒绝未支持的频率、
 EA、CAR 或调度改动，避免 YAML 与实际处理不一致。已完成结果和中断
