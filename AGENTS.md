@@ -56,3 +56,17 @@
 - Push each completed solution or experiment improvement promptly, rather than leaving it only in the local checkout.
 - Before staging, review `git status` and stage only files related to the completed change. Leave generated results, caches, datasets, and unrelated work unstaged unless they are explicitly part of the requested change.
 - Verify that the push succeeded. If a push is blocked or rejected, report which commit remains unpushed and why.
+
+## Result-summary Excel format
+
+- Use `docs/loso_distillation_accuracy_3seed_colored.xlsx` as the visual and structural reference when creating comparable result-summary workbooks. Adapt sheet names, model groups, metric columns, and notes to the actual experiment; never copy values or claim an aggregation that the source artifacts do not support.
+- For a model-comparison sheet, use a consistent table with `student` and `method` as the first two columns, followed by one column per dataset/task/setting. Put the teacher reference first, then group student models together. Within each student group, list its `none` supervised CE baseline first, followed by the compared methods. Keep model and method names stable across sheets.
+- Store percentage metrics on a 0–100 scale and display two decimal places. State the metric explicitly (for example, Accuracy (%) or Balanced Accuracy (%)); do not label one metric as another. Include concise notes for the aggregation, seeds/folds, baseline definitions, and method details. For the referenced three-seed LOSO summary, the stated aggregation is an equal-weight mean over LOSO subjects within each seed, then the mean over seeds 666, 667, and 668. For other experiments, report their actual aggregation and seed/fold set instead of assuming these values.
+- Match each method result to the teacher and the `none` baseline of that same student architecture, for the same dataset/task, metric, and evaluation protocol. Color method-result cells using strict `>` comparisons against those two matched reference scores:
+  - Red fill `#FFC7CE`: the method score is greater than both the teacher score and the matched small-model `none` score.
+  - Green fill `#C6EFCE`: the method score is greater than the teacher score but is not greater than the matched small-model `none` score.
+  - Yellow fill `#FFF2CC`: the method score is greater than the matched small-model `none` score but is not greater than the teacher score.
+  - No comparison fill: the method score is greater than neither reference, or a valid matched comparison is unavailable. Equality does not count as greater.
+- Include a visible legend for the three comparison colors, using the meanings above (in the reference workbook: “大于小模型” = yellow, “大于大模型” = green, “大于二者” = red). Apply comparison fills to method result cells; use a separate, consistent fill to identify the teacher row (reference orange `#FAC090`) and student `none` baseline rows (reference light blue `#93CDDD`).
+- Preserve the reference's readable layout: dark navy `#1F4E78` header with bold white text, centered table values, hidden gridlines, a blank spacer before the legend/notes when useful, and left-aligned wrapped footnotes below the table. Adjust merged note ranges and column widths to fit the actual number and length of columns.
+- Save user-facing summary workbooks under the checkout's real `results/` directory, following the existing storage policy. Do not stage generated result workbooks unless the user explicitly requests that the workbook itself be versioned.
