@@ -936,7 +936,7 @@ lr/dropout 是 CBraMod 常胜值(我主动固定,本轮又放开扫);weight_deca
 
 **运行:** `scripts/tune_cbramod_native.py --phase all --gpus 2 3`,setsid 脱终端(driver PID 复用见
 logs)。**只用 GPU 2/3(用户要求避开 GPU0)**,每卡单进程 workers=0 控 CPU。日志 `logs/tune_cbramod/driver.log`,
-明细 `results/cbramod_native/tune/<ds>/tp{0.7,0.3}/<tag>.csv`,最优 `.../tuned/chosen_configs.json`,
+逐配置明细 CSV 已于 2026-10-10 清理；保留 `results/cbramod_native/tune/search_summary.csv`。最优 `.../tuned/chosen_configs.json`,
 最终表 `.../tuned/summary_tuned.csv`。**next:** 跑完汇总五数据集两划分的 acc%/BAC/κ。
 
 ---
@@ -1239,8 +1239,8 @@ EEGNet 上最强(+1.62/+1.83 acc),再叠 TCKD 门控(DKD_tmask)无增益、CBraM
 clip3.0、val_split0.2。
 
 **运行:** `setsid python scripts/tune_labram_native.py --phase all --gpus 2 3 4 5 7`(5 卡并行,脱终端
-[[detach-long-jobs]]),日志 `logs/tune_labram_master.log`+`logs/tune_labram/*.log`,search 明细
-`results/labram_native/tune/`,选中配置 `.../tuned/chosen_configs.json`,复核汇总 `.../tuned/summary_tuned.csv`。
+[[detach-long-jobs]]),日志 `logs/tune_labram_master.log`+`logs/tune_labram/*.log`,搜索明细 CSV 已于 2026-10-10 清理
+(保留 `results/labram_native/tune/search_summary.csv`),选中配置 `.../tuned/chosen_configs.json`,复核汇总 `.../tuned/summary_tuned.csv`。
 
 **预期/next:** 240 search+5 confirm,~2-2.5h。跑完对比 tuned vs 默认(53.06%)vs CBraMod native(65.57%),
 看调参能否缩小 gap(诊断预示 LaBraM 冻结特征≈chance,调参难根本翻盘,但要坐实)。跑完更新表。
@@ -1284,7 +1284,8 @@ tuned 数字是"per-dataset 最优配置"的乐观估计,已是调参空间上�
 
 **v2 精炼网格(24 配置):** lr∈{1e-4,3e-4,5e-4} × wd∈{0.1,0.5} × layer_decay∈{1.0,0.65} × batch_size∈{8,16};
 band 固定 native b75n50、drop_path0.1、smoothing0、min_lr1e-5、关裁剪、epochs50(val-select)、scale100。
-仍 native70(tp0.7)、val_bac 选配置、confirm 3seed。结果写新目录 `results/labram_native/tune2` + `tuned2`,
+仍 native70(tp0.7)、val_bac 选配置、confirm 3seed。结果写新目录 `results/labram_native/tune2` + `tuned2`
+(逐配置明细 CSV 已于 2026-10-10 清理，保留 `tune2/search_summary.csv`),
 日志 `logs/tune_labram2*`。
 
 **运行:** `setsid python scripts/tune_labram_native.py --phase all --gpus 2 3 4 5 7`(120 search+5 confirm)。
