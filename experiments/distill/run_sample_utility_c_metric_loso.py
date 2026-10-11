@@ -7,6 +7,7 @@ the frozen, provenance-checked Teacher artifacts from the sample-utility pilot.
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import os
 from pathlib import Path
@@ -41,7 +42,7 @@ from models import get_adapter
 
 
 CONFIG_PATH = Path('configs/experiments/sample_utility_c_metric_loso_seed666.yaml')
-PROTOCOL_ID = 'sample_utility_c_metric_loso_seed666_v1'
+PROTOCOL_ID = 'sample_utility_c_metric_loso_seed666_v2'
 RESULT_ROOT = require_external_output(RESULTS_ROOT / 'distill' / PROTOCOL_ID)
 EXPERIMENT_CACHE_ROOT = require_external_output(DATA_CACHE_ROOT / PROTOCOL_ID)
 EXPERIMENT_WEIGHT_ROOT = require_external_output(WEIGHTS_ROOT / PROTOCOL_ID)
@@ -144,24 +145,26 @@ def _make_fold_paths(old_paths, out_root, cache_root, weight_root):
 
 
 def _student_probabilities(adapter, model, x, device, batch_size=64):
-    """Eval-mode probabilities that preserve model mode, RNG, and buffers."""
+    """Eval probabilities on a copy, preserving the live model and RNG state."""
     x = np.asarray(x, dtype=np.float32)
-    was_training = bool(model.training)
     before_rng = trainer.rng_state(device)
-    before_buffers = {name: value.detach().clone()
-                      for name, value in model.named_buffers()}
+    before_model = trainer.state_hash(model.state_dict())
+    # IFNet LinearWithConstraint projects fc.weight.data inside forward().
+    evaluation_model = copy.deepcopy(model)
     parts = []
     try:
-        model.eval()
+        evaluation_model.eval()
         with trainer.preserve_torch_rng(device), torch.inference_mode():
             for start in range(0, len(x), int(batch_size)):
                 xb = torch.as_tensor(x[start:start + batch_size], dtype=torch.float32,
                                      device=device)
-                _, logits = adapter.forward(model, xb)
+                _, logits = adapter.forward(evaluation_model, xb)
                 parts.append(F.softmax(logits.float(), dim=1).cpu().numpy())
     finally:
-        model.train(was_training)
         trainer.restore_rng(before_rng, device)
+        del evaluation_model
+    if trainer.state_hash(model.state_dict()) != before_model:
+        raise RuntimeError('eval prediction changed the live Student model state')
     after_rng = trainer.rng_state(device)
     if before_rng['python'] != after_rng['python']:
         raise RuntimeError('eval prediction changed Python RNG state')
@@ -173,9 +176,6 @@ def _student_probabilities(adapter, model, x, device, batch_size=64):
         raise RuntimeError('eval prediction changed the Student CPU RNG stream')
     if device.type == 'cuda' and not torch.equal(before_rng['torch_cuda'], after_rng['torch_cuda']):
         raise RuntimeError('eval prediction changed the Student CUDA RNG stream')
-    for name, value in model.named_buffers():
-        if not torch.equal(before_buffers[name], value):
-            raise RuntimeError(f'eval prediction changed model buffer {name}')
     output = np.concatenate(parts).astype(np.float32) if parts else \
         np.empty((0, 2), dtype=np.float32)
     if output.shape != (len(x), 2) or not np.isfinite(output).all():
@@ -995,7 +995,9 @@ def main():
             raise ValueError('the fixed smoke runs 12 total epochs (10 warm-up + 2 continuation)')
         if args.stage not in ('preflight', 'train', 'all'):
             raise ValueError('smoke mode supports only preflight/train and never evaluates targets')
-        folds_requested = [0]
+        folds_requested = [0] if args.folds is None else list(args.folds)
+        if len(folds_requested) != 1:
+            raise ValueError('smoke mode accepts exactly one fold')
         stage = 'train' if args.stage == 'all' else args.stage
     else:
         if args.epochs != 100:

@@ -1,4 +1,4 @@
-protocol_id: sample_utility_c_metric_loso_seed666_v1
+protocol_id: sample_utility_c_metric_loso_seed666_v2
 base_training_config: configs/experiments/sample_utility_adaptive_rl_loso_pilot.yaml
 dataset: BNCI2014004
 session: session_3
@@ -33,6 +33,6 @@ late_benefit:
   name: late_signed_true_class_probability_gain
   epochs: [81, 100]
 primary_predictive_check: spearman_c_1_30_vs_late_benefit_on_feedback
-output_root: /data1/llx/BigSmallcollab/results/distill/sample_utility_c_metric_loso_seed666_v1
-cache_root: /data1/llx/BigSmallcollab/cache/sample_utility_c_metric_loso_seed666_v1
-weights_root: /data1/llx/BigSmallcollab/weights/sample_utility_c_metric_loso_seed666_v1
+output_root: /data1/llx/BigSmallcollab/results/distill/sample_utility_c_metric_loso_seed666_v2
+cache_root: /data1/llx/BigSmallcollab/cache/sample_utility_c_metric_loso_seed666_v2
+weights_root: /data1/llx/BigSmallcollab/weights/sample_utility_c_metric_loso_seed666_v2
