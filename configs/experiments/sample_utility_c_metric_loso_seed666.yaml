@@ -1,0 +1,38 @@
+protocol_id: sample_utility_c_metric_loso_seed666_v1
+base_training_config: configs/experiments/sample_utility_adaptive_rl_loso_pilot.yaml
+dataset: BNCI2014004
+session: session_3
+seed: 666
+target_folds: 9
+split: target_t_feedback_next_subject_train_remaining_7
+teacher: mirepnet
+student: ifnet
+teacher_frozen: true
+student_conditions:
+  CE: BASE_CE
+  KD: DELAYED_KD_ALL
+epochs: 100
+warmup_epochs: 10
+batch_size: 16
+lambda_kd: 0.5
+temperature_kd: 2.0
+kd_type: logits
+kd_all_samples: true
+target_evaluation_epoch: 100
+c_metric:
+  use_for_training: false
+  probability: true_class_softmax_temperature_1
+  epoch0: save_separately_exclude_from_sums
+  windows:
+    c_1_100: [1, 100]
+    c_1_30: [1, 30]
+    c_11_100: [11, 100]
+  weighting: (E-1-j)/E_restarted_per_window
+  normalized_definition: (D/E)*(B/sum_weights)
+late_benefit:
+  name: late_signed_true_class_probability_gain
+  epochs: [81, 100]
+primary_predictive_check: spearman_c_1_30_vs_late_benefit_on_feedback
+output_root: /data1/llx/BigSmallcollab/results/distill/sample_utility_c_metric_loso_seed666_v1
+cache_root: /data1/llx/BigSmallcollab/cache/sample_utility_c_metric_loso_seed666_v1
+weights_root: /data1/llx/BigSmallcollab/weights/sample_utility_c_metric_loso_seed666_v1

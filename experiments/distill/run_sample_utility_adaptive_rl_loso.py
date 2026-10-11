@@ -307,9 +307,19 @@ def _export_reference_features(paths, warmup, train_x, train_y, train_uids, devi
     return data
 
 
-def create_warmup(paths, split, train_x, train_uids, cfg, device, *, resume):
+def create_warmup(paths, split, train_x, train_uids, cfg, device, *, resume,
+                  epoch_callback=None):
     checkpoint = paths['weights'] / 'warmup_epoch10.pt'
     if checkpoint.is_file():
+        if epoch_callback is not None:
+            expected = [0, *range(1, WARMUP_EPOCHS + 1)]
+            missing = [epoch for epoch in expected
+                       if not (paths['results'] / 'shared_warmup' /
+                               f'epoch_{epoch:03d}.npz').is_file()]
+            if missing:
+                raise RuntimeError(
+                    'warm-up checkpoint exists but requested epoch predictions are '
+                    f'missing: {missing}; use a fresh weight/output namespace')
         state = torch.load(resolve_local_file(checkpoint), map_location='cpu')
         if state['train_uid_sha256'] != protocol.hash_uids(train_uids):
             raise RuntimeError(f'warm-up checkpoint has the wrong D_train: {checkpoint}')
@@ -326,6 +336,8 @@ def create_warmup(paths, split, train_x, train_uids, cfg, device, *, resume):
     x = torch.as_tensor(train_x, dtype=torch.float32, device=device)
     y = torch.as_tensor(split['train']['y'], dtype=torch.long, device=device)
     history, started = [], time.monotonic()
+    if epoch_callback is not None:
+        epoch_callback(0, adapter, model)
     for epoch in range(10):
         model.train()
         loss_sum, seen = 0.0, 0
@@ -340,6 +352,8 @@ def create_warmup(paths, split, train_x, train_uids, cfg, device, *, resume):
             seen += len(ids)
         lr_used = float(optimizer.param_groups[0]['lr'])
         scheduler.step()
+        if epoch_callback is not None:
+            epoch_callback(epoch + 1, adapter, model)
         history.append({'epoch': epoch + 1, 'ce_loss': loss_sum / seen,
                         'lr_used': lr_used,
                         'lr_next': float(scheduler.get_last_lr()[0])})
@@ -529,7 +543,7 @@ def _weighted_epoch_summaries(weights, labels, subjects):
 
 def train_condition(condition, paths, fold, feedback, split, train_data,
                     teacher_cache, reference_cache, warmup, cfg, device,
-                    *, resume, continuation_epochs=90):
+                    *, resume, continuation_epochs=90, epoch_callback=None):
     cell = paths['results'] / condition
     require_external_output(cell).mkdir(parents=True, exist_ok=True)
     run_fingerprint = protocol.hash_json({
@@ -749,6 +763,8 @@ def train_condition(condition, paths, fold, feedback, split, train_data,
                 **train_metrics, 'lr': lr_used,
             })
         scheduler.step()
+        if epoch_callback is not None:
+            epoch_callback(epoch + 1, adapter, model)
         means = {key: value / seen for key, value in sums.items()}
         epoch_replay_weights = np.concatenate(replay_weights)
         epoch_replay_actions = np.concatenate(replay_actions)
