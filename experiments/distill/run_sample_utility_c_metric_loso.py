@@ -585,7 +585,10 @@ def _plot_diagnostics(out_root, c_rows, payloads):
 def analyze_source(out_root, folds):
     all_c, all_summary, all_benefit, all_diag, all_comp = [], [], [], [], []
     payloads = {}
-    for fold, paths, split in folds:
+    for fold_info in folds:
+        # Fold preflight records are dictionaries with additional provenance.
+        fold, paths, split = (fold_info['fold'], fold_info['paths'],
+                              fold_info['split'])
         payload = _aggregate_dynamics(paths, split)
         payloads[fold + 1] = payload
         all_c.extend(_c_score_rows(fold, payload))
