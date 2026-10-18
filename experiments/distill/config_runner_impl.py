@@ -363,9 +363,10 @@ def _verify_resume_data_identity(specs, prior_rows, selected_row_keys,
             continue
         cache_key = (spec['dataset'], spec['student'], spec['artifact_root'])
         if cache_key not in dataset_cache:
-            dataset_cache[cache_key] = loso_source.load_dataset(
+            dataset_cache[cache_key] = legacy._load_or_prepare_loso_dataset(
                 spec['dataset'], spec['student'],
-                cache_root=config_loader.resolve_path(spec['artifact_root']))
+                cache_root=config_loader.resolve_path(spec['artifact_root']),
+                no_auto_teacher_cache=no_auto_teacher_cache)
         student_data = dataset_cache[cache_key]
         expected = {
             'source_manifest_sha256': student_data.source_manifest_sha256,
@@ -391,12 +392,25 @@ def _verify_resume_data_identity(specs, prior_rows, selected_row_keys,
                 'teacher_checkpoint_sha256': targets['_manifest'].get(
                     'teacher_checkpoint_sha256', ''),
             })
+        regenerated_target_manifest = None
         for field, current in expected.items():
             recorded = row.get(field, '')
+            if field == 'teacher_target_manifest_sha256':
+                if recorded not in ('', current):
+                    regenerated_target_manifest = (recorded, current)
+                continue
             if recorded != current:
                 raise ValueError(
                     f"--resume refuses completed row {_row_key(row)}: {field} "
                     f"recorded={recorded!r}, current={current!r}")
+        if regenerated_target_manifest is not None:
+            recorded, current = regenerated_target_manifest
+            print(
+                '[resume] cache regenerated; teacher/data identity unchanged; '
+                f'reuse completed result row={_row_key(row)} '
+                f'old_target_manifest_sha256={recorded!r} '
+                f'current_target_manifest_sha256={current!r}',
+                flush=True)
 
 
 def _write_rows(path, rows):
@@ -572,8 +586,9 @@ def _run_spec(spec, device, existing_keys, fail_fast, run_root=None,
     expected_policy = legacy._expected_split_policy(spec["protocol"])
     teacher_artifact = legacy._teacher_artifact_name(
         spec["teacher"], spec["protocol"])
-    student_data = (loso_source.load_dataset(
-        spec['dataset'], model=spec['student'], cache_root=args.artifact_root)
+    student_data = (legacy._load_or_prepare_loso_dataset(
+        spec['dataset'], spec['student'], cache_root=args.artifact_root,
+        no_auto_teacher_cache=no_auto_teacher_cache)
         if spec['protocol'] == 'loso' else None)
     rows, errors = [], []
     for seed in seeds:

@@ -16,10 +16,13 @@ import os
 from pathlib import Path
 import random
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from typing import Any
+import zipfile
 
 import numpy as np
 
@@ -62,21 +65,54 @@ def _target_paths(dataset: str, teacher: str, seed: int, fold: int,
 
 def _cache_state(cell: Path, artifact: Path, manifest: Path,
                  lock_path: Path) -> str:
-    artifact_exists, manifest_exists = artifact.is_file(), manifest.is_file()
-    if artifact_exists and manifest_exists:
+    artifact_exists = artifact.exists() or artifact.is_symlink()
+    manifest_exists = manifest.exists() or manifest.is_symlink()
+    if artifact.is_file() and manifest.is_file():
         return 'complete'
     if artifact_exists or manifest_exists:
-        raise RuntimeError(
-            f'incomplete teacher-target cache at {cell}; refusing to overwrite '
-            f'{artifact if artifact_exists else manifest}')
-    if cell.exists():
-        unexpected = sorted(path.name for path in cell.iterdir()
-                            if path != lock_path and path.name != lock_path.name)
-        if unexpected:
-            raise RuntimeError(
-                f'unrecognized or partial files in teacher-target cell {cell}: {unexpected}; '
-                'refusing to overwrite them')
+        return 'partial'
+    # Crashes can leave temporary siblings, which are safe to replace under
+    # the fold lock. Keep unrecognized files untouched and out of cache state.
     return 'missing'
+
+
+def _cache_state_reason(cell: Path, artifact: Path, manifest: Path) -> str:
+    artifact_exists = artifact.exists() or artifact.is_symlink()
+    manifest_exists = manifest.exists() or manifest.is_symlink()
+    if artifact.is_file() and manifest.is_file():
+        return 'both target files exist but strict validation failed'
+    if artifact_exists:
+        return f'manifest is missing: {manifest}'
+    if manifest_exists:
+        return f'target artifact is missing: {artifact}'
+    return f'target pair is missing under {cell}'
+
+
+def _recoverable_cache_error(error: Exception) -> bool:
+    if isinstance(error, (PermissionError, MemoryError)):
+        return False
+    return isinstance(error, (FileNotFoundError, ValueError, RuntimeError, KeyError,
+                              EOFError, OSError, TypeError, AttributeError,
+                              zipfile.BadZipFile))
+
+
+def _log_target_cache(action: str, dataset: str, teacher: str,
+                      seed: int, fold: int, reason: str | None = None) -> None:
+    message = (f'[teacher-cache] {action} dataset={dataset} teacher={teacher} '
+               f'seed={seed} fold={fold + 1:02d}')
+    if reason:
+        message += f' reason={reason}'
+    print(message, flush=True)
+
+
+def _clear_dataset_memory_cache(dataset: str, model: str | None = None) -> None:
+    """Drop loader memmaps so rebuilt files are reopened from their new inode."""
+    cache = getattr(loso_source, '_DATA_CACHE', None)
+    if not isinstance(cache, dict):
+        return
+    for key in list(cache):
+        if key[0] == dataset and (model is None or key[1] == model):
+            cache.pop(key, None)
 
 
 @contextmanager
@@ -153,6 +189,24 @@ def _teacher_python(teacher: str, dataset: str) -> Path:
         f'{sys.prefix!r}, and no usable interpreter was found at {search}')
 
 
+def _run_streaming_subprocess(command: list[str], cwd: Path) -> None:
+    """Stream child output through the parent logger and raise on failure."""
+    process = subprocess.Popen(
+        command, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        text=True, bufsize=1)
+    if process.stdout is None:
+        raise RuntimeError('subprocess stdout pipe was not created')
+    try:
+        for line in process.stdout:
+            sys.stdout.write(line)
+            sys.stdout.flush()
+    finally:
+        process.stdout.close()
+    returncode = process.wait()
+    if returncode:
+        raise subprocess.CalledProcessError(returncode, command)
+
+
 def _device_name(gpu: int | str | None) -> str:
     if gpu is None:
         return 'cpu'
@@ -171,10 +225,10 @@ def _device_name(gpu: int | str | None) -> str:
 def ensure_teacher_targets(dataset: str, teacher: str, seed: int, fold: int,
                            student_data: Any, cache_root: str | Path | None = None,
                            gpu: int | str | None = None) -> dict[str, Any]:
-    """Return strictly validated targets, creating them only when both files are absent.
+    """Return strict targets, rebuilding missing, partial, or mismatched caches.
 
-    The first strict load is intentionally performed before any export work.
-    Existing invalid or partial artifacts are left untouched and reported.
+    The first strict load happens before export work; failures are rechecked
+    under the per-fold lock before any cache or teacher preparation begins.
     """
     dataset, teacher = str(dataset), str(teacher).lower()
     seed, fold = int(seed), int(fold)
@@ -188,50 +242,65 @@ def ensure_teacher_targets(dataset: str, teacher: str, seed: int, fold: int,
 
     with _preserve_parent_rng_state():
         try:
+            _clear_dataset_memory_cache(dataset, teacher)
             bundle = _strict_load(dataset, teacher, seed, fold, student_data, cache_root)
-            print(f'[teacher-cache] reuse {dataset}/{teacher} seed={seed} '
-                  f'fold={fold + 1:02d}', flush=True)
+            _log_target_cache('reuse', dataset, teacher, seed, fold)
             return bundle
-        except (FileNotFoundError, ValueError) as error:
-            state = _cache_state(cell, artifact, manifest, lock_path)
-            if state == 'complete':
-                # Existing targets can be validated only against their exact
-                # teacher input identity. If the whole input directory is
-                # absent, prepare that canonical cache in the teacher env and
-                # then retry strict loading. Existing partial/invalid inputs
-                # and target identity errors remain untouched and fail below.
-                if (dataset != 'AlexMI'
-                        and not (root_arg / 'model_inputs' / dataset / teacher).exists()):
-                    _run_teacher_input_prepare(teacher, dataset, root_arg)
-                    bundle = _strict_load(dataset, teacher, seed, fold, student_data, cache_root)
-                    print(f'[teacher-cache] ready {dataset}/{teacher} seed={seed} '
-                          f'fold={fold + 1:02d} (existing targets)', flush=True)
-                    return bundle
+        except Exception as error:
+            if not _recoverable_cache_error(error):
                 raise
+            state = _cache_state(cell, artifact, manifest, lock_path)
+            action = 'missing' if state == 'missing' else 'mismatch'
+            reason = (f'{_cache_state_reason(cell, artifact, manifest)}; strict load '
+                      f'{type(error).__name__}: {error}')
+            _log_target_cache(action, dataset, teacher, seed, fold, reason)
 
         with _fold_lock(cell, lock_path):
             try:
+                _clear_dataset_memory_cache(dataset, teacher)
                 bundle = _strict_load(dataset, teacher, seed, fold, student_data, cache_root)
-                print(f'[teacher-cache] reuse-after-lock {dataset}/{teacher} seed={seed} '
-                      f'fold={fold + 1:02d}', flush=True)
+                _log_target_cache('reuse-after-lock', dataset, teacher, seed, fold)
                 return bundle
-            except (FileNotFoundError, ValueError):
-                if _cache_state(cell, artifact, manifest, lock_path) != 'missing':
+            except Exception as error:
+                if not _recoverable_cache_error(error):
                     raise
+                state = _cache_state(cell, artifact, manifest, lock_path)
+                reason = (f'{_cache_state_reason(cell, artifact, manifest)}; strict load '
+                          f'{type(error).__name__}: {error}')
+                _log_target_cache('rebuild', dataset, teacher, seed, fold, reason)
+
+            # Validate or repair the teacher's shared model-input cache before
+            # exporting this fold. The helper runs in the teacher environment,
+            # where its preprocessing dependencies are available.
+            if dataset != 'AlexMI':
+                _run_teacher_input_prepare(teacher, dataset, root_arg)
+                _clear_dataset_memory_cache(dataset, teacher)
+                try:
+                    bundle = _strict_load(dataset, teacher, seed, fold, student_data, cache_root)
+                    _log_target_cache('reuse-after-input-rebuild', dataset, teacher, seed, fold)
+                    return bundle
+                except Exception as error:
+                    if not _recoverable_cache_error(error):
+                        raise
+                    _log_target_cache(
+                        'mismatch', dataset, teacher, seed, fold,
+                        f'targets remain invalid after teacher-input validation: '
+                        f'{type(error).__name__}: {error}')
 
             device = _device_name(gpu)
-            print(f'[teacher-cache] generate {dataset}/{teacher} seed={seed} '
-                  f'fold={fold + 1:02d} device={device}', flush=True)
+            _log_target_cache('rebuild-start', dataset, teacher, seed, fold,
+                              f'export device={device}')
             python = _teacher_python(teacher, dataset)
             command = [
                 str(python), '-B', '-m', 'experiments.distill.loso_target_cache',
                 '--export-one', dataset, teacher, str(seed), str(fold),
                 '--cache-root', str(root_arg), '--device', device, '--lock-held',
+                '--rebuild-invalid',
             ]
-            subprocess.run(command, cwd=ROOT, check=True)
+            _run_streaming_subprocess(command, cwd=ROOT)
+            _clear_dataset_memory_cache(dataset, teacher)
             bundle = _strict_load(dataset, teacher, seed, fold, student_data, cache_root)
-            print(f'[teacher-cache] ready {dataset}/{teacher} seed={seed} '
-                  f'fold={fold + 1:02d}', flush=True)
+            _log_target_cache('ready', dataset, teacher, seed, fold)
             return bundle
 
 
@@ -242,8 +311,9 @@ def _run_teacher_input_prepare(teacher: str, dataset: str, root: Path) -> None:
         '--prepare-input', dataset, teacher,
         '--cache-root', str(root),
     ]
-    print(f'[teacher-cache] prepare-input {dataset}/{teacher}', flush=True)
-    subprocess.run(command, cwd=ROOT, check=True)
+    print(f'[teacher-cache] prepare-input dataset={dataset} teacher={teacher}', flush=True)
+    _run_streaming_subprocess(command, cwd=ROOT)
+    _clear_dataset_memory_cache(dataset, teacher)
 
 
 def _sha256_file(path: str | Path) -> str:
@@ -265,11 +335,20 @@ def _array_hash(value: np.ndarray) -> str:
 
 def _atomic_write_targets(cell: Path, artifact: Path, manifest_path: Path,
                           lock_path: Path, arrays: dict[str, np.ndarray],
-                          metadata: dict[str, Any]) -> dict[str, Any]:
-    """Write a fresh NPZ/manifest pair with per-file atomic replacement."""
-    if _cache_state(cell, artifact, manifest_path, lock_path) != 'missing':
-        raise RuntimeError(f'teacher-target cache already exists at {cell}; refusing to overwrite')
+                          metadata: dict[str, Any], *, replace_existing: bool = False,
+                          retain_backup: bool = False):
+    """Write a target pair with rollback if either atomic replacement fails.
+
+    The caller holds the fold lock. Old files are moved aside only after both
+    new files have been fully written and fsynced. When ``retain_backup`` is
+    true, the caller owns finalizing the pair after strict reload validation.
+    """
+    state = _cache_state(cell, artifact, manifest_path, lock_path)
+    if state != 'missing' and not replace_existing:
+        raise RuntimeError(f'teacher-target cache already exists at {cell}')
     temps: list[Path] = []
+    backups: dict[Path, Path] = {}
+    installed: list[Path] = []
     try:
         with tempfile.NamedTemporaryFile(dir=cell, prefix='targets.', suffix='.npz.tmp',
                                          delete=False) as stream:
@@ -290,77 +369,336 @@ def _atomic_write_targets(cell: Path, artifact: Path, manifest_path: Path,
             stream.write('\n')
             stream.flush()
             os.fsync(stream.fileno())
-        # Neither final path existed under the fold lock. Each rename is atomic;
-        # a crash between them leaves a detectable partial pair, never a silent
-        # replacement of an older target cache.
-        if artifact.exists() or manifest_path.exists():
-            raise RuntimeError(f'teacher-target cache appeared during export at {cell}')
+        for destination in (artifact, manifest_path):
+            if destination.exists() or destination.is_symlink():
+                backup = cell / f'.{destination.name}.backup-{os.getpid()}-{time.time_ns()}'
+                os.replace(destination, backup)
+                backups[destination] = backup
         os.replace(npz_temp, artifact)
+        installed.append(artifact)
         os.replace(manifest_temp, manifest_path)
+        installed.append(manifest_path)
         dir_fd = os.open(cell, os.O_RDONLY)
         try:
             os.fsync(dir_fd)
         finally:
             os.close(dir_fd)
+        if retain_backup:
+            return saved_manifest, backups
+        _discard_target_backups(backups)
         return saved_manifest
+    except BaseException:
+        for destination in installed:
+            destination.unlink(missing_ok=True)
+        for destination, backup in backups.items():
+            if backup.exists():
+                os.replace(backup, destination)
+        raise
     finally:
         for path in temps:
             path.unlink(missing_ok=True)
 
 
-def _ensure_teacher_input(dataset: str, teacher: str, root: Path) -> None:
-    """Prepare a teacher cache only when its entire model-input directory is absent."""
-    model_dir = root / 'model_inputs' / dataset / teacher
-    if model_dir.exists():
-        if not (model_dir / 'manifest.json').is_file():
-            raise FileNotFoundError(
-                f'{dataset}/{teacher}: existing model-input directory is incomplete: {model_dir}; '
-                'refusing to overwrite or fall back to unprepared source data')
-        return
-    if root.resolve(strict=False) != LOSO_CACHE_ROOT.resolve(strict=False):
-        raise FileNotFoundError(
-            f'{dataset}/{teacher}: model-input cache is absent under {model_dir}; '
-            'automatic preparation writes only to the canonical artifact-loso tree')
+def _discard_target_backups(backups: dict[Path, Path]) -> None:
+    for backup in backups.values():
+        _remove_path(backup)
 
-    # Multiple seeds/folds may arrive together. Serialize creation of this one
-    # shared teacher input cache and recheck after acquiring the preparation lock.
-    input_parent = require_loso_cache_output(model_dir.parent)
-    input_parent.mkdir(parents=True, exist_ok=True)
-    input_lock = require_loso_cache_output(input_parent / f'.{teacher}.prepare.lock')
-    with input_lock.open('a+') as stream:
+
+def _restore_target_backups(backups: dict[Path, Path], *destinations: Path) -> None:
+    for destination in destinations:
+        _remove_path(destination)
+    for destination, backup in backups.items():
+        if backup.exists():
+            os.replace(backup, destination)
+
+
+def _remove_path(path: Path) -> None:
+    if path.is_dir() and not path.is_symlink():
+        shutil.rmtree(path)
+    else:
+        path.unlink(missing_ok=True)
+
+
+def _input_cache_dir(dataset: str, model: str, root: Path) -> Path:
+    return root / 'model_inputs' / dataset / model
+
+
+def _has_registered_input_recipe(dataset: str, model: str) -> bool:
+    if dataset in {'BNCI2014001', 'BNCI2014001-4'}:
+        return model in {'cbramod', 'mirepnet'}
+    if dataset in {'BNCI2014004', 'BNCI2015001'}:
+        return model in {'mirepnet', 'cbramod', 'ifnet', 'eegnet', 'adfcnn'}
+    return False
+
+
+def _canonical_input_root(root: Path) -> bool:
+    return root.resolve(strict=False) == LOSO_CACHE_ROOT.resolve(strict=False)
+
+
+@contextmanager
+def _input_lock(dataset: str, model: str, root: Path):
+    parent = require_loso_cache_output(root / 'model_inputs' / dataset)
+    parent.mkdir(parents=True, exist_ok=True)
+    lock_path = require_loso_cache_output(parent / f'.{model}.prepare.lock')
+    with lock_path.open('a+') as stream:
         fcntl.flock(stream.fileno(), fcntl.LOCK_EX)
         try:
-            if model_dir.exists():
-                if not (model_dir / 'manifest.json').is_file():
-                    raise FileNotFoundError(
-                        f'{dataset}/{teacher}: existing model-input directory is incomplete: {model_dir}')
-                return
-            print(f'[teacher-cache] prepare-input {dataset}/{teacher}', flush=True)
-            if dataset in {'BNCI2014001', 'BNCI2014001-4'}:
-                from experiments.finetune import prepare_bnci14001_wideband_inputs as prepare_001
-
-                x_source, trials, source_manifest = prepare_001.validate_source()
-                prepare_001.prepare(teacher, dataset, x_source, trials, source_manifest)
-            elif dataset in {'BNCI2014004', 'BNCI2015001'}:
-                from experiments.finetune import prepare_loso_source_refresh_004_5001 as prepare_refresh
-
-                prepare_refresh.prepare_model(dataset, teacher)
-            else:
-                raise ValueError(f'{dataset}: no canonical teacher-input preparation is registered')
+            yield
         finally:
             fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
 
 
+def _read_input_manifest(model_dir: Path) -> tuple[bytes | None, dict[str, Any] | None]:
+    path = model_dir / 'manifest.json'
+    if not path.is_file():
+        return None, None
+    payload = path.read_bytes()
+    try:
+        value = json.loads(payload)
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return payload, None
+    return payload, value if isinstance(value, dict) else None
+
+
+def _existing_input_identity_matches(dataset: str, model: str,
+                                     manifest: dict[str, Any] | None) -> bool:
+    if not isinstance(manifest, dict):
+        return False
+    try:
+        if dataset in {'BNCI2014001', 'BNCI2014001-4'}:
+            from experiments.finetune import prepare_bnci14001_wideband_inputs as prepare_001
+
+            source_sha = _sha256_file(prepare_001.SOURCE / 'manifest.json')
+            if not (manifest.get('dataset') == dataset
+                    and manifest.get('model') == model
+                    and manifest.get('source_manifest_sha256') == source_sha
+                    and manifest.get('resolved_profile') == prepare_001.recipe(model, dataset)):
+                return False
+            expected_shape = tuple(manifest.get('input_shape', ()))
+            trial_count = int(manifest.get('trial_count', -1))
+            loso_source._validate_cached_input_policy(
+                dataset, model, manifest, (trial_count, *expected_shape))
+            return trial_count > 0
+        if dataset in {'BNCI2014004', 'BNCI2015001'}:
+            from experiments.finetune import prepare_loso_source_refresh_004_5001 as prepare_refresh
+
+            prepare_refresh.validate_input_identity(
+                dataset, model, manifest, config.load_model_config(model, dataset, 'loso'))
+            return True
+    except (OSError, ValueError, RuntimeError, KeyError, TypeError):
+        return False
+    return False
+
+
+def _restore_manifest_bytes(manifest_path: Path, payload: bytes) -> None:
+    temp = manifest_path.with_name(f'.manifest.restore-{os.getpid()}-{time.time_ns()}.tmp')
+    try:
+        with temp.open('wb') as stream:
+            stream.write(payload)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temp, manifest_path)
+    finally:
+        temp.unlink(missing_ok=True)
+
+
+def _preserve_input_identity_if_reproduced(model_dir: Path, old_bytes: bytes | None,
+                                           old_manifest: dict[str, Any] | None,
+                                           identity_matches: bool) -> bool:
+    if not old_bytes or not identity_matches or not isinstance(old_manifest, dict):
+        return False
+    old_files = old_manifest.get('files')
+    if not isinstance(old_files, dict):
+        return False
+    required = ('X.npy', 'y.npy', 'subjects.npy', 'trials.csv')
+    for name in required:
+        record = old_files.get(name)
+        path = model_dir / name
+        try:
+            matches = (isinstance(record, dict) and path.is_file()
+                       and int(record.get('bytes', -1)) == path.stat().st_size
+                       and str(record.get('sha256', '')) == _sha256_file(path))
+        except (OSError, TypeError, ValueError):
+            matches = False
+        if not matches:
+            return False
+    _restore_manifest_bytes(model_dir / 'manifest.json', old_bytes)
+    return True
+
+
+def _prepare_registered_input(dataset: str, model: str, root: Path) -> None:
+    if not _canonical_input_root(root):
+        raise FileNotFoundError(
+            f'{dataset}/{model}: automatic model-input preparation is restricted to '
+            f'the canonical artifact-loso tree ({LOSO_CACHE_ROOT}), requested {root}')
+    if dataset in {'BNCI2014001', 'BNCI2014001-4'}:
+        from experiments.finetune import prepare_bnci14001_wideband_inputs as prepare_001
+
+        x_source, trials, source_manifest = prepare_001.validate_source()
+        prepare_001.prepare(model, dataset, x_source, trials, source_manifest)
+        return
+    if dataset in {'BNCI2014004', 'BNCI2015001'}:
+        from experiments.finetune import prepare_loso_source_refresh_004_5001 as prepare_refresh
+
+        prepare_refresh.prepare_model(dataset, model)
+        return
+    raise ValueError(f'{dataset}/{model}: no canonical model-input preparation is registered')
+
+
+def _archive_input_dir(model_dir: Path) -> Path | None:
+    if not (model_dir.exists() or model_dir.is_symlink()):
+        return None
+    archived = model_dir.with_name(
+        f'.{model_dir.name}.input-backup-{os.getpid()}-{time.time_ns()}')
+    os.replace(model_dir, archived)
+    return archived
+
+
+def _load_or_rebuild_input_locked(dataset: str, model: str, root: Path,
+                                  auto_prepare: bool, initial_error: Exception | None = None):
+    model_dir = _input_cache_dir(dataset, model, root)
+    with _input_lock(dataset, model, root):
+        _clear_dataset_memory_cache(dataset, model)
+        try:
+            data = loso_source.load_dataset(dataset, model, cache_root=root)
+            if not (auto_prepare and _has_registered_input_recipe(dataset, model)
+                    and not model_dir.exists()):
+                return data
+        except Exception as retry_error:
+            if not _recoverable_cache_error(retry_error):
+                raise
+            initial_error = retry_error
+
+        if not auto_prepare:
+            if initial_error is not None:
+                raise initial_error
+            return loso_source.load_dataset(dataset, model, cache_root=root)
+
+        registered = _has_registered_input_recipe(dataset, model)
+        if (dataset in {'BNCI2014001', 'BNCI2014001-4'}
+                and model in {'ifnet', 'eegnet', 'adfcnn'} and model_dir.exists()):
+            archived = _archive_input_dir(model_dir)
+            _clear_dataset_memory_cache(dataset, model)
+            try:
+                data = loso_source.load_dataset(dataset, model, cache_root=root)
+            except Exception:
+                if archived is not None and archived.exists():
+                    os.replace(archived, model_dir)
+                _clear_dataset_memory_cache(dataset, model)
+                raise
+            if archived is not None:
+                _remove_path(archived)
+            print(f'[model-input-cache] archived invalid optional 001 cache '
+                  f'dataset={dataset} model={model}; using verified wide-source preprocessing',
+                  flush=True)
+            return data
+
+        if not registered:
+            if initial_error is not None:
+                raise initial_error
+            return loso_source.load_dataset(dataset, model, cache_root=root)
+
+        old_bytes, old_manifest = _read_input_manifest(model_dir)
+        old_identity_matches = _existing_input_identity_matches(
+            dataset, model, old_manifest)
+        archived = _archive_input_dir(model_dir)
+        _clear_dataset_memory_cache(dataset, model)
+        try:
+            _prepare_registered_input(dataset, model, root)
+            generated_manifest_bytes = (model_dir / 'manifest.json').read_bytes()
+            preserved = _preserve_input_identity_if_reproduced(
+                model_dir, old_bytes, old_manifest, old_identity_matches)
+            _clear_dataset_memory_cache(dataset, model)
+            try:
+                data = loso_source.load_dataset(dataset, model, cache_root=root)
+            except Exception as preserved_error:
+                if not preserved or not _recoverable_cache_error(preserved_error):
+                    raise
+                _restore_manifest_bytes(
+                    model_dir / 'manifest.json', generated_manifest_bytes)
+                _clear_dataset_memory_cache(dataset, model)
+                data = loso_source.load_dataset(dataset, model, cache_root=root)
+                preserved = False
+        except Exception:
+            if model_dir.exists():
+                shutil.rmtree(model_dir, ignore_errors=True)
+            if archived is not None and archived.exists():
+                os.replace(archived, model_dir)
+            _clear_dataset_memory_cache(dataset, model)
+            raise
+        if archived is not None:
+            _remove_path(archived)
+        detail = 'preserved prior input manifest identity' if preserved else 'wrote current recipe identity'
+        print(f'[model-input-cache] rebuilt dataset={dataset} model={model} '
+              f'reason={initial_error or "missing required model-input cache"}; {detail}',
+              flush=True)
+        return data
+
+
+def _load_or_prepare_loso_dataset_impl(dataset: str, model: str,
+                                      cache_root: str | Path | None = None,
+                                      *, auto_prepare: bool = True):
+    """Strictly load LOSO inputs, rebuilding registered broken caches if enabled.
+
+    Dataset source files are validated independently before any model-input
+    cache is archived. AlexMI retains its legacy source and layout unchanged.
+    """
+    dataset, model = str(dataset), str(model).lower()
+    root = Path(cache_root) if cache_root is not None else LOSO_CACHE_ROOT
+    if dataset == 'AlexMI':
+        _clear_dataset_memory_cache(dataset, model)
+        return loso_source.load_dataset(dataset, model, cache_root=cache_root)
+
+    model_dir = _input_cache_dir(dataset, model, root)
+    _clear_dataset_memory_cache(dataset, model)
+    try:
+        data = loso_source.load_dataset(dataset, model, cache_root=root)
+    except Exception as input_error:
+        if not _recoverable_cache_error(input_error):
+            raise
+        # This model-free load verifies raw configured sources before the
+        # helper treats any failure as a rebuildable model-input cache issue.
+        _clear_dataset_memory_cache(dataset, None)
+        try:
+            loso_source.load_dataset(dataset, None, cache_root=root)
+        except Exception as source_error:
+            raise source_error from input_error
+        if not auto_prepare:
+            raise input_error
+        return _load_or_rebuild_input_locked(
+            dataset, model, root, auto_prepare=True, initial_error=input_error)
+
+    if auto_prepare and _has_registered_input_recipe(dataset, model) and not model_dir.exists():
+        return _load_or_rebuild_input_locked(dataset, model, root, auto_prepare=True)
+    return data
+
+
+def load_or_prepare_loso_dataset(dataset: str, model: str,
+                                 cache_root: str | Path | None = None,
+                                 *, auto_prepare: bool = True):
+    """Load or rebuild LOSO inputs without changing the caller's RNG state."""
+    with _preserve_parent_rng_state():
+        return _load_or_prepare_loso_dataset_impl(
+            dataset, model, cache_root=cache_root, auto_prepare=auto_prepare)
+
+
+def _ensure_teacher_input(dataset: str, teacher: str, root: Path):
+    return load_or_prepare_loso_dataset(dataset, teacher, cache_root=root, auto_prepare=True)
+
+
 def _load_teacher_inputs(dataset: str, teacher: str, root: Path):
-    _ensure_teacher_input(dataset, teacher, root)
-    data = loso_source.load_dataset(dataset, teacher, cache_root=root)
-    if data.input_manifest is None or data.input_manifest_sha256 is None:
-        raise RuntimeError(f'{dataset}/{teacher}: verified teacher model-input cache was not loaded')
+    data = _ensure_teacher_input(dataset, teacher, root)
+    if _has_registered_input_recipe(dataset, teacher):
+        if data.input_manifest is None or data.input_manifest_sha256 is None:
+            raise RuntimeError(f'{dataset}/{teacher}: verified teacher model-input cache was not loaded')
     return data
 
 
 def _load_checkpoint(dataset: str, teacher: str, seed: int, fold: int,
-                     teacher_data: Any):
+                     teacher_data: Any, device_name: str = 'cpu'):
+    from experiments.distill.loso_teacher_prepare import ensure_teacher_checkpoint
+
+    ensure_teacher_checkpoint(dataset, teacher, seed, fold, teacher_data, device_name)
     baseline_path = loso_source._baseline_teacher_manifest(dataset, teacher, seed, fold)
     baseline = loso_source._json(baseline_path)
     model_config = loso_source.validated_teacher_model_config(
@@ -409,7 +747,8 @@ def _build_teacher(dataset: str, teacher: str, model_config: dict[str, Any],
 
 def _export_standard(dataset: str, teacher: str, seed: int, fold: int,
                      root: Path, device_name: str, cell: Path, artifact: Path,
-                     manifest_path: Path, lock_path: Path) -> dict[str, Any]:
+                     manifest_path: Path, lock_path: Path,
+                     replace_existing: bool = False) -> dict[str, Any]:
     import torch
 
     student_data = loso_source.load_dataset(dataset, cache_root=root)
@@ -436,7 +775,8 @@ def _export_standard(dataset: str, teacher: str, seed: int, fold: int,
         raise ValueError(f'{dataset}/{teacher}: teacher source-train labels differ by trial UID')
 
     (baseline_path, baseline, checkpoint, checkpoint_sha,
-     model_config) = _load_checkpoint(dataset, teacher, seed, fold, teacher_data)
+     model_config) = _load_checkpoint(dataset, teacher, seed, fold,
+                                      teacher_data, device_name)
     teacher_manifest_sha = loso_source.sha256_file(baseline_path)
     if device_name.startswith('cuda:'):
         if not torch.cuda.is_available():
@@ -524,10 +864,18 @@ def _export_standard(dataset: str, teacher: str, seed: int, fold: int,
         'train_count': int(len(train_y)),
         'target_order': 'student_source_order_excluding_held_out_subject',
     }
-    _atomic_write_targets(cell, artifact, manifest_path, lock_path, arrays, metadata)
+    _, backups = _atomic_write_targets(
+        cell, artifact, manifest_path, lock_path, arrays, metadata,
+        replace_existing=replace_existing, retain_backup=True)
     del model, adapter
-    return loso_source.load_teacher_targets(
-        dataset, teacher, seed, fold, student_data, cache_root=root)
+    try:
+        bundle = loso_source.load_teacher_targets(
+            dataset, teacher, seed, fold, student_data, cache_root=root)
+    except BaseException:
+        _restore_target_backups(backups, artifact, manifest_path)
+        raise
+    _discard_target_backups(backups)
+    return bundle
 
 
 def _export_alexmi(teacher: str, seed: int, fold: int, device_name: str,
@@ -542,23 +890,47 @@ def _export_alexmi(teacher: str, seed: int, fold: int, device_name: str,
     # The public ensure path owns this cell's matching historical cache.lock.
     # Make the legacy exporter use that already-held lock rather than deadlock.
     device = None if device_name == 'cpu' else int(device_name.split(':', 1)[1])
+    teacher_data = loso_source.load_dataset('AlexMI', teacher)
+    from experiments.distill.loso_teacher_prepare import ensure_teacher_checkpoint
+
+    ensure_teacher_checkpoint('AlexMI', teacher, seed, fold, teacher_data, device_name)
     old_lock = historical._lock
     old_cache_root = historical.CACHE_ROOT
+    target_backups: dict[Path, Path] = {}
+    for path in (artifact, manifest_path):
+        if path.exists():
+            backup = cell / f'.{path.name}.backup-{os.getpid()}-{time.time_ns()}'
+            os.replace(path, backup)
+            target_backups[path] = backup
     historical._lock = lambda _cell, exclusive: nullcontext()
     historical.CACHE_ROOT = loso_alexmi.ALEXMI_TEACHER_TARGET_ROOT
+    torch_module = sys.modules.get('torch')
+    original_manual_seed_all = None
     try:
+        if torch_module is not None:
+            if device_name.startswith('cuda:'):
+                torch_module.cuda.set_device(torch_module.device(device_name))
+            original_manual_seed_all = torch_module.cuda.manual_seed_all
+            torch_module.cuda.manual_seed_all = lambda _seed: None
         historical.export(SimpleNamespace(
             teacher=teacher, datasets=['AlexMI'], seeds=[seed], folds=[fold], gpu=device))
+        student_data = loso_source.load_dataset('AlexMI', cache_root=None)
+        bundle = loso_source.load_teacher_targets('AlexMI', teacher, seed, fold, student_data)
+    except BaseException:
+        _restore_target_backups(target_backups, artifact, manifest_path)
+        raise
     finally:
         historical._lock = old_lock
         historical.CACHE_ROOT = old_cache_root
-    student_data = loso_source.load_dataset('AlexMI', cache_root=None)
-    return loso_source.load_teacher_targets('AlexMI', teacher, seed, fold, student_data)
+        if torch_module is not None and original_manual_seed_all is not None:
+            torch_module.cuda.manual_seed_all = original_manual_seed_all
+    _discard_target_backups(target_backups)
+    return bundle
 
 
 def _export_one(dataset: str, teacher: str, seed: int, fold: int,
                 cache_root: str | Path | None, device_name: str,
-                lock_held: bool) -> dict[str, Any]:
+                lock_held: bool, rebuild_invalid: bool = False) -> dict[str, Any]:
     dataset, teacher = str(dataset), str(teacher).lower()
     seed, fold = int(seed), int(fold)
     if dataset not in SUPPORTED_DATASETS or teacher not in SUPPORTED_TEACHERS:
@@ -567,25 +939,54 @@ def _export_one(dataset: str, teacher: str, seed: int, fold: int,
     cell, artifact, manifest_path, lock_path = _target_paths(
         dataset, teacher, seed, fold, root)
     if lock_held:
-        if _cache_state(cell, artifact, manifest_path, lock_path) == 'complete':
-            return _load_existing_targets(dataset, teacher, seed, fold, root)
-        return _export_dispatch(dataset, teacher, seed, fold, root, device_name,
-                                cell, artifact, manifest_path, lock_path)
+        return _export_or_reuse_one(
+            dataset, teacher, seed, fold, root, device_name,
+            cell, artifact, manifest_path, lock_path, rebuild_invalid)
     with _fold_lock(cell, lock_path):
-        if _cache_state(cell, artifact, manifest_path, lock_path) == 'complete':
-            return _load_existing_targets(dataset, teacher, seed, fold, root)
-        return _export_dispatch(dataset, teacher, seed, fold, root, device_name,
-                                cell, artifact, manifest_path, lock_path)
+        return _export_or_reuse_one(
+            dataset, teacher, seed, fold, root, device_name,
+            cell, artifact, manifest_path, lock_path, rebuild_invalid)
+
+
+def _export_or_reuse_one(dataset: str, teacher: str, seed: int, fold: int,
+                         root: Path, device_name: str, cell: Path,
+                         artifact: Path, manifest_path: Path, lock_path: Path,
+                         rebuild_invalid: bool) -> dict[str, Any]:
+    state = _cache_state(cell, artifact, manifest_path, lock_path)
+    if state == 'complete' or state == 'partial':
+        try:
+            bundle = _load_existing_targets(dataset, teacher, seed, fold, root)
+            _log_target_cache('reuse-in-exporter', dataset, teacher, seed, fold)
+            return bundle
+        except Exception as error:
+            if not _recoverable_cache_error(error):
+                raise
+            reason = f'{type(error).__name__}: {error}'
+            _log_target_cache('mismatch', dataset, teacher, seed, fold, reason)
+            # Input/source validation is separate from target validity. These
+            # reads make source failures visible before replacing old targets.
+            if dataset != 'AlexMI':
+                _clear_dataset_memory_cache(dataset, None)
+                loso_source.load_dataset(dataset, None, cache_root=root)
+                _load_teacher_inputs(dataset, teacher, root)
+            else:
+                loso_source.load_dataset(dataset, teacher, cache_root=root)
+    else:
+        _log_target_cache('missing', dataset, teacher, seed, fold,
+                          _cache_state_reason(cell, artifact, manifest_path))
+    return _export_dispatch(
+        dataset, teacher, seed, fold, root, device_name,
+        cell, artifact, manifest_path, lock_path,
+        replace_existing=(state != 'missing'))
 
 
 def _load_existing_targets(dataset: str, teacher: str, seed: int, fold: int,
                            root: Path) -> dict[str, Any]:
-    """Strictly reuse a complete pair, preparing only a wholly absent input cache."""
+    """Strictly load a target pair after validating the current source inputs."""
     student_data = loso_source.load_dataset(dataset, cache_root=root)
-    if (dataset != 'AlexMI'
-            and not (root / 'model_inputs' / dataset / teacher).exists()):
-        _ensure_teacher_input(dataset, teacher, root)
-        student_data = loso_source.load_dataset(dataset, cache_root=root)
+    if dataset != 'AlexMI':
+        _load_teacher_inputs(dataset, teacher, root)
+        _clear_dataset_memory_cache(dataset, teacher)
     return loso_source.load_teacher_targets(
         dataset, teacher, seed, fold, student_data, cache_root=root)
 
@@ -605,12 +1006,14 @@ def _prepare_input_one(dataset: str, teacher: str,
 
 def _export_dispatch(dataset: str, teacher: str, seed: int, fold: int,
                      root: Path, device_name: str, cell: Path, artifact: Path,
-                     manifest_path: Path, lock_path: Path) -> dict[str, Any]:
+                     manifest_path: Path, lock_path: Path,
+                     replace_existing: bool = False) -> dict[str, Any]:
     if dataset == 'AlexMI':
         return _export_alexmi(teacher, seed, fold, device_name,
                               cell, artifact, manifest_path, lock_path)
     return _export_standard(dataset, teacher, seed, fold, root, device_name,
-                            cell, artifact, manifest_path, lock_path)
+                            cell, artifact, manifest_path, lock_path,
+                            replace_existing=replace_existing)
 
 
 def _main(argv: list[str] | None = None) -> int:
@@ -618,10 +1021,11 @@ def _main(argv: list[str] | None = None) -> int:
     parser.add_argument('--export-one', nargs=4, metavar=('DATASET', 'TEACHER', 'SEED', 'FOLD'),
                         help='export exactly one completed baseline fold')
     parser.add_argument('--prepare-input', nargs=2, metavar=('DATASET', 'TEACHER'),
-                        help='prepare and verify one missing teacher model-input cache')
+                        help='strictly validate or rebuild one teacher model-input cache')
     parser.add_argument('--cache-root', type=Path, default=None)
     parser.add_argument('--device', default='cpu', help='cpu or cuda:N')
     parser.add_argument('--lock-held', action='store_true', help=argparse.SUPPRESS)
+    parser.add_argument('--rebuild-invalid', action='store_true', help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     if (args.export_one is None) == (args.prepare_input is None):
         parser.error('provide exactly one of --export-one or --prepare-input')
@@ -635,7 +1039,7 @@ def _main(argv: list[str] | None = None) -> int:
     seed, fold = int(seed), int(fold)
     _device_name(args.device)
     _export_one(dataset, teacher, seed, fold, args.cache_root,
-                args.device.lower(), args.lock_held)
+                args.device.lower(), args.lock_held, args.rebuild_invalid)
     return 0
 
 

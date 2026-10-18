@@ -14,7 +14,7 @@ from typing import Any
 
 import numpy as np
 
-from experiments.storage import resolve_local_file
+from experiments.storage import external_path, resolve_local_file
 
 
 ALEXMI_SOURCE_ROOT = Path('/data1/llx/AlexMI')
@@ -34,7 +34,6 @@ _PROJECT_RESULT_ROOT = Path(
 _DATASET = 'AlexMI'
 _MODELS = ('adfcnn', 'cbramod', 'eegnet', 'ifnet', 'mirepnet')
 _TEACHERS = ('cbramod', 'mirepnet')
-_SEEDS = (666, 667, 668)
 _LABELS = {'feet': 0, 'right_hand': 1}
 _SOURCE_FILES = ('X.npy', 'labels.npy', 'meta.csv')
 _PROTOCOL = 'loso_five_settings_canonical4s_v1'
@@ -365,11 +364,28 @@ def _validate_split_manifest(manifest: dict[str, Any], path: Path, model: str,
 def _find_baseline_manifest(model: str, seed: int, fold: int) -> tuple[Path, dict[str, Any]]:
     if model not in _MODELS:
         raise ValueError(f'unsupported AlexMI baseline model {model!r}; expected one of {_MODELS}')
-    if int(seed) not in _SEEDS or not 0 <= int(fold) < 8:
+    if int(seed) < 0 or not 0 <= int(fold) < 8:
         raise ValueError(f'unsupported AlexMI LOSO seed/fold: seed={seed}, fold={fold}')
-    model_root = ALEXMI_RESULT_ROOT / model
+    model_root = external_path(ALEXMI_RESULT_ROOT / model)
     if not model_root.is_dir():
         raise FileNotFoundError(f'AlexMI baseline result directory is missing: {model_root}')
+    # Prefer the current fixed-recipe cell for the two teacher models. Other
+    # models are read by historical result consumers too, but do not have an
+    # entry in this protocol's ``main_recipes`` map; keep their established
+    # manifest discovery path below.
+    if model in _TEACHERS:
+        from experiments.distill.loso_teacher_prepare import load_verified_alexmi_spec
+        from experiments.finetune import run_loso_five_datasets as protocol
+
+        spec, _snapshot = load_verified_alexmi_spec(protocol)
+        recipe = spec['main_recipes'][model]['name']
+        preferred = external_path(
+            model_root / recipe / f'subject_{int(fold) + 1:02d}'
+            / f'seed_{int(seed)}' / 'manifest.json')
+        if preferred.is_file():
+            manifest = _read_json(preferred)
+            _validate_manifest_identity(manifest, preferred, model, int(seed), int(fold))
+            return preferred, manifest
     candidates = []
     for candidate in model_root.rglob('manifest.json'):
         try:
@@ -471,11 +487,12 @@ def load_teacher_targets(teacher: str, seed: int, fold: int, data_obj: Any) -> d
     fold = int(fold)
     if teacher not in _TEACHERS:
         raise ValueError(f'AlexMI has no verified historical teacher targets for {teacher!r}')
-    if seed not in _SEEDS or not 0 <= fold < 8:
+    if seed < 0 or not 0 <= fold < 8:
         raise ValueError(f'unsupported AlexMI LOSO seed/fold: seed={seed}, fold={fold}')
 
-    manifest_path = (ALEXMI_TEACHER_TARGET_ROOT / teacher / f'subject_{fold + 1:02d}'
-                     / f'seed_{seed}' / 'cache_manifest.json')
+    manifest_path = Path(resolve_local_file(
+        ALEXMI_TEACHER_TARGET_ROOT / teacher / f'subject_{fold + 1:02d}'
+        / f'seed_{seed}' / 'cache_manifest.json'))
     artifact_path = manifest_path.parent / 'cache.npz'
     if not manifest_path.is_file() or not artifact_path.is_file():
         raise FileNotFoundError(
@@ -639,7 +656,7 @@ def load_baseline_prediction(model: str, seed: int, fold: int, split: str,
     fold = int(fold)
     if model not in _MODELS:
         raise ValueError(f'unsupported AlexMI baseline model {model!r}; expected one of {_MODELS}')
-    if seed not in _SEEDS or not 0 <= fold < 8:
+    if seed < 0 or not 0 <= fold < 8:
         raise ValueError(f'unsupported AlexMI LOSO seed/fold: seed={seed}, fold={fold}')
     if split != 'test':
         legacy_path = ALEXMI_ARTIFACT_ROOT / f'{model}_loso' / f'{fold}_{seed}_{split}.npz'

@@ -1,8 +1,12 @@
 import hashlib
+import io
 import json
 from pathlib import Path
 import random
+import subprocess
+import sys
 from types import SimpleNamespace
+from types import ModuleType
 
 import numpy as np
 import pytest
@@ -37,7 +41,8 @@ def test_ensure_returns_valid_cache_without_spawning(monkeypatch, tmp_path):
     manifest.write_text('{}')
     bundle = {'logits': np.ones((2, 2), dtype=np.float32)}
     monkeypatch.setattr(cache.loso_source, 'load_teacher_targets', _loader_for(paths, bundle))
-    monkeypatch.setattr(cache.subprocess, 'run', lambda *args, **kwargs: pytest.fail('unexpected export'))
+    monkeypatch.setattr(cache.subprocess, 'Popen',
+                        lambda *args, **kwargs: pytest.fail('unexpected export'))
 
     py_state = random.getstate()
     np_state = np.random.get_state()
@@ -61,55 +66,224 @@ def test_missing_pair_runs_one_teacher_env_export_then_strictly_reloads(
     monkeypatch.setattr(cache, '_teacher_python', lambda teacher, dataset: Path('/envs/cbramod/bin/python'))
     captured = {}
 
-    def fake_run(command, cwd, check):
-        captured.update(command=command, cwd=cwd, check=check)
-        artifact.parent.mkdir(parents=True, exist_ok=True)
-        artifact.write_bytes(b'produced target')
-        manifest.write_text('{"status":"complete"}')
+    def fake_popen(command, cwd, stdout, stderr, text, bufsize):
+        captured.setdefault('commands', []).append(command)
+        captured['cwd'] = cwd
+        captured['streaming'] = (stdout, stderr, text, bufsize)
+        if '--export-one' in command:
+            artifact.parent.mkdir(parents=True, exist_ok=True)
+            artifact.write_bytes(b'produced target')
+            manifest.write_text('{"status":"complete"}')
+        return SimpleNamespace(stdout=io.StringIO('[child] complete\n'), wait=lambda: 0)
 
-    monkeypatch.setattr(cache.subprocess, 'run', fake_run)
+    monkeypatch.setattr(cache.subprocess, 'Popen', fake_popen)
     result = cache.ensure_teacher_targets(
         'BNCI2014001', 'cbramod', 0, 0, object(), cache_root=root, gpu=None)
 
     assert result is bundle
-    assert captured['command'][0] == '/envs/cbramod/bin/python'
-    assert '--export-one' in captured['command']
-    assert captured['command'][captured['command'].index('--device') + 1] == 'cpu'
-    assert '--lock-held' in captured['command']
-    assert captured['check'] is True
+    export_command = next(cmd for cmd in captured['commands'] if '--export-one' in cmd)
+    assert export_command[0] == '/envs/cbramod/bin/python'
+    assert export_command[export_command.index('--device') + 1] == 'cpu'
+    assert '--lock-held' in export_command
+    assert '--rebuild-invalid' in export_command
+    assert captured['streaming'] == (subprocess.PIPE, subprocess.STDOUT, True, 1)
     assert artifact.is_file() and manifest.is_file()
     assert cell.joinpath('.lock').is_file()
 
 
-def test_existing_invalid_or_partial_cache_is_never_overwritten(monkeypatch, tmp_path):
+def test_valid_cache_created_by_waiting_writer_is_reused_after_lock(monkeypatch, tmp_path):
+    root, _ = _paths(monkeypatch, tmp_path)
+    bundle = {'created_by_other_writer': True}
+    calls = {'count': 0}
+
+    def strict_load(*args, **kwargs):
+        calls['count'] += 1
+        if calls['count'] == 1:
+            raise FileNotFoundError('cache is not present before lock')
+        return bundle
+
+    monkeypatch.setattr(cache.loso_source, 'load_teacher_targets', strict_load)
+    monkeypatch.setattr(cache.subprocess, 'Popen',
+                        lambda *args, **kwargs: pytest.fail('valid cache must be reused'))
+    assert cache.ensure_teacher_targets(
+        'BNCI2014001', 'cbramod', 0, 0, object(), cache_root=root) is bundle
+    assert calls['count'] == 2
+
+
+@pytest.mark.parametrize('failure', [
+    ValueError('teacher target identity mismatch'),
+    __import__('zipfile').BadZipFile('truncated npz'),
+    EOFError('truncated archive'),
+    OSError('target read failed'),
+])
+def test_invalid_complete_cache_is_rebuilt_after_lock(monkeypatch, tmp_path, failure):
     root, paths = _paths(monkeypatch, tmp_path)
     _, artifact, manifest, _ = paths
     artifact.parent.mkdir(parents=True)
-    artifact.write_bytes(b'preserve me')
+    artifact.write_bytes(b'corrupt target')
     manifest.write_text('{"wrong":"identity"}')
     (root / 'model_inputs' / 'BNCI2014001' / 'cbramod').mkdir(parents=True)
+    bundle = {'rebuilt': True}
 
-    def invalid(*args, **kwargs):
-        raise ValueError('teacher source identity mismatch')
+    def strict_load(*args, **kwargs):
+        if artifact.read_bytes() == b'rebuilt target':
+            return bundle
+        raise failure
 
-    monkeypatch.setattr(cache.loso_source, 'load_teacher_targets', invalid)
-    monkeypatch.setattr(cache.subprocess, 'run', lambda *args, **kwargs: pytest.fail('must not export'))
-    with pytest.raises(ValueError, match='identity mismatch'):
-        cache.ensure_teacher_targets(
-            'BNCI2014001', 'cbramod', 0, 0, object(), cache_root=root)
-    assert artifact.read_bytes() == b'preserve me'
-    assert manifest.read_text() == '{"wrong":"identity"}'
+    monkeypatch.setattr(cache.loso_source, 'load_teacher_targets', strict_load)
+    monkeypatch.setattr(cache, '_teacher_python', lambda teacher, dataset: Path('/envs/cbramod/bin/python'))
+    exported = {'count': 0}
 
-    manifest.unlink()
+    def fake_popen(command, **kwargs):
+        if '--export-one' in command:
+            exported['count'] += 1
+            artifact.write_bytes(b'rebuilt target')
+            manifest.write_text('{"status":"complete"}')
+        return SimpleNamespace(stdout=io.StringIO('rebuild line\n'), wait=lambda: 0)
 
-    def missing(*args, **kwargs):
+    monkeypatch.setattr(cache.subprocess, 'Popen', fake_popen)
+    result = cache.ensure_teacher_targets(
+        'BNCI2014001', 'cbramod', 0, 0, object(), cache_root=root)
+
+    assert result is bundle
+    assert exported['count'] == 1
+    assert artifact.read_bytes() == b'rebuilt target'
+    assert json.loads(manifest.read_text()) == {'status': 'complete'}
+
+
+@pytest.mark.parametrize(('payload', 'shape_error'), [
+    ('[]', TypeError('manifest must be a mapping')),
+    ('null', AttributeError("'NoneType' object has no attribute 'get'")),
+])
+def test_json_non_object_target_manifest_is_rebuilt(monkeypatch, tmp_path,
+                                                    payload, shape_error):
+    root, paths = _paths(monkeypatch, tmp_path)
+    _, artifact, manifest, _ = paths
+    artifact.parent.mkdir(parents=True)
+    artifact.write_bytes(b'old target')
+    manifest.write_text(payload)
+    bundle = {'rebuilt': True}
+
+    def strict_load(*_args, **_kwargs):
+        value = json.loads(manifest.read_text())
+        if not isinstance(value, dict):
+            raise shape_error
+        if artifact.read_bytes() == b'rebuilt target':
+            return bundle
+        raise ValueError('target pair is not complete')
+
+    monkeypatch.setattr(cache.loso_source, 'load_teacher_targets', strict_load)
+    monkeypatch.setattr(cache, '_run_teacher_input_prepare', lambda *_args: None)
+    monkeypatch.setattr(cache, '_teacher_python', lambda *_args: Path('/envs/cbramod/bin/python'))
+
+    def fake_popen(command, **kwargs):
+        if '--export-one' in command:
+            artifact.write_bytes(b'rebuilt target')
+            manifest.write_text('{"status":"complete"}')
+        return SimpleNamespace(stdout=io.StringIO(''), wait=lambda: 0)
+
+    monkeypatch.setattr(cache.subprocess, 'Popen', fake_popen)
+    assert cache.ensure_teacher_targets(
+        'BNCI2014001', 'cbramod', 0, 0, object(), cache_root=root) is bundle
+    assert json.loads(manifest.read_text()) == {'status': 'complete'}
+
+
+def test_partial_target_pair_is_rebuilt(monkeypatch, tmp_path):
+    root, paths = _paths(monkeypatch, tmp_path)
+    _, artifact, manifest, _ = paths
+    artifact.parent.mkdir(parents=True)
+    artifact.write_bytes(b'old partial target')
+    bundle = {'rebuilt': True}
+
+    def strict_load(*args, **kwargs):
+        if artifact.read_bytes() == b'rebuilt target' and manifest.exists():
+            return bundle
         raise FileNotFoundError('target manifest missing')
 
-    monkeypatch.setattr(cache.loso_source, 'load_teacher_targets', missing)
-    with pytest.raises(RuntimeError, match='incomplete teacher-target cache'):
+    monkeypatch.setattr(cache.loso_source, 'load_teacher_targets', strict_load)
+    monkeypatch.setattr(cache, '_teacher_python', lambda teacher, dataset: Path('/envs/cbramod/bin/python'))
+
+    def fake_popen(command, **kwargs):
+        if '--export-one' in command:
+            artifact.write_bytes(b'rebuilt target')
+            manifest.write_text('{"status":"complete"}')
+        return SimpleNamespace(stdout=io.StringIO(''), wait=lambda: 0)
+
+    monkeypatch.setattr(cache.subprocess, 'Popen', fake_popen)
+    assert cache.ensure_teacher_targets(
+        'BNCI2014001', 'cbramod', 0, 0, object(), cache_root=root) is bundle
+
+
+def test_failed_export_leaves_old_complete_target_pair(monkeypatch, tmp_path):
+    root, paths = _paths(monkeypatch, tmp_path)
+    _, artifact, manifest, _ = paths
+    artifact.parent.mkdir(parents=True)
+    artifact.write_bytes(b'old complete cache')
+    manifest.write_text('{"old":"manifest"}')
+    monkeypatch.setattr(cache.loso_source, 'load_teacher_targets',
+                        lambda *args, **kwargs: (_ for _ in ()).throw(
+                            ValueError('invalid cache hash')))
+    monkeypatch.setattr(cache, '_teacher_python', lambda teacher, dataset: Path('/envs/cbramod/bin/python'))
+
+    def fake_popen(command, **kwargs):
+        code = 3 if '--export-one' in command else 0
+        return SimpleNamespace(stdout=io.StringIO('child failure\n'), wait=lambda: code)
+
+    monkeypatch.setattr(cache.subprocess, 'Popen', fake_popen)
+    with pytest.raises(subprocess.CalledProcessError):
         cache.ensure_teacher_targets(
             'BNCI2014001', 'cbramod', 0, 0, object(), cache_root=root)
-    assert artifact.read_bytes() == b'preserve me'
+    assert artifact.read_bytes() == b'old complete cache'
+    assert manifest.read_text() == '{"old":"manifest"}'
+
+
+@pytest.mark.parametrize('returncode', [0, 7])
+def test_streaming_subprocess_forwards_child_output_and_checks_status(
+        monkeypatch, capsys, returncode):
+    monkeypatch.setattr(
+        cache.subprocess, 'Popen',
+        lambda *args, **kwargs: SimpleNamespace(
+            stdout=io.StringIO('[child] visible\n'), wait=lambda: returncode))
+
+    if returncode:
+        with pytest.raises(subprocess.CalledProcessError) as raised:
+            cache._run_streaming_subprocess(['/env/python', '-m', 'producer'], Path('/repo'))
+        assert raised.value.returncode == returncode
+    else:
+        cache._run_streaming_subprocess(['/env/python', '-m', 'producer'], Path('/repo'))
+    assert '[child] visible\n' in capsys.readouterr().out
+
+
+def test_checkpoint_prepare_runs_before_strict_sha_validation(monkeypatch, tmp_path):
+    baseline_path = tmp_path / 'manifest.json'
+    checkpoint = tmp_path / 'final_model.pt'
+    checkpoint.write_bytes(b'checkpoint')
+    baseline_path.write_text('{}')
+    baseline = {'final_model_sha256': hashlib.sha256(b'checkpoint').hexdigest()}
+    teacher_data = object()
+    calls = []
+    prepare = ModuleType('experiments.distill.loso_teacher_prepare')
+    prepare.ensure_teacher_checkpoint = lambda *args: calls.append(args)
+    monkeypatch.setitem(sys.modules, prepare.__name__, prepare)
+    monkeypatch.setattr(cache.loso_source, '_baseline_teacher_manifest',
+                        lambda *args: baseline_path)
+    monkeypatch.setattr(cache.loso_source, '_json', lambda path: baseline)
+    config = {'validated': True}
+    monkeypatch.setattr(cache.loso_source, 'validated_teacher_model_config',
+                        lambda *args: config)
+
+    result = cache._load_checkpoint(
+        'BNCI2014004', 'mirepnet', 666, 1, teacher_data, 'cpu')
+
+    assert calls == [('BNCI2014004', 'mirepnet', 666, 1, teacher_data, 'cpu')]
+    assert result == (baseline_path, baseline, checkpoint,
+                      hashlib.sha256(b'checkpoint').hexdigest(), config)
+
+    baseline['final_model_sha256'] = 'wrong-sha'
+    with pytest.raises(ValueError, match='SHA-256 differs'):
+        cache._load_checkpoint(
+            'BNCI2014004', 'mirepnet', 666, 1, teacher_data, 'cpu')
+    assert len(calls) == 2
 
 
 @pytest.mark.parametrize('lock_held', [False, True])
@@ -126,6 +300,9 @@ def test_export_one_strictly_reuses_complete_cache(monkeypatch, tmp_path, lock_h
     bundle = {'validated': True}
     monkeypatch.setattr(cache.loso_source, 'load_dataset',
                         lambda dataset, model=None, cache_root=None: student_data)
+    monkeypatch.setattr(cache, '_load_teacher_inputs',
+                        lambda dataset, model, root: SimpleNamespace(
+                            input_manifest={'files': {}}, input_manifest_sha256='input'))
     monkeypatch.setattr(cache.loso_source, 'load_teacher_targets',
                         lambda *args, **kwargs: bundle)
     monkeypatch.setattr(cache, '_export_dispatch',
@@ -244,9 +421,10 @@ def test_export_standard_forwards_only_training_uids_in_student_order(monkeypatc
                         lambda *args: (FakeModel(), None))
     saved = {}
 
-    def save_pair(cell, artifact, manifest_path, lock_path, arrays, metadata):
+    def save_pair(cell, artifact, manifest_path, lock_path, arrays, metadata,
+                  **kwargs):
         saved.update(arrays=arrays, metadata=metadata)
-        return metadata
+        return metadata, {}
 
     monkeypatch.setattr(cache, '_atomic_write_targets', save_pair)
     expected_bundle = {'validated': True}

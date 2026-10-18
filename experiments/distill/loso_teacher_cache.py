@@ -226,7 +226,9 @@ def _load_cache_unlocked(teacher, dataset, fold, seed, expected_uid, expected_y)
     _, cp, mp = cache_paths(teacher, dataset, fold, seed)
     if not cp.is_file() or not mp.is_file():
         raise FileNotFoundError(f'teacher cache is not complete: {cp.parent}')
-    spec, snapshot = protocol._load_spec()
+    from experiments.distill.loso_teacher_prepare import load_verified_alexmi_spec
+
+    spec, snapshot = load_verified_alexmi_spec(protocol)
     uid, y = _expected_arrays(expected_uid, expected_y, fold, len(spec['datasets'][dataset]['classes']))
     context, _ = _teacher_context(teacher, dataset, fold, seed, uid, y, spec, snapshot)
     metadata = json.loads(resolve_local_file(mp).read_text())
@@ -287,7 +289,9 @@ def _infer_preprocessed(adapter, model, x):
 
 
 def export(args):
-    spec, snapshot = protocol._load_spec()
+    from experiments.distill.loso_teacher_prepare import load_verified_alexmi_spec
+
+    spec, snapshot = load_verified_alexmi_spec(protocol)
     device = f'cuda:{args.gpu}' if args.gpu is not None else 'cpu'
     if args.gpu is not None and not torch.cuda.is_available():
         raise RuntimeError('--gpu specified but CUDA is unavailable')

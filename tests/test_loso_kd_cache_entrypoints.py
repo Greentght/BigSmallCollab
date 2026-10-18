@@ -55,6 +55,30 @@ def test_read_only_flag_uses_strict_loader_without_importing_producer(monkeypatc
                       {"student_data": student_data, "cache_root": "/cache"})]
 
 
+def test_student_input_cache_helper_is_automatic_by_default_and_read_only_when_flagged(
+        monkeypatch):
+    calls = []
+    producer = ModuleType("experiments.distill.loso_target_cache")
+    producer.load_or_prepare_loso_dataset = lambda *args, **kwargs: (
+        calls.append((args, kwargs)) or {"prepared": True})
+    monkeypatch.setitem(sys.modules, producer.__name__, producer)
+    direct_calls = []
+    monkeypatch.setattr(
+        loso_source, "load_dataset",
+        lambda *args, **kwargs: direct_calls.append((args, kwargs)) or {"readonly": True})
+
+    prepared = run_distill._load_or_prepare_loso_dataset(
+        "BNCI2015001", "eegnet", "/cache")
+    readonly = run_distill._load_or_prepare_loso_dataset(
+        "BNCI2015001", "eegnet", "/cache", no_auto_teacher_cache=True)
+
+    assert prepared == {"prepared": True}
+    assert calls == [(("BNCI2015001", "eegnet"),
+                      {"cache_root": "/cache", "auto_prepare": True})]
+    assert readonly == {"readonly": True}
+    assert direct_calls == [(("BNCI2015001", "eegnet"), {"cache_root": "/cache"})]
+
+
 def test_config_cli_passes_gpu_and_no_auto_flag_into_runner_namespace():
     args = config_runner_impl.parse_args([
         "--config", "unused.yaml", "--teacher", "cbramod",
@@ -94,6 +118,10 @@ def test_config_spec_forwards_cache_policy_and_selected_gpu(monkeypatch):
                           "seeds": [666], "val_split": 0.2})
     monkeypatch.setattr(loso_source, "load_dataset",
                         lambda *_args, **_kwargs: student_data)
+    student_loads = []
+    monkeypatch.setattr(
+        config_runner_impl.legacy, "_load_or_prepare_loso_dataset",
+        lambda *args, **kwargs: student_loads.append((args, kwargs)) or student_data)
     monkeypatch.setattr(config_runner_impl.legacy, "_expected_split_policy",
                         lambda _protocol: "fixture-policy")
     calls = []
@@ -128,6 +156,7 @@ def test_config_spec_forwards_cache_policy_and_selected_gpu(monkeypatch):
     assert len(rows) == 1
     assert calls[0][1]["no_auto_teacher_cache"] is True
     assert calls[0][1]["gpu"] == 2
+    assert student_loads[0][1]["no_auto_teacher_cache"] is True
 
 
 def test_model_filter_keeps_requested_pair_and_one_variant_control():
@@ -172,7 +201,7 @@ def test_model_filter_keeps_requested_pair_and_one_variant_control():
             loaded, teachers=["mirepnet"], students=["eegnet"])
 
 
-def test_resume_rejects_regenerated_target_with_different_manifest(monkeypatch):
+def test_resume_reuses_completed_row_after_cache_manifest_regeneration(monkeypatch, capsys):
     student_data = SimpleNamespace(
         source_manifest_sha256="source-sha",
         input_manifest_sha256="student-input-sha",
@@ -186,6 +215,9 @@ def test_resume_rejects_regenerated_target_with_different_manifest(monkeypatch):
     }
     monkeypatch.setattr(
         loso_source, "load_dataset", lambda *_args, **_kwargs: student_data)
+    monkeypatch.setattr(
+        config_runner_impl.legacy, "_load_or_prepare_loso_dataset",
+        lambda *_args, **_kwargs: student_data)
     monkeypatch.setattr(
         config_runner_impl.legacy.config, "load_dataset_config",
         lambda _dataset: {"num_subjects": 1, "seeds": [666],
@@ -213,10 +245,56 @@ def test_resume_rejects_regenerated_target_with_different_manifest(monkeypatch):
     }
     row_key = config_runner_impl._row_key(row)
 
-    with pytest.raises(ValueError, match="teacher_target_manifest_sha256"):
-        config_runner_impl._verify_resume_data_identity(
-            [spec], [row], {row_key}, gpu=2)
+    config_runner_impl._verify_resume_data_identity([spec], [row], {row_key}, gpu=2)
     assert ensure_calls[0][1]["gpu"] == 2
+    assert "cache regenerated; teacher/data identity unchanged; reuse completed result" \
+        in capsys.readouterr().out
+    assert row["teacher_target_manifest_sha256"] == "old-target-sha"
+
+
+def test_resume_still_rejects_changed_teacher_checkpoint_after_cache_rebuild(monkeypatch,
+                                                                             capsys):
+    student_data = SimpleNamespace(
+        source_manifest_sha256="source-sha",
+        input_manifest_sha256="student-input-sha",
+        identity={"input_policy_sha256": "student-policy-sha"},
+    )
+    targets = {
+        "_input_manifest_sha256": "teacher-input-sha",
+        "_input_policy_sha256": "teacher-policy-sha",
+        "_manifest_sha256": "new-target-sha",
+        "_manifest": {"teacher_checkpoint_sha256": "changed-checkpoint-sha"},
+    }
+    monkeypatch.setattr(
+        config_runner_impl.legacy, "_load_or_prepare_loso_dataset",
+        lambda *_args, **_kwargs: student_data)
+    monkeypatch.setattr(
+        config_runner_impl.legacy.config, "load_dataset_config",
+        lambda _dataset: {"num_subjects": 1, "seeds": [666],
+                          "loso": {"seeds": [666]}})
+    monkeypatch.setattr(
+        config_runner_impl.legacy, "_load_or_ensure_loso_teacher_targets",
+        lambda *args, **kwargs: targets)
+    spec = {
+        "dataset": "BNCI2015001", "protocol": "loso", "subjects": [0],
+        "seeds": [666], "methods": ["KD_all"], "teacher": "cbramod",
+        "student": "eegnet", "artifact_root": "/cache", "run_id": "run",
+    }
+    row = {
+        "run_id": "run", "dataset": "BNCI2015001", "teacher": "cbramod",
+        "student": "eegnet", "key": 0, "seed": 666, "method": "KD_all",
+        "failure_status": "complete", "source_manifest_sha256": "source-sha",
+        "student_input_manifest_sha256": "student-input-sha",
+        "student_input_policy_sha256": "student-policy-sha",
+        "teacher_input_manifest_sha256": "teacher-input-sha",
+        "teacher_input_policy_sha256": "teacher-policy-sha",
+        "teacher_target_manifest_sha256": "old-target-sha",
+        "teacher_checkpoint_sha256": "checkpoint-sha",
+    }
+    row_key = config_runner_impl._row_key(row)
+    with pytest.raises(ValueError, match="teacher_checkpoint_sha256"):
+        config_runner_impl._verify_resume_data_identity([spec], [row], {row_key}, gpu=2)
+    assert "identity unchanged" not in capsys.readouterr().out
 
 
 def test_config_runner_applies_default_variants_without_runtime_filters(

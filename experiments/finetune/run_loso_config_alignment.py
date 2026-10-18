@@ -103,26 +103,34 @@ def state_dict_sha256(state: dict) -> str:
     return h.hexdigest()
 
 
-def set_seed(seed: int) -> None:
+def set_seed(seed: int, device: torch.device | None = None) -> None:
     os.environ['PYTHONHASHSEED'] = str(seed)
     random.seed(seed)
     np.random.seed(seed)
-    torch.manual_seed(seed)
-    if torch.cuda.is_available():
+    # Seed the CPU generator directly so torch.manual_seed does not seed every
+    # visible CUDA device as a side effect.
+    torch.random.default_generator.manual_seed(seed)
+    use_cuda = torch.cuda.is_available() and (device is None or device.type == 'cuda')
+    if use_cuda:
+        if device is not None and device.index is not None:
+            torch.cuda.set_device(device)
         torch.cuda.manual_seed(seed)
-        torch.cuda.manual_seed_all(seed)
         torch.backends.cudnn.deterministic = True
         torch.backends.cudnn.benchmark = False
 
 
 def capture_rng(device: torch.device | None = None) -> dict:
-    current_cuda = (torch.cuda.get_rng_state(device).cpu()
-                    if torch.cuda.is_available() and device is not None else None)
+    use_cuda = (torch.cuda.is_available() and device is not None
+                and device.type == 'cuda')
+    current_cuda = torch.cuda.get_rng_state(device).cpu() if use_cuda else None
     return {
         'python': random.getstate(), 'numpy': np.random.get_state(),
         'torch_cpu': torch.get_rng_state(),
-        'torch_cuda': torch.cuda.get_rng_state_all() if torch.cuda.is_available() else [],
+        # A seed worker owns one requested CUDA device. Capturing all visible
+        # devices initializes unrelated GPUs and is unnecessary for resume.
+        'torch_cuda': [],
         'torch_cuda_current': current_cuda,
+        'torch_cuda_device_index': (device.index if use_cuda else None),
     }
 
 
@@ -130,11 +138,24 @@ def restore_rng(state: dict, device: torch.device | None = None) -> None:
     random.setstate(state['python'])
     np.random.set_state(state['numpy'])
     torch.set_rng_state(state['torch_cpu'].cpu())
-    if (torch.cuda.is_available() and device is not None
+    use_cuda = (torch.cuda.is_available() and device is not None
+                and device.type == 'cuda')
+    if (use_cuda
             and state.get('torch_cuda_current') is not None):
         torch.cuda.set_rng_state(state['torch_cuda_current'].cpu(), device=device)
-    elif torch.cuda.is_available() and state.get('torch_cuda'):
-        torch.cuda.set_rng_state_all([x.cpu() for x in state['torch_cuda']])
+    elif use_cuda and state.get('torch_cuda'):
+        # Older completion records stored every device state. Restore only the
+        # requested device to avoid initializing or changing unrelated GPUs.
+        states = state['torch_cuda']
+        index = device.index if device.index is not None else torch.cuda.current_device()
+        if len(states) == 1:
+            selected = states[0]
+        elif index < len(states):
+            selected = states[index]
+        else:
+            raise RuntimeError(
+                f'checkpoint has {len(states)} CUDA RNG states but requested device index is {index}')
+        torch.cuda.set_rng_state(selected.cpu(), device=device)
 
 
 def canonical_dataset(value: str) -> str:
@@ -416,6 +437,24 @@ def completed_fold(output: Path, identity: dict, epochs: int) -> tuple[dict, dic
 
 def result_path(base: Path, subject: int) -> Path:
     return base / f'subject_{subject + 1:02d}'
+
+
+def wideband_stream_identity(profile: str, dataset: str, model: str, seed: int,
+                             variant: str, cfg: dict, input_shape: list[int],
+                             num_classes: int) -> dict:
+    """Return the common per-fold identity for one ordered wideband seed stream."""
+    active_manifest = input_dir(profile, dataset, model, variant) / 'manifest.json'
+    pretrained_path = pretrained_checkpoint(model)
+    return {
+        'profile': profile, 'dataset': dataset, 'model': model,
+        'seed': int(seed), 'variant': variant,
+        'input_manifest_sha256': sha256_file(active_manifest),
+        'pretrained_checkpoint_sha256': (
+            sha256_file(pretrained_path) if pretrained_path else None),
+        'input_shape': list(input_shape), 'num_classes': int(num_classes),
+        'config_fingerprint': hashlib.sha256(
+            json.dumps(cfg, sort_keys=True).encode()).hexdigest(),
+    }
 
 
 def set_status(folder: Path, status: dict) -> None:
@@ -755,7 +794,7 @@ def train_one_fold(profile: str, dataset: str, model_name: str, seed: int,
         'rng_scope_note': (
             'dataset/model/seed stream continues over sorted folds; one unused model build and '
             'per-epoch sequential test-loader base-seed draw emulated; final-only evaluation; '
-            'new seeds 0/1/2 are not paired with older 666/667/668 runs'
+            'non-negative seed keys are independent streams and are not paired across seed values'
             if profile == WIDEBAND_PROFILE else
             'dataset/model/seed stream continues over sorted folds; reference per-epoch test loader '
             'base-seed draw emulated; only final test metrics are evaluated and used'
@@ -804,7 +843,8 @@ def write_seed_summary(base: Path, results: list[dict], expected_folds: int) -> 
     os.replace(tmp, base / 'seed_summary.json')
 
 
-def run_worker(args, spec: dict, device: torch.device) -> None:
+def run_worker(args, spec: dict, device: torch.device,
+               stop_after_subject: int | None = None) -> None:
     dataset, model = canonical_dataset(args.dataset), args.model
     cfg = profile_config(args.profile, model, dataset, spec)
     variants = (['legacy_cache', 'rebuilt_source'] if args.profile == 'source_bridge'
@@ -817,7 +857,7 @@ def run_worker(args, spec: dict, device: torch.device) -> None:
     root = RESULT_ROOT / args.profile / dataset / model / f'seed_{args.seed}'
     # Match run_finetuning.run_single_seed: one seed, a throwaway model build,
     # then a fresh model at the start of every ordered LOSO split.
-    set_seed(args.seed)
+    set_seed(args.seed, device)
     x0, y0, s0, _, _ = load_fold_data(args.profile, dataset, model, variants[0])
     active_input_shape = list(x0.shape[1:])
     active_num_classes = int(len(np.unique(y0)))
@@ -826,7 +866,14 @@ def run_worker(args, spec: dict, device: torch.device) -> None:
     dummy.to(device)
     del dummy
     del x0, y0, s0
-    subjects = range(int(spec['datasets'][dataset]['subjects']))
+    all_subjects = list(range(int(spec['datasets'][dataset]['subjects'])))
+    if stop_after_subject is not None:
+        if not 0 <= int(stop_after_subject) < len(all_subjects):
+            raise ValueError(
+                f'stop_after_subject must be zero-based in [0,{len(all_subjects)-1}]')
+        subjects = all_subjects[:int(stop_after_subject) + 1]
+    else:
+        subjects = all_subjects
     if args.profile == 'source_bridge':
         # The bridge intentionally resets the stream per held-out fold and per
         # source variant, allowing one-to-one paired initialization/batches.
@@ -899,17 +946,9 @@ def run_worker(args, spec: dict, device: torch.device) -> None:
     active_cfg = dict(cfg)
     if args.epochs_override is not None:
         active_cfg['epochs'] = int(args.epochs_override)
-    active_manifest = input_dir(args.profile, dataset, model, variants[0]) / 'manifest.json'
-    pretrained_path = pretrained_checkpoint(model)
-    stream_identity = {
-        'profile': args.profile, 'dataset': dataset, 'model': model,
-        'seed': args.seed, 'variant': variants[0],
-        'input_manifest_sha256': sha256_file(active_manifest),
-        'pretrained_checkpoint_sha256': sha256_file(pretrained_path) if pretrained_path else None,
-        'input_shape': active_input_shape, 'num_classes': active_num_classes,
-        'config_fingerprint': hashlib.sha256(
-            json.dumps(active_cfg, sort_keys=True).encode()).hexdigest(),
-    }
+    stream_identity = wideband_stream_identity(
+        args.profile, dataset, model, args.seed, variants[0], active_cfg,
+        active_input_shape, active_num_classes)
     for subject in expected_subjects:
         out = result_path(root, subject)
         ckpt = out / 'training_state.pt'
@@ -930,9 +969,22 @@ def run_worker(args, spec: dict, device: torch.device) -> None:
         break
     if restore_from is not None:
         restore_rng(restore_from, device)
+    if stop_after_subject is not None:
+        print(
+            f'[teacher-prepare] ordered stream {dataset}/{model}/seed_{args.seed}: '
+            f'requested through S{int(stop_after_subject)+1:02d}; '
+            f'reused completed prefix={len(subject_outputs)}; '
+            f'folds to train={len(pending)}; epochs/fold={active_cfg["epochs"]}; '
+            f'epochs to train={len(pending) * int(active_cfg["epochs"])}; '
+            f'output={root}', flush=True)
     if not pending:
-        write_seed_summary(root, subject_outputs, len(expected_subjects))
-        print(f'[complete] {args.profile}/{dataset}/{model}/seed_{args.seed} already complete', flush=True)
+        write_seed_summary(root, subject_outputs, len(all_subjects))
+        if stop_after_subject is not None and int(stop_after_subject) + 1 < len(all_subjects):
+            print(f'[prefix-complete] {args.profile}/{dataset}/{model}/seed_{args.seed} '
+                  f'verified through S{int(stop_after_subject)+1:02d}; '
+                  f'seed total remains {len(all_subjects)} folds', flush=True)
+        else:
+            print(f'[complete] {args.profile}/{dataset}/{model}/seed_{args.seed} already complete', flush=True)
         return
 
     for subject in pending:
@@ -956,7 +1008,7 @@ def run_worker(args, spec: dict, device: torch.device) -> None:
               f"subject={subject + 1}/{len(expected_subjects)} "
               f"acc={variants_results[-1]['metrics']['accuracy']:.4f} "
               f"elapsed={variants_results[-1]['wall_seconds'] / 60:.1f}min", flush=True)
-        write_seed_summary(root, subject_outputs, len(expected_subjects))
+        write_seed_summary(root, subject_outputs, len(all_subjects))
 
 
 def main() -> None:
@@ -986,14 +1038,14 @@ def main() -> None:
         raise SystemExit('CUDA is unavailable; refusing silent CPU fallback')
     if args.gpu >= torch.cuda.device_count():
         raise SystemExit(f'GPU index {args.gpu} outside visible range 0..{torch.cuda.device_count()-1}')
+    if args.seed < 0:
+        raise SystemExit('--seed must be non-negative')
     canonical = canonical_dataset(args.dataset)
     if args.profile == WIDEBAND_PROFILE:
         if canonical not in ('BNCI2014001', 'BNCI2014001-4'):
             raise SystemExit('wideband_npy_v3 supports only 001 and 001-4')
         if args.model not in ('mirepnet', 'cbramod'):
             raise SystemExit('wideband_npy_v3 supports only MIRepNet and CBraMod')
-        if args.seed not in (0, 1, 2):
-            raise SystemExit('wideband_npy_v3 uses seeds 0, 1, 2')
     lock_dir = RESULT_ROOT / args.profile / canonical / args.model / f'seed_{args.seed}'
     lock_dir.mkdir(parents=True, exist_ok=True)
     lock_handle = (lock_dir / 'worker.lock').open('a')

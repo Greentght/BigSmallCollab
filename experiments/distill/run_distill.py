@@ -1,10 +1,11 @@
 """Unified big-to-small distillation runner.
 
 Runs CE baseline and selected distillation methods from teacher artifacts. For
-LOSO, target caches are strictly validated and reused by default; if a valid
-target cache is genuinely missing, a producer subprocess in the teacher's
-environment exports it without training the teacher. The main runner still
-uses the student environment, usually ``mirepnet`` for the small CNNs.
+LOSO, target caches are strictly validated and reused when valid. Missing,
+partial, or mismatched derived caches are repaired under fold/model-input locks;
+the teacher checkpoint is reused when its provenance is valid, or prepared from
+the matching seed/fold when absent. The main runner still uses the student
+environment, usually ``mirepnet`` for the small CNNs.
 
 The direct CLI defaults to ``KD_all``. Supported methods (``--methods all``
 selects the full legacy matrix):
@@ -216,10 +217,21 @@ def _expected_split_policy(protocol):
     raise ValueError(f'unsupported protocol {protocol!r}')
 
 
+def _load_or_prepare_loso_dataset(dataset, student, cache_root,
+                                  no_auto_teacher_cache=False):
+    """Load LOSO student inputs, repairing registered caches unless read-only."""
+    if no_auto_teacher_cache:
+        return loso_source.load_dataset(dataset, student, cache_root=cache_root)
+    from experiments.distill.loso_target_cache import load_or_prepare_loso_dataset
+
+    return load_or_prepare_loso_dataset(
+        dataset, student, cache_root=cache_root, auto_prepare=True)
+
+
 def _load_or_ensure_loso_teacher_targets(
         dataset, teacher, seed, fold, student_data, cache_root, gpu=None,
         no_auto_teacher_cache=False):
-    """Load strict LOSO targets, generating only a genuinely missing cache."""
+    """Strictly load LOSO targets, repairing derived cache failures if enabled."""
     if no_auto_teacher_cache:
         return loso_source.load_teacher_targets(
             dataset, teacher, seed, fold, student_data=student_data,
@@ -785,8 +797,9 @@ def _run(args):
             teacher_artifact = _teacher_artifact_name(
                 teacher, protocol, override=args.teacher_artifact)
             for student in students:
-                student_data = (loso_source.load_dataset(
-                    dataset, student, cache_root=args.artifact_root)
+                student_data = (_load_or_prepare_loso_dataset(
+                    dataset, student, cache_root=args.artifact_root,
+                    no_auto_teacher_cache=getattr(args, 'no_auto_teacher_cache', False))
                     if protocol == 'loso' else None)
                 for seed in seeds:
                     resolved_teacher_seed = _resolve_teacher_seed(
