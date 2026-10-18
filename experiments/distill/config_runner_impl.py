@@ -46,13 +46,16 @@ def parse_args(argv=None):
     parser.add_argument("--datasets", nargs="+", default=None,
                         help="select datasets from the method config")
     parser.add_argument("--seeds", nargs="+", type=int, default=None,
-                        help="select seeds from the method config/dataset defaults")
+                        help="select student seeds; LOSO accepts explicit seeds beyond configured defaults")
     parser.add_argument("--variants", nargs="+", default=None,
                         help="select method variants from a variant-matrix config")
     parser.add_argument("--teachers", "--teacher", nargs="+", default=None,
                         help="select teacher models from the method config")
     parser.add_argument("--students", "--student", nargs="+", default=None,
                         help="select student models from the method config")
+    parser.add_argument("--teacher-seed", "--teacher_seed", dest="teacher_seed",
+                        type=int, default=None,
+                        help="LOSO teacher-target seed; defaults to each student seed")
     parser.add_argument("--gpu", type=int, default=None)
     parser.add_argument("--no-auto-teacher-cache", "--no_auto_teacher_cache",
                         dest="no_auto_teacher_cache", action="store_true",
@@ -79,6 +82,7 @@ def _namespace(spec, artifact_root, no_auto_teacher_cache=False, gpu=None):
         dataset=spec["dataset"], protocol=spec["protocol"],
         teacher=spec["teacher"], student=spec["student"],
         teacher_artifact=None, keys=spec.get("subjects"), seeds=spec.get("seeds"),
+        teacher_seed=params.get("teacher_seed"),
         train_percentage=spec.get("train_percentage"), val_split=spec.get("val_split"),
         methods=spec["methods"],
         lam_kd=float(params.get("lam_kd", 0.5)),
@@ -95,6 +99,73 @@ def _namespace(spec, artifact_root, no_auto_teacher_cache=False, gpu=None):
         no_auto_teacher_cache=bool(no_auto_teacher_cache),
         gpu=gpu,
     )
+
+
+def _resolve_teacher_seed(spec, student_seed):
+    """Use a configured teacher seed, or preserve the historical same-seed rule."""
+    configured = spec.get("params", {}).get("teacher_seed")
+    return legacy._resolve_teacher_seed(student_seed, configured)
+
+
+def _validate_teacher_seed_scope(loaded, cli_teacher_seed=None):
+    for spec in loaded.get("runs", []):
+        explicit = cli_teacher_seed
+        if explicit is None:
+            explicit = spec.get("params", {}).get("teacher_seed")
+        legacy._validate_teacher_seed_protocol(spec.get("protocol", "fewshot"), explicit)
+
+
+def _apply_teacher_seed_override(loaded, teacher_seed):
+    """Inject a CLI override after selection and give KD a distinct identity."""
+    _validate_teacher_seed_scope(loaded, teacher_seed)
+    if teacher_seed is not None:
+        teacher_seed = int(teacher_seed)
+    selected = dict(loaded)
+    runs = []
+    changed = False
+    for source_spec in loaded["runs"]:
+        spec = dict(source_spec)
+        params = dict(spec.get("params") or {})
+        if teacher_seed is not None:
+            params["teacher_seed"] = teacher_seed
+            spec["params"] = params
+            spec["run_id"] = config_loader._stable_run_id(
+                spec["config_name"], spec["pair_index"], spec["dataset"],
+                spec["protocol"], spec["teacher"], spec["student"],
+                spec["grid_index"], params, spec["training"],
+                variant=spec.get("variant"))
+            changed = True
+        elif params.get("teacher_seed") is not None:
+            changed = True
+        # A CLI-only teacher-target choice must not invalidate a shared CE
+        # baseline. YAML teacher_seed is also KD-specific and must not change
+        # the shared CE identity. Variant matrices already carry a control ID.
+        if ("Base" in spec.get("methods", []) and not spec.get("control_run_id")
+                and "teacher_seed" in params):
+            control_params = {key: value for key, value in params.items()
+                              if key != "teacher_seed"}
+            spec["control_run_id"] = config_loader._stable_run_id(
+                spec["config_name"], spec["pair_index"], spec["dataset"],
+                spec["protocol"], spec["teacher"], spec["student"],
+                spec["grid_index"], control_params, spec["training"],
+                variant=spec.get("variant"))
+            changed = True
+        runs.append(spec)
+    if not changed:
+        return loaded
+    selected["runs"] = runs
+    config = dict(loaded.get("config", {}))
+    runtime_selection = dict(config.get("runtime_selection") or {})
+    if teacher_seed is not None:
+        runtime_selection["teacher_seed"] = teacher_seed
+        runtime_selection["teacher_seed_policy"] = "cli_override"
+    elif any(spec.get("params", {}).get("teacher_seed") is not None
+             for spec in runs):
+        runtime_selection["teacher_seed_policy"] = (
+            "params.teacher_seed_or_same-as-student")
+    config["runtime_selection"] = runtime_selection
+    selected["config"] = config
+    return selected
 
 
 def _row_key(row):
@@ -270,6 +341,24 @@ def _verify_resume_data_identity(specs, prior_rows, selected_row_keys,
         if selection is None:
             continue
         spec, fold, seed, method = selection
+        resolved_teacher_seed = (
+            _resolve_teacher_seed(spec, seed) if method != "Base" else "")
+        if method != "Base":
+            recorded_teacher_seed = row.get("teacher_seed")
+            # Existing same-seed result CSVs predate this column. Their teacher
+            # seed was necessarily the student seed.
+            if recorded_teacher_seed in (None, ""):
+                recorded_teacher_seed = row.get("seed")
+            try:
+                recorded_teacher_seed = int(recorded_teacher_seed)
+            except (TypeError, ValueError):
+                raise ValueError(
+                    f"--resume refuses completed row {_row_key(row)}: invalid "
+                    f"teacher_seed={recorded_teacher_seed!r}")
+            if recorded_teacher_seed != resolved_teacher_seed:
+                raise ValueError(
+                    f"--resume refuses completed row {_row_key(row)}: teacher_seed "
+                    f"recorded={recorded_teacher_seed}, current={resolved_teacher_seed}")
         if spec['protocol'] != 'loso':
             continue
         cache_key = (spec['dataset'], spec['student'], spec['artifact_root'])
@@ -285,11 +374,11 @@ def _verify_resume_data_identity(specs, prior_rows, selected_row_keys,
                 'input_policy_sha256', ''),
         }
         if method != 'Base':
-            target_key = (spec['dataset'], spec['teacher'], seed, fold,
+            target_key = (spec['dataset'], spec['teacher'], resolved_teacher_seed, fold,
                           spec['student'], spec['artifact_root'])
             if target_key not in target_cache:
                 target_cache[target_key] = legacy._load_or_ensure_loso_teacher_targets(
-                    spec['dataset'], spec['teacher'], seed, fold,
+                    spec['dataset'], spec['teacher'], resolved_teacher_seed, fold,
                     student_data=student_data,
                     cache_root=config_loader.resolve_path(spec['artifact_root']),
                     gpu=gpu,
@@ -314,6 +403,7 @@ def _write_rows(path, rows):
     priority = [
         "config_name", "run_id", "variant", "grid_index", "dataset", "protocol",
         "teacher", "student", "teacher_artifact", "subject", "key", "session", "seed",
+        "teacher_seed",
         "method", "acc", "kappa", "n_train", "n_test", "num_classes",
         "condition_label", "test_accuracy", "test_balanced_accuracy", "test_kappa",
         "teacher_train_acc_pct", "lam_kd", "lam_mi", "lam_mmd", "temperature",
@@ -362,6 +452,9 @@ def _build_manifest(specs):
                         'subject': int(key) + 1,
                         'key': int(key),
                         'seed': int(seed),
+                        'teacher_seed': (
+                            '' if method == 'Base'
+                            else _resolve_teacher_seed(spec, seed)),
                         'protocol': spec['protocol'],
                         'teacher': spec['teacher'],
                         'student': spec['student'],
@@ -389,6 +482,13 @@ def _update_manifest(manifest, row, status, reason=''):
         if item['run_key'] == run_key:
             item['status'] = status
             item['failure_reason'] = str(reason or '')
+            for field in (
+                    'teacher_seed', 'teacher_artifact_path',
+                    'teacher_artifact_sha256', 'teacher_target_manifest_path',
+                    'teacher_target_manifest_sha256', 'teacher_checkpoint_sha256',
+                    'teacher_input_manifest_sha256', 'teacher_input_policy_sha256'):
+                if field in row:
+                    item[field] = row[field]
             return
 
 
@@ -403,6 +503,10 @@ def _write_manifest(path, manifest):
     fields = [
         'run_key', 'config_name', 'run_id', 'variant', 'artifact_run_id', 'dataset',
         'subject', 'key', 'seed',
+        'teacher_seed', 'teacher_artifact_path', 'teacher_artifact_sha256',
+        'teacher_target_manifest_path', 'teacher_target_manifest_sha256',
+        'teacher_checkpoint_sha256', 'teacher_input_manifest_sha256',
+        'teacher_input_policy_sha256',
         'protocol', 'teacher', 'student', 'condition', 'status', 'failure_reason',
     ]
     _atomic_write_csv(path, manifest, fields)
@@ -447,6 +551,8 @@ def _load_existing_complete_rows(output, run_root):
 def _run_spec(spec, device, existing_keys, fail_fast, run_root=None,
               manifest=None, total_runs=None, progress_keys=None, persist=None,
               no_auto_teacher_cache=False, gpu=None):
+    legacy._validate_teacher_seed_protocol(
+        spec["protocol"], spec.get("params", {}).get("teacher_seed"))
     dcfg = legacy.config.load_dataset_config(spec["dataset"])
     keys = spec.get("subjects")
     if keys is None:
@@ -471,6 +577,7 @@ def _run_spec(spec, device, existing_keys, fail_fast, run_root=None,
         if spec['protocol'] == 'loso' else None)
     rows, errors = [], []
     for seed in seeds:
+        resolved_teacher_seed = _resolve_teacher_seed(spec, seed)
         for key in keys:
             prefix = (spec["dataset"], spec["teacher"], spec["student"],
                       str(key), str(seed))
@@ -480,7 +587,10 @@ def _run_spec(spec, device, existing_keys, fail_fast, run_root=None,
                 not in existing_keys
             ]
             if not pending_methods:
-                print(f"[resume] skip dataset={spec['dataset']} key={key} seed={seed} run_id={spec['run_id']}", flush=True)
+                print(
+                    f"[resume] skip dataset={spec['dataset']} key={key} "
+                    f"student_seed={seed} teacher_seed={resolved_teacher_seed} "
+                    f"run_id={spec['run_id']}", flush=True)
                 continue
             try:
                 if student_data is not None:
@@ -514,6 +624,7 @@ def _run_spec(spec, device, existing_keys, fail_fast, run_root=None,
                         continue
                     started = time.time()
                     details = None
+                    tch = {}
                     try:
                         method_kwargs = {}
                         if initial_state_dict is not None:
@@ -525,14 +636,15 @@ def _run_spec(spec, device, existing_keys, fail_fast, run_root=None,
                             tch = {}
                         elif student_data is not None:
                             tch = legacy._load_or_ensure_loso_teacher_targets(
-                                spec['dataset'], spec['teacher'], seed, key,
+                                spec['dataset'], spec['teacher'], resolved_teacher_seed, key,
                                 student_data=student_data,
                                 cache_root=args.artifact_root,
                                 gpu=args.gpu,
                                 no_auto_teacher_cache=args.no_auto_teacher_cache)
                             alignment = legacy._check_teacher(
                                 tch, y_tr, uid_tr, expected_policy,
-                                f'{spec["dataset"]} {spec["teacher"]} key={key} seed={seed}')
+                                f'{spec["dataset"]} {spec["teacher"]} key={key} '
+                                f'student_seed={seed} teacher_seed={resolved_teacher_seed}')
                             tch['_uid_alignment'] = alignment
                             tch['_artifact_info'] = legacy._artifact_info(tch['_artifact_path'])
                             tch['_student_input_manifest_sha256'] = (
@@ -566,6 +678,8 @@ def _run_spec(spec, device, existing_keys, fail_fast, run_root=None,
                         row.update(config_name=spec["config_name"],
                                    run_id=condition_run_id, grid_index=spec["grid_index"],
                                    variant=spec.get("variant", ""),
+                                   teacher_seed=(
+                                       '' if method == 'Base' else resolved_teacher_seed),
                                    artifact_run_id=(
                                        '' if spec['method'] == 'mi' else condition_run_id),
                                    runtime_seconds=round(time.time() - started, 3))
@@ -617,7 +731,9 @@ def _run_spec(spec, device, existing_keys, fail_fast, run_root=None,
                                     if total_runs is not None else str(completed))
                         print(
                             f"[progress {progress}] [{spec['dataset']}] "
-                            f"subject={int(key)+1} seed={seed} condition={method} "
+                            f"subject={int(key)+1} student_seed={seed} "
+                            f"teacher_seed={row.get('teacher_seed', '')} "
+                            f"condition={method} "
                             f"acc={row['acc']} bal_acc={row['test_balanced_accuracy']} "
                             f"kappa={row['kappa']}", flush=True)
                     except Exception as exc:  # noqa: BLE001
@@ -634,6 +750,8 @@ def _run_spec(spec, device, existing_keys, fail_fast, run_root=None,
                             'key': int(key),
                             'session': legacy._session_default(spec['dataset']),
                             'seed': int(seed),
+                            'teacher_seed': (
+                                '' if method == 'Base' else resolved_teacher_seed),
                             'protocol': spec['protocol'],
                             'teacher': spec['teacher'],
                             'student': spec['student'],
@@ -656,12 +774,29 @@ def _run_spec(spec, device, existing_keys, fail_fast, run_root=None,
                                 data_input_path=(str(student_data.input_manifest_path.parent)
                                                  if student_data.input_manifest_path else ''),
                             )
+                        if method != 'Base' and tch:
+                            teacher_info = tch.get('_artifact_info', {})
+                            teacher_manifest = tch.get('_manifest', {})
+                            failure.update(
+                                teacher_artifact_path=tch.get('_artifact_path', ''),
+                                teacher_artifact_sha256=teacher_info.get('sha256', ''),
+                                teacher_target_manifest_path=tch.get('_manifest_path', ''),
+                                teacher_target_manifest_sha256=tch.get('_manifest_sha256', ''),
+                                teacher_checkpoint_sha256=teacher_manifest.get(
+                                    'teacher_checkpoint_sha256', ''),
+                                teacher_input_manifest_sha256=(
+                                    tch.get('_input_manifest_sha256', '') or ''),
+                                teacher_input_policy_sha256=(
+                                    tch.get('_input_policy_sha256', '') or ''),
+                            )
                         rows.append(failure)
                         if manifest is not None:
                             _update_manifest(manifest, failure, 'failed', reason)
                         if persist is not None:
                             persist([failure])
-                        message = (f"{spec['dataset']} subject={int(key)+1} seed={seed} "
+                        message = (f"{spec['dataset']} subject={int(key)+1} "
+                                   f"student_seed={seed} "
+                                   f"teacher_seed={failure['teacher_seed']} "
                                    f"condition={method}: {reason}")
                         errors.append(message)
                         print(f"[ERR] {message}", flush=True)
@@ -686,6 +821,8 @@ def _run_spec(spec, device, existing_keys, fail_fast, run_root=None,
                         'key': int(key),
                         'session': legacy._session_default(spec['dataset']),
                         'seed': int(seed),
+                        'teacher_seed': (
+                            '' if method == 'Base' else resolved_teacher_seed),
                         'protocol': spec['protocol'],
                         'teacher': spec['teacher'],
                         'student': spec['student'],
@@ -1380,6 +1517,12 @@ def _run_method_matrix(args, loaded):
         "datasets": sorted({item["dataset"] for item in manifest}),
         "protocols": sorted({item["protocol"] for item in manifest}),
         "seeds": sorted({int(item["seed"]) for item in manifest}),
+        "teacher_seeds": sorted({
+            int(item["teacher_seed"]) for item in manifest
+            if item.get("teacher_seed") not in (None, "")}),
+        "teacher_seed_policy": (
+            loaded.get("config", {}).get("runtime_selection", {}).get(
+                "teacher_seed_policy") or "same-as-student"),
         "git": {"before": git_before},
         "gpu": {"physical_gpu": os.environ.get("CUDA_VISIBLE_DEVICES", "not-set"),
                 "requested_logical_gpu": args.gpu, "device": None},
@@ -1387,6 +1530,13 @@ def _run_method_matrix(args, loaded):
     }
     _atomic_write_json(provenance_path, provenance)
     _write_manifest(manifest_path, manifest)
+
+    print(
+        f"[selection] student_seeds={sorted({int(item['seed']) for item in selected_manifest})} "
+        f"teacher_seeds={sorted({int(item['teacher_seed']) for item in selected_manifest if item.get('teacher_seed') not in (None, '')})} "
+        f"teacher_seed_policy={provenance['teacher_seed_policy']}",
+        flush=True,
+    )
 
     device = _device(args.gpu)
     provenance["gpu"]["device"] = device
@@ -1448,6 +1598,7 @@ def _run_method_matrix(args, loaded):
 
 
 def run(args, loaded):
+    loaded = _apply_teacher_seed_override(loaded, getattr(args, "teacher_seed", None))
     if loaded.get("config", {}).get("method") == "mi":
         return _run_formal_ce_mi(args, loaded)
     return _run_method_matrix(args, loaded)
@@ -1469,11 +1620,18 @@ def main(argv=None):
     if (args.datasets is not None or args.seeds is not None
             or args.variants is not None or model_filters
             or has_default_variants):
+        selection_kwargs = {}
+        if (args.seeds is not None
+                and loaded["config"].get("type") == "distill"
+                and loaded["config"].get("method") != "mi"
+                and "loso" in loaded["config"].get("protocols", [])):
+            selection_kwargs["allow_loso_seed_override"] = True
         loaded = config_loader.select_experiment_runs(
             loaded, datasets=args.datasets, seeds=args.seeds,
-            variants=args.variants)
+            variants=args.variants, **selection_kwargs)
     loaded = _select_model_runs(
         loaded, teachers=args.teachers, students=args.students)
+    loaded = _apply_teacher_seed_override(loaded, args.teacher_seed)
     output = config_loader.resolve_path(loaded["runs"][0]["output"])
     # Formal MI logs live with the run manifest and checkpoints, rather than
     # in the generic distillation log directory.

@@ -73,10 +73,10 @@ DISTILL_COMPONENTS = {
 }
 PARAM_FIELDS = {
     "distill": {
-        "kd": {"temperature", "lam_kd"},
-        "kd_masked": {"temperature", "lam_kd"},
-        "mmd": set(MMD_FIELDS),
-        "kd_mmd": {"temperature", "lam_kd"} | MMD_FIELDS,
+        "kd": {"temperature", "lam_kd", "teacher_seed"},
+        "kd_masked": {"temperature", "lam_kd", "teacher_seed"},
+        "mmd": set(MMD_FIELDS) | {"teacher_seed"},
+        "kd_mmd": {"temperature", "lam_kd", "teacher_seed"} | MMD_FIELDS,
         "mi": {"lam_mi"},
     },
     "fusion": {
@@ -191,6 +191,8 @@ def _validate_param_value(name: str, value: Any, context: str) -> None:
     elif name in {"epochs", "batch_size", "hidden"}:
         _number(value, f"{context}.{name}",
                 minimum=1 if name != "hidden" else 0, integer=True)
+    elif name == "teacher_seed":
+        _number(value, f"{context}.{name}", minimum=0, integer=True)
     elif name == "dropout":
         _number(value, f"{context}.{name}", minimum=0.0, maximum=1.0)
     elif name == "mmd_sigmas":
@@ -824,7 +826,8 @@ def load_experiment(path: str | Path) -> dict:
 
 
 def select_experiment_runs(loaded: Mapping, datasets=None, seeds=None,
-                           variants=None) -> dict:
+                           variants=None,
+                           allow_loso_seed_override: bool = False) -> dict:
     """Apply runtime dataset/seed selections to an already validated matrix."""
     config = loaded["config"]
     configured_datasets = list(config["datasets"])
@@ -842,6 +845,8 @@ def select_experiment_runs(loaded: Mapping, datasets=None, seeds=None,
     if requested_seeds is not None:
         if not requested_seeds or len(set(requested_seeds)) != len(requested_seeds):
             raise ExperimentConfigError("--seeds must be non-empty and unique")
+        if any(seed < 0 for seed in requested_seeds):
+            raise ExperimentConfigError("--seeds must be non-negative")
 
     selected_by_scope = {}
     available_by_scope = {}
@@ -859,8 +864,12 @@ def select_experiment_runs(loaded: Mapping, datasets=None, seeds=None,
                 configured_seeds = dataset_config['seeds']
             configured_seeds = [int(seed) for seed in configured_seeds]
             available_by_scope[(dataset, protocol)] = configured_seeds
-            selected = (configured_seeds if requested_seeds is None else
-                        [seed for seed in configured_seeds if seed in requested_seeds])
+            if requested_seeds is None:
+                selected = configured_seeds
+            elif allow_loso_seed_override and protocol == "loso":
+                selected = list(requested_seeds)
+            else:
+                selected = [seed for seed in configured_seeds if seed in requested_seeds]
             if selected:
                 selected_by_scope[(dataset, protocol)] = selected
     if not selected_by_scope:
@@ -873,7 +882,11 @@ def select_experiment_runs(loaded: Mapping, datasets=None, seeds=None,
             seed for scope_seeds in available_by_scope.values()
             for seed in scope_seeds
         }
-        unsupported = [seed for seed in requested_seeds if seed not in available_union]
+        can_override_loso = (
+            allow_loso_seed_override
+            and any(protocol == "loso" for protocol in protocols))
+        unsupported = [seed for seed in requested_seeds
+                       if seed not in available_union and not can_override_loso]
         if unsupported:
             details = {f'{dataset}/{protocol}': available
                        for (dataset, protocol), available in available_by_scope.items()}

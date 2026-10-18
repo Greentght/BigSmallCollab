@@ -73,7 +73,7 @@ METHOD_ALIASES = {
     'ce-mi': ('CE_MI',),
 }
 BASE_FIELDS = [
-    'subject', 'seed', 'method', 'acc', 'kappa', 'n_test', 'lam_mi',
+    'subject', 'seed', 'teacher_seed', 'method', 'acc', 'kappa', 'n_test', 'lam_mi',
     'source_manifest_sha256', 'student_input_manifest_sha256',
     'student_input_policy_sha256',
     'teacher_input_manifest_sha256', 'teacher_target_manifest_sha256',
@@ -120,6 +120,9 @@ def parse_args(argv=None):
     p.add_argument('--subjects', '--keys', dest='keys', type=int, nargs='+', default=None,
                    help='zero-based subjects/folds; default all')
     p.add_argument('--seeds', type=int, nargs='+', default=None)
+    p.add_argument('--teacher-seed', '--teacher_seed', dest='teacher_seed',
+                   type=int, default=None,
+                   help='LOSO teacher-target seed; defaults to each student seed')
     p.add_argument('--train_percentage', type=float, default=None,
                    help='fewshot train fraction; overrides dataset val_split')
     p.add_argument('--val_split', type=float, default=None,
@@ -160,6 +163,20 @@ def _resolve_list(plural, singular, default):
     if singular is not None:
         return [singular]
     return list(default)
+
+
+def _validate_teacher_seed_protocol(protocol, teacher_seed):
+    if teacher_seed is not None and int(teacher_seed) < 0:
+        raise ValueError('--teacher-seed must be a non-negative integer')
+    if teacher_seed is not None and protocol != 'loso':
+        raise ValueError(
+            '--teacher-seed is only supported with protocol=loso; '
+            'fewshot teacher and student split seeds are coupled')
+
+
+def _resolve_teacher_seed(student_seed, teacher_seed=None):
+    """Resolve the target seed without changing the student's training seed."""
+    return int(student_seed if teacher_seed is None else teacher_seed)
 
 
 def _validate_names(teachers, students):
@@ -698,6 +715,8 @@ def _run(args):
     _set_thread_defaults()
     protocol = data.canonical_protocol(args.protocol)
     args.protocol = protocol
+    explicit_teacher_seed = getattr(args, 'teacher_seed', None)
+    _validate_teacher_seed_protocol(protocol, explicit_teacher_seed)
     args._wide_source_default = protocol == 'loso'
     if args.artifact_root is None:
         args.artifact_root = str(LOSO_CACHE_ROOT if protocol == 'loso'
@@ -738,7 +757,8 @@ def _run(args):
                 'pass an explicit --out_csv to choose an output path')
     print(
         f'[distill] datasets={datasets} teachers={teachers} students={students} '
-        f'protocol={protocol} methods={methods} device={device}',
+        f'protocol={protocol} methods={methods} device={device} '
+        f'teacher_seed_policy={explicit_teacher_seed if explicit_teacher_seed is not None else "same-as-student"}',
         flush=True,
     )
     print(
@@ -754,6 +774,11 @@ def _run(args):
         seeds = (args.seeds if args.seeds is not None else
                  dcfg.get('loso', {}).get('seeds', dcfg['seeds'])
                  if protocol == 'loso' else dcfg['seeds'])
+        print(
+            f'[selection] dataset={dataset} student_seeds={list(seeds)} '
+            f'teacher_seed_policy={explicit_teacher_seed if explicit_teacher_seed is not None else "same-as-student"}',
+            flush=True,
+        )
         nc = int(dcfg['num_classes'])
         val_split = args.val_split if args.val_split is not None else dcfg['val_split']
         for teacher in teachers:
@@ -764,6 +789,8 @@ def _run(args):
                     dataset, student, cache_root=args.artifact_root)
                     if protocol == 'loso' else None)
                 for seed in seeds:
+                    resolved_teacher_seed = _resolve_teacher_seed(
+                        seed, explicit_teacher_seed)
                     for key in keys:
                         try:
                             if student_data is not None:
@@ -799,7 +826,7 @@ def _run(args):
                                         method_tch = dict(tch)
                                     else:
                                         method_tch = _load_or_ensure_loso_teacher_targets(
-                                            dataset, teacher, seed, key,
+                                            dataset, teacher, resolved_teacher_seed, key,
                                             student_data=student_data,
                                             cache_root=args.artifact_root,
                                             gpu=args.gpu,
@@ -807,7 +834,8 @@ def _run(args):
                                                 args, 'no_auto_teacher_cache', False))
                                         alignment = _check_teacher(
                                             method_tch, y_tr, uid_tr, expected_policy,
-                                            f'{dataset} {teacher} key={key} seed={seed}')
+                                            f'{dataset} {teacher} key={key} '
+                                            f'student_seed={seed} teacher_seed={resolved_teacher_seed}')
                                         method_tch['_uid_alignment'] = alignment
                                         method_tch['_artifact_info'] = _artifact_info(
                                             method_tch['_artifact_path'])
@@ -830,6 +858,8 @@ def _run(args):
                                     X_tr, y_tr, X_te, y_te, subj_tr, method_tch,
                                     nc, device,
                                     **method_kwargs)
+                                row['teacher_seed'] = (
+                                    '' if method == 'Base' else resolved_teacher_seed)
                                 if student_data is not None:
                                     row.update(
                                         source_manifest_sha256=student_data.source_manifest_sha256,
@@ -842,7 +872,9 @@ def _run(args):
                                 rows.append(row)
                                 print(
                                     f'[{dataset}] {teacher}->{student} key={key} '
-                                    f'seed={seed} {method} acc={row["acc"]} '
+                                    f'student_seed={seed} teacher_seed='
+                                    f'{row["teacher_seed"] if method != "Base" else ""} '
+                                    f'{method} acc={row["acc"]} '
                                     f'kappa={row["kappa"]}',
                                     flush=True,
                                 )
