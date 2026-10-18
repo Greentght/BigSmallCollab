@@ -96,6 +96,13 @@ class _Tee:
             stream.flush()
 
 
+def normalize_cli_argv(argv=None):
+    """Drop standalone whitespace-only shell tokens before argparse parses."""
+    tokens = sys.argv[1:] if argv is None else argv
+    return [token for token in tokens
+            if not (isinstance(token, str) and token.isspace())]
+
+
 def parse_args(argv=None):
     p = argparse.ArgumentParser(epilog='Legacy direct matrix flags are deprecated; use --config configs/experiments/<name>.yaml')
     p.add_argument('--dataset', default=None,
@@ -144,7 +151,7 @@ def parse_args(argv=None):
                    dest='no_auto_teacher_cache', action='store_true',
                    help='read LOSO teacher targets only; do not generate missing caches')
     p.add_argument('--fail_fast', action='store_true')
-    return p.parse_args(argv)
+    return p.parse_args(normalize_cli_argv(argv))
 
 
 def _resolve_list(plural, singular, default):

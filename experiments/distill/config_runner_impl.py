@@ -61,7 +61,7 @@ def parse_args(argv=None):
     write_mode.add_argument("--resume", action="store_true")
     write_mode.add_argument("--force", action="store_true")
     parser.add_argument("--fail-fast", action="store_true")
-    return parser.parse_args(argv)
+    return parser.parse_args(legacy.normalize_cli_argv(argv))
 
 
 def _device(gpu):
