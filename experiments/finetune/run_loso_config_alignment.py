@@ -31,7 +31,7 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
-from experiments.storage import (BNCI14001_SOURCE_ROOT, DATA_CACHE_ROOT, RESULTS_ROOT,
+from experiments.storage import (BNCI14001_SOURCE_ROOT, DATA_CACHE_ROOT, LOSO_INPUT_ROOT, RESULTS_ROOT,
                                  require_external_output, resolve_local_file)
 SPEC = ROOT / 'configs/protocols/loso_001.yaml'
 INPUT_ROOT = DATA_CACHE_ROOT / 'eegfm_alignment_v2/model_inputs'
@@ -158,7 +158,7 @@ def profile_config(profile: str, model: str, dataset: str, spec: dict) -> dict:
             from experiments.finetune import prepare_loso_alignment_inputs as inputs
             c = config.load_model_config(model, dataset, 'loso')
             inputs.validate_001_dataset(
-                dataset, BNCI14001_SOURCE_ROOT, INPUT_ROOT / WIDEBAND_PROFILE,
+                dataset, BNCI14001_SOURCE_ROOT, LOSO_INPUT_ROOT,
                 RESULT_ROOT / WIDEBAND_PROFILE, spec)
             inputs.validate_001_model(model, dataset, c)
             return {
@@ -179,7 +179,7 @@ def profile_config(profile: str, model: str, dataset: str, spec: dict) -> dict:
         from experiments.finetune import prepare_loso_alignment_inputs as inputs
         c = config.load_model_config(model, dataset, 'loso')
         inputs.validate_001_dataset(
-            dataset, BNCI14001_SOURCE_ROOT, INPUT_ROOT / WIDEBAND_PROFILE,
+            dataset, BNCI14001_SOURCE_ROOT, LOSO_INPUT_ROOT,
             RESULT_ROOT / WIDEBAND_PROFILE, spec)
         inputs.validate_001_model(model, dataset, c)
         # These two provenance labels are retained in the resolved dictionary
@@ -203,6 +203,8 @@ def profile_config(profile: str, model: str, dataset: str, spec: dict) -> dict:
 
 
 def input_dir(profile: str, dataset: str, model: str, variant: str) -> Path:
+    if profile == WIDEBAND_PROFILE:
+        return LOSO_INPUT_ROOT / dataset / model
     return INPUT_ROOT / profile / dataset / model / variant
 
 

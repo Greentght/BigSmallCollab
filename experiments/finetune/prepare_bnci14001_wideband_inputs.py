@@ -17,8 +17,8 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
-from experiments.storage import (BNCI14001_SOURCE_ROOT,
-                                 require_external_output, resolve_local_file)
+from experiments.storage import (BNCI14001_SOURCE_ROOT, LOSO_INPUT_ROOT,
+                                 require_loso_cache_output, resolve_local_file)
 
 from experiments.finetune.export_bnci14001_all_sessions import entity, sha256, write_json
 from experiments.finetune import prepare_loso_alignment_inputs as reference
@@ -59,7 +59,7 @@ def validate_source() -> tuple[np.ndarray, pd.DataFrame, dict]:
 def recipe(model: str, dataset: str) -> dict:
     spec = yaml.safe_load(SPEC_PATH.read_text())
     reference.validate_001_dataset(
-        dataset, SOURCE, reference.INPUT_ROOT / PROFILE,
+        dataset, SOURCE, LOSO_INPUT_ROOT,
         reference.RESULTS_ROOT / 'reproductions/loso_config_alignment_v2' / PROFILE, spec)
     if model == 'cbramod':
         return reference.get_profile(PROFILE, model, dataset)
@@ -114,7 +114,7 @@ def prepare(model: str, dataset: str, x_source, source_trials: pd.DataFrame,
         raise RuntimeError('Unexpected class IDs')
     subjects = trials['subject'].to_numpy(dtype=np.int64) - 1
     cfg = recipe(model, dataset)
-    output = require_external_output(reference.INPUT_ROOT / PROFILE / dataset / model / VARIANT)
+    output = require_loso_cache_output(LOSO_INPUT_ROOT / dataset / model)
     source_sha = sha256(SOURCE / 'manifest.json')
     existing = output / 'manifest.json'
     if existing.exists():

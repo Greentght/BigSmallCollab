@@ -10,7 +10,9 @@ seeds: [666, 667, 668]
 
 # Current LOSO baseline; top-level split values remain the fewshot defaults.
 loso:
-  source_directory: /data1/llx/BNCI2014001/broadband_0p1_75hz
+  source_directory: /data1/llx/BNCI2014001/wide_fre_band
+  # Historical manifest identity; the active source path is wide_fre_band.
+  source_variant: broadband_0p1_75hz
   native_sampling_rate_hz: 250
   selected_session: 0train
   legacy_session: session_T
@@ -19,7 +21,8 @@ loso:
   - 75.0
   duration_seconds: 4.0
   current_baseline_id: wideband_npy_v3
-  input_root: /data1/llx/BigSmallcollab/cache/eegfm_alignment_v2/model_inputs/wideband_npy_v3
+  input_root: /data1/llx/BigSmallcollab/cache/artifact-loso/model_inputs
+  teacher_target_root: /data1/llx/BigSmallcollab/cache/artifact-loso/teacher_targets
   result_root: /data1/llx/BigSmallcollab/results/reproductions/loso_config_alignment_v2/wideband_npy_v3
   seeds:
   - 0

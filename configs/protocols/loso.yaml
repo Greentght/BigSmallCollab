@@ -18,8 +18,8 @@ aggregation: subject_equal_mean_per_seed_then_seed_mean_and_sample_std
 model_input_window: 1000_samples_at_250_hz
 mirepnet_test_ea: entire_unlabeled_held_out_subject_pool
 baseline_results: /data1/llx/BigSmallcollab/results/reproductions/loso_source_refresh_004_5001_v1
-model_inputs: /data1/llx/BigSmallcollab/cache/reproductions/loso_source_refresh_004_5001_v1/model_inputs
-distillation_config: configs/experiments/loso_distillation.yaml
+model_inputs: /data1/llx/BigSmallcollab/cache/artifact-loso/model_inputs
+teacher_targets: /data1/llx/BigSmallcollab/cache/artifact-loso/teacher_targets
 execution:
   baseline_worker: experiments/finetune/run_loso_source_refresh_004_5001.py
   input_preparation: experiments/finetune/prepare_loso_source_refresh_004_5001.py

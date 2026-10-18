@@ -1,10 +1,13 @@
 """Unified big-to-small distillation runner.
 
-Runs CE baseline and selected distillation methods from cached teacher
-artifacts. The teacher is never imported here; this script should run in the
-student environment, usually ``mirepnet`` for the small CNNs.
+Runs CE baseline and selected distillation methods from teacher artifacts. For
+LOSO, target caches are strictly validated and reused by default; if a valid
+target cache is genuinely missing, a producer subprocess in the teacher's
+environment exports it without training the teacher. The main runner still
+uses the student environment, usually ``mirepnet`` for the small CNNs.
 
-Default methods:
+The direct CLI defaults to ``KD_all``. Supported methods (``--methods all``
+selects the full legacy matrix):
   Base      : student CE only
   KD_all    : CE + logits KD on all train/support samples
   KD_masked : CE + logits KD only where teacher is correct on train/support
@@ -35,10 +38,12 @@ from collab.seed import set_seed as _set_seed
 import config
 import data
 from data import split as split_utils
+from data import loso_source
 from eval import metrics
 from models import BIG_MODELS, SMALL_MODELS, get_adapter
 from sklearn.metrics import balanced_accuracy_score
-from experiments.storage import external_path, require_external_output, resolve_local_file
+from experiments.storage import (LOSO_CACHE_ROOT, external_path,
+                                 require_external_output, resolve_local_file)
 
 
 DEFAULT_METHODS = ('Base', 'KD_all', 'KD_masked', 'MMD', 'KD_MMD')
@@ -67,7 +72,14 @@ METHOD_ALIASES = {
     'ce_mi': ('CE_MI',),
     'ce-mi': ('CE_MI',),
 }
-BASE_FIELDS = ['subject', 'seed', 'method', 'acc', 'kappa', 'n_test', 'lam_mi']
+BASE_FIELDS = [
+    'subject', 'seed', 'method', 'acc', 'kappa', 'n_test', 'lam_mi',
+    'source_manifest_sha256', 'student_input_manifest_sha256',
+    'student_input_policy_sha256',
+    'teacher_input_manifest_sha256', 'teacher_target_manifest_sha256',
+    'teacher_input_policy_sha256', 'teacher_checkpoint_sha256',
+    'teacher_artifact_path', 'teacher_artifact_sha256',
+]
 
 
 class _Tee:
@@ -105,7 +117,7 @@ def parse_args(argv=None):
                    help='fewshot train fraction; overrides dataset val_split')
     p.add_argument('--val_split', type=float, default=None,
                    help='fewshot test fraction; default from dataset config')
-    p.add_argument('--methods', nargs='+', default=['all'],
+    p.add_argument('--methods', nargs='+', default=['kd'],
                    help='all, Base, KD_all, KD_masked, MMD, KD_MMD, mi/CE_MI')
     p.add_argument('--lam_kd', type=float, default=0.5)
     p.add_argument('--lam_mi', type=float, default=0.1,
@@ -125,9 +137,12 @@ def parse_args(argv=None):
     p.add_argument('--batch_size', type=int, default=None,
                    help='override student config batch_size')
     p.add_argument('--gpu', type=int, default=None)
-    p.add_argument('--artifact_root', default=artifacts.ARTIFACT_ROOT)
+    p.add_argument('--artifact_root', default=None)
     p.add_argument('--out_csv', default=None)
     p.add_argument('--log_file', default=None)
+    p.add_argument('--no-auto-teacher-cache', '--no_auto_teacher_cache',
+                   dest='no_auto_teacher_cache', action='store_true',
+                   help='read LOSO teacher targets only; do not generate missing caches')
     p.add_argument('--fail_fast', action='store_true')
     return p.parse_args(argv)
 
@@ -175,6 +190,21 @@ def _expected_split_policy(protocol):
     if protocol == 'loso':
         return split_utils.LOSO_SPLIT_POLICY
     raise ValueError(f'unsupported protocol {protocol!r}')
+
+
+def _load_or_ensure_loso_teacher_targets(
+        dataset, teacher, seed, fold, student_data, cache_root, gpu=None,
+        no_auto_teacher_cache=False):
+    """Load strict LOSO targets, generating only a genuinely missing cache."""
+    if no_auto_teacher_cache:
+        return loso_source.load_teacher_targets(
+            dataset, teacher, seed, fold, student_data=student_data,
+            cache_root=cache_root)
+    from experiments.distill.loso_target_cache import ensure_teacher_targets
+
+    return ensure_teacher_targets(
+        dataset, teacher, seed, fold, student_data,
+        cache_root=cache_root, gpu=gpu)
 
 
 def _set_thread_defaults():
@@ -360,7 +390,10 @@ def _load_teacher(dataset, artifact_name, key, seed, y_tr, uid_tr,
 
 
 def _teacher_acc(tch, y_tr):
-    return float((tch['logits'].argmax(1) == y_tr).mean() * 100.0)
+    logits = tch.get('logits')
+    if logits is None:
+        return ''
+    return float((np.asarray(logits).argmax(1) == y_tr).mean() * 100.0)
 
 
 def _student_runtime_cfg(student, dataset, protocol, args, X_tr):
@@ -456,7 +489,7 @@ def _run_method(args, dataset, protocol, teacher, student, teacher_artifact,
     train_logits = details['train_logits'] if details is not None else None
     train_preds = details['train_preds'] if details is not None else None
     final_diagnostics = {}
-    if train_logits is not None:
+    if train_logits is not None and tch.get('logits') is not None:
         final_diagnostics = _final_train_mi_and_agreement(
             tch['logits'], train_logits, train_preds)
     history = details['training_history'] if details is not None else []
@@ -492,11 +525,21 @@ def _run_method(args, dataset, protocol, teacher, student, teacher_artifact,
         'train_count': int(len(y_tr)),
         'test_count': int(len(y_te)),
         'num_classes': int(nc),
-        'teacher_train_acc_pct': round(_teacher_acc(tch, y_tr), 2),
+        'teacher_train_acc_pct': (round(_teacher_acc(tch, y_tr), 2)
+                                  if tch.get('logits') is not None else ''),
         'teacher_train_uid_alignment': json.dumps(
             tch.get('_uid_alignment', {}), sort_keys=True),
         'teacher_artifact_path': tch.get('_artifact_info', {}).get('path', ''),
         'teacher_artifact_sha256': tch.get('_artifact_info', {}).get('sha256', ''),
+        'teacher_target_manifest_path': tch.get('_manifest_path', ''),
+        'teacher_target_manifest_sha256': tch.get('_manifest_sha256', ''),
+        'teacher_checkpoint_sha256': tch.get('_manifest', {}).get(
+            'teacher_checkpoint_sha256', ''),
+        'source_manifest_sha256': tch.get('_source_manifest_sha256', ''),
+        'student_input_manifest_sha256': tch.get('_student_input_manifest_sha256', ''),
+        'student_input_policy_sha256': tch.get('_student_input_policy_sha256', ''),
+        'teacher_input_manifest_sha256': tch.get('_input_manifest_sha256', ''),
+        'teacher_input_policy_sha256': tch.get('_input_policy_sha256', ''),
         'train_uid_hash': train_uid_hash,
         'test_uid_hash': test_uid_hash,
         'split_uid_hash': _sha256_uid_split(uid_tr, uid_te)
@@ -586,6 +629,9 @@ def _default_out_csv(args, datasets, teachers, students, protocol):
         name = f'{datasets[0]}_{protocol}_distill_{teachers[0]}_to_{students[0]}.csv'
     else:
         name = f'{protocol}_distill_matrix.csv'
+    if getattr(args, '_wide_source_default', False):
+        stem, ext = os.path.splitext(name)
+        name = f'{stem}_wide_fre_band{ext or ".csv"}'
     return os.path.join(out_dir, name)
 
 
@@ -610,9 +656,10 @@ def _write_outputs(out_csv, rows, protocol, explicit_out, multi_combo):
                 f'{stem}_{dataset}_{protocol}_{teacher}_to_{student}{ext}',
             )
         else:
+            suffix = '_wide_fre_band' if protocol == 'loso' else ''
             path = os.path.join(
                 out_dir,
-                f'{dataset}_{protocol}_distill_{teacher}_to_{student}.csv',
+                f'{dataset}_{protocol}_distill_{teacher}_to_{student}{suffix}.csv',
             )
         _write_csv(path, combos[(dataset, teacher, student)])
         paths.append((path, len(combos[(dataset, teacher, student)])))
@@ -643,6 +690,11 @@ def _print_summary(rows):
 def _run(args):
     _set_thread_defaults()
     protocol = data.canonical_protocol(args.protocol)
+    args.protocol = protocol
+    args._wide_source_default = protocol == 'loso'
+    if args.artifact_root is None:
+        args.artifact_root = str(LOSO_CACHE_ROOT if protocol == 'loso'
+                                 else artifacts.ARTIFACT_ROOT)
     methods = _parse_methods(args.methods)
     if 'CE_MI' in methods:
         if protocol != 'fewshot':
@@ -655,12 +707,28 @@ def _run(args):
     _validate_names(teachers, students)
     if args.teacher_artifact is not None and len(teachers) != 1:
         raise ValueError('--teacher_artifact is only valid with one teacher')
+    if protocol == 'loso' and args.teacher_artifact is not None:
+        raise ValueError('--teacher_artifact overrides are not supported for canonical wide-source LOSO')
     if args.val_split is not None and args.train_percentage is not None:
         raise ValueError('pass only one of --val_split or --train_percentage')
 
     device = _device(args.gpu)
     expected_policy = _expected_split_policy(protocol)
     out_csv = _default_out_csv(args, datasets, teachers, students, protocol)
+    if args.out_csv is None and protocol == 'loso':
+        out_dir = os.path.dirname(os.path.abspath(out_csv))
+        default_outputs = (
+            [out_csv] if len(datasets) == len(teachers) == len(students) == 1
+            else [os.path.join(
+                out_dir,
+                f'{dataset}_{protocol}_distill_{teacher}_to_{student}_wide_fre_band.csv')
+                  for dataset in datasets for teacher in teachers for student in students]
+        )
+        existing = [path for path in default_outputs if os.path.exists(path)]
+        if existing:
+            raise FileExistsError(
+                f'refusing to overwrite current wide LOSO output(s): {existing}; '
+                'pass an explicit --out_csv to choose an output path')
     print(
         f'[distill] datasets={datasets} teachers={teachers} students={students} '
         f'protocol={protocol} methods={methods} device={device}',
@@ -676,21 +744,42 @@ def _run(args):
     for dataset in datasets:
         dcfg = config.load_dataset_config(dataset)
         keys = args.keys if args.keys is not None else list(range(dcfg['num_subjects']))
-        seeds = args.seeds if args.seeds is not None else dcfg['seeds']
+        seeds = (args.seeds if args.seeds is not None else
+                 dcfg.get('loso', {}).get('seeds', dcfg['seeds'])
+                 if protocol == 'loso' else dcfg['seeds'])
         nc = int(dcfg['num_classes'])
         val_split = args.val_split if args.val_split is not None else dcfg['val_split']
         for teacher in teachers:
             teacher_artifact = _teacher_artifact_name(
                 teacher, protocol, override=args.teacher_artifact)
             for student in students:
+                student_data = (loso_source.load_dataset(
+                    dataset, student, cache_root=args.artifact_root)
+                    if protocol == 'loso' else None)
                 for seed in seeds:
                     for key in keys:
                         try:
-                            X_tr, y_tr, X_te, y_te, uid_tr, _uid_te, subj_tr = _split_cell(
-                                dataset, protocol, key, seed, val_split, args.train_percentage)
-                            tch = _load_teacher(
-                                dataset, teacher_artifact, key, seed, y_tr, uid_tr,
-                                expected_policy, args.artifact_root)
+                            if student_data is not None:
+                                train_mask = student_data.subjects != int(key)
+                                test_mask = ~train_mask
+                                X_tr, y_tr = student_data.x[train_mask], student_data.y[train_mask]
+                                X_te, y_te = student_data.x[test_mask], student_data.y[test_mask]
+                                uid_tr = student_data.sample_uid[train_mask]
+                                uid_te = student_data.sample_uid[test_mask]
+                                subj_tr = student_data.subjects[train_mask]
+                                if not len(y_tr) or not len(y_te):
+                                    raise ValueError(f'{dataset}: fold {key} has an empty train or test split')
+                                tch = {
+                                    '_source_manifest_sha256': student_data.source_manifest_sha256,
+                                    '_student_input_manifest_sha256': (
+                                        student_data.input_manifest_sha256 or ''),
+                                    '_student_input_policy_sha256': student_data.identity.get(
+                                        'input_policy_sha256', ''),
+                                }
+                            else:
+                                X_tr, y_tr, X_te, y_te, uid_tr, uid_te, subj_tr = _split_cell(
+                                    dataset, protocol, key, seed, val_split, args.train_percentage)
+                                tch = None
                             initial_state_dict = None
                             if 'CE_MI' in methods:
                                 # Keep the three MI conditions on one exact
@@ -698,15 +787,51 @@ def _run(args):
                                 initial_state_dict = _capture_initial_state(
                                     args, dataset, student, X_tr, nc, device, seed)
                             for method in methods:
+                                if student_data is not None:
+                                    if method == 'Base':
+                                        method_tch = dict(tch)
+                                    else:
+                                        method_tch = _load_or_ensure_loso_teacher_targets(
+                                            dataset, teacher, seed, key,
+                                            student_data=student_data,
+                                            cache_root=args.artifact_root,
+                                            gpu=args.gpu,
+                                            no_auto_teacher_cache=getattr(
+                                                args, 'no_auto_teacher_cache', False))
+                                        alignment = _check_teacher(
+                                            method_tch, y_tr, uid_tr, expected_policy,
+                                            f'{dataset} {teacher} key={key} seed={seed}')
+                                        method_tch['_uid_alignment'] = alignment
+                                        method_tch['_artifact_info'] = _artifact_info(
+                                            method_tch['_artifact_path'])
+                                        method_tch['_student_input_manifest_sha256'] = (
+                                            student_data.input_manifest_sha256 or '')
+                                        method_tch['_student_input_policy_sha256'] = (
+                                            student_data.identity.get('input_policy_sha256', ''))
+                                elif tch is None:
+                                    method_tch = _load_teacher(
+                                        dataset, teacher_artifact, key, seed, y_tr, uid_tr,
+                                        expected_policy, args.artifact_root)
+                                else:
+                                    method_tch = tch
                                 method_kwargs = {}
                                 if initial_state_dict is not None:
                                     method_kwargs['initial_state_dict'] = initial_state_dict
                                 row = _run_method(
                                     args, dataset, protocol, teacher, student,
                                     teacher_artifact, key, seed, method,
-                                    X_tr, y_tr, X_te, y_te, subj_tr, tch,
+                                    X_tr, y_tr, X_te, y_te, subj_tr, method_tch,
                                     nc, device,
                                     **method_kwargs)
+                                if student_data is not None:
+                                    row.update(
+                                        source_manifest_sha256=student_data.source_manifest_sha256,
+                                        student_input_manifest_sha256=(
+                                            student_data.input_manifest_sha256 or ''),
+                                        student_input_policy_sha256=student_data.identity.get(
+                                            'input_policy_sha256', ''),
+                                        input_manifest_sha256=(
+                                            student_data.input_manifest_sha256 or ''))
                                 rows.append(row)
                                 print(
                                     f'[{dataset}] {teacher}->{student} key={key} '

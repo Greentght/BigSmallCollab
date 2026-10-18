@@ -10,7 +10,9 @@ seeds: [666, 667, 668]
 
 # Current LOSO baseline; top-level split values remain the fewshot defaults.
 loso:
-  source_directory: /data1/llx/BNCI2014004/broadband_0_120hz
+  source_directory: /data1/llx/BNCI2014004/wide_fre_band
+  # Historical manifest identity; the active source path is wide_fre_band.
+  source_variant: broadband_0_120hz
   native_sampling_rate_hz: 250
   selected_session: session_3
   legacy_session: session_3
@@ -33,7 +35,8 @@ loso:
     left_hand: 0
     right_hand: 1
   current_baseline_id: loso_source_refresh_004_5001_v1
-  input_root: /data1/llx/BigSmallcollab/cache/reproductions/loso_source_refresh_004_5001_v1/model_inputs
+  input_root: /data1/llx/BigSmallcollab/cache/artifact-loso/model_inputs
+  teacher_target_root: /data1/llx/BigSmallcollab/cache/artifact-loso/teacher_targets
   result_root: /data1/llx/BigSmallcollab/results/reproductions/loso_source_refresh_004_5001_v1
   seeds:
   - 666

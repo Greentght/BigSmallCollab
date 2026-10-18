@@ -8,7 +8,7 @@ worker_profile: wideband_npy_v3
 supersedes: historical_001_alignment_and_narrowband_source_experiments
 
 source:
-  directory: /data1/llx/BNCI2014001/broadband_0p1_75hz
+  directory: /data1/llx/BNCI2014001/wide_fre_band
   dataset: BNCI2014001
   export_script: experiments/finetune/export_bnci14001_all_sessions.py
   array_shape: [5184, 22, 1001]
@@ -77,7 +77,8 @@ models:
     config_source: configs/models/{model}.yaml::finetune.{dataset}.loso
 
 storage:
-  inputs: /data1/llx/BigSmallcollab/cache/eegfm_alignment_v2/model_inputs/wideband_npy_v3
+  inputs: /data1/llx/BigSmallcollab/cache/artifact-loso/model_inputs
+  teacher_targets: /data1/llx/BigSmallcollab/cache/artifact-loso/teacher_targets
   results: /data1/llx/BigSmallcollab/results/reproductions/loso_config_alignment_v2/wideband_npy_v3
   path_policy: retain_completed_artifact_paths_to_preserve_existing_baseline_and_cache_identity
   immutable_cache_policy: reuse_when_source_manifest_and_resolved_profile_match

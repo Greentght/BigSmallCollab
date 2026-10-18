@@ -16,8 +16,9 @@ from scipy import signal
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
-from experiments.storage import (DATA_CACHE_ROOT, RESULTS_ROOT,
-                                 require_external_output, resolve_local_file)
+from experiments.storage import (DATA_CACHE_ROOT, LOSO_INPUT_ROOT, RESULTS_ROOT,
+                                 require_external_output, require_loso_cache_output,
+                                 resolve_local_file)
 OLD_DATA = Path('/data1/llx')
 SPEC_PATH = ROOT / 'configs/protocols/loso_001.yaml'
 SOURCE_ROOT = DATA_CACHE_ROOT / 'eegfm_alignment_v2/rebuilt'
@@ -188,18 +189,21 @@ def bridge_info(dataset: str, variant: str):
     if variant == 'rebuilt_source':
         return new_x, rebuilt_idx, y_legacy, subjects, uids, new_manifest
 
-    old_meta = pd.read_csv(OLD_DATA / 'BNCI2014001' / 'meta.csv')
-    old_labels = np.load(OLD_DATA / 'BNCI2014001' / 'labels.npy', allow_pickle=True).astype(str)
-    old_x = np.load(OLD_DATA / 'BNCI2014001' / 'X.npy', mmap_mode='r')
+    old_meta_path = resolve_local_file(OLD_DATA / 'BNCI2014001' / 'meta.csv')
+    old_labels_path = resolve_local_file(OLD_DATA / 'BNCI2014001' / 'labels.npy')
+    old_x_path = resolve_local_file(OLD_DATA / 'BNCI2014001' / 'X.npy')
+    old_meta = pd.read_csv(old_meta_path)
+    old_labels = np.load(old_labels_path, allow_pickle=True).astype(str)
+    old_x = np.load(old_x_path, mmap_mode='r')
     legacy_rows = mapping.legacy_raw_row.to_numpy(dtype=np.int64)
     if (not np.array_equal(old_meta.session.to_numpy()[legacy_rows],
                            np.asarray(['session_T'] * len(mapping)))
             or not np.array_equal(old_labels[legacy_rows], np.asarray(class_names))):
         raise RuntimeError('legacy source rows fail selected-session/class verification')
     return old_x, legacy_rows, y_legacy, subjects, uids, {
-        'source_dataset': 'BNCI2014001', 'legacy_meta_sha256': sha256(OLD_DATA/'BNCI2014001/meta.csv'),
-        'legacy_labels_sha256': sha256(OLD_DATA/'BNCI2014001/labels.npy'),
-        'legacy_x_sha256': sha256(OLD_DATA/'BNCI2014001/X.npy'),
+        'source_dataset': 'BNCI2014001', 'legacy_meta_sha256': sha256(old_meta_path),
+        'legacy_labels_sha256': sha256(old_labels_path),
+        'legacy_x_sha256': sha256(old_x_path),
         'mapping_sha256': sha256(folder/'legacy_row_mapping.csv'),
         'rebuilt_source_manifest_sha256': sha256(folder/'manifest.json'),
     }
@@ -314,7 +318,10 @@ def prepare(profile: str, model: str, dataset: str, variant: str, spec: dict,
         if set(np.unique(y).tolist()) != expected_class:
             raise RuntimeError(f'{dataset}: rebuilt labels do not cover expected classes')
 
-    output = require_external_output(INPUT_ROOT / profile / dataset / model / variant)
+    if profile == 'wideband_npy_v3':
+        output = require_loso_cache_output(LOSO_INPUT_ROOT / dataset / model)
+    else:
+        output = require_external_output(INPUT_ROOT / profile / dataset / model / variant)
     if valid_existing_input(output, profile, dataset, model, variant, cfg, src_manifest):
         print(f'[skip-valid] {profile} {dataset} {model} {variant}', flush=True)
         return

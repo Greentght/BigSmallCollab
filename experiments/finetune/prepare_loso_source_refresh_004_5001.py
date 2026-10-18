@@ -17,7 +17,7 @@ from scipy.signal import resample as scipy_resample
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 import config
-from experiments.storage import require_external_output, resolve_local_file
+from experiments.storage import require_loso_cache_output, resolve_local_file
 
 DATA_ROOT = Path('/data1/llx')
 DATASETS = {}
@@ -26,7 +26,7 @@ for _dataset, _meta in {'BNCI2014004': 'meta004.csv', 'BNCI2015001': 'meta.csv'}
     _current = config.load_loso_dataset_config(_dataset)
     DATASETS[_dataset] = dict(
         source_directory=_current['source_directory'],
-        source_variant=Path(_current['source_directory']).name,
+        source_variant=_current.get('source_variant', Path(_current['source_directory']).name),
         session=_current['selected_session'],
         fs_hz=int(_current['native_sampling_rate_hz']),
         per_subject_trials=_current['per_subject_trials'],
@@ -114,7 +114,8 @@ def validate_input_identity(dataset: str, model: str, manifest: dict,
     expected = {
         'protocol': source_cfg['current_baseline_id'],
         'dataset': dataset, 'model': model,
-        'source_variant': Path(source_cfg['source_directory']).name,
+        'source_variant': source_cfg.get(
+            'source_variant', Path(source_cfg['source_directory']).name),
         'source_manifest_sha256': sha256(source_path),
         'source_X_sha256': source['files']['X.npy']['sha256'],
         'source_filter_hz': source['source_filter_hz'],
@@ -204,7 +205,7 @@ def prepare_model(dataset: str, model: str, overwrite: bool = False) -> None:
     cfg = DATASETS[dataset]
     model_cfg = config.load_model_config(model, dataset, 'loso')
     source_cfg, pipeline = current_input_policy(dataset, model, model_cfg)
-    output = require_external_output(Path(source_cfg['input_root']) / dataset / model)
+    output = require_loso_cache_output(Path(source_cfg['input_root']) / dataset / model)
     manifest_path = output / 'manifest.json'
     if manifest_path.exists():
         if overwrite:

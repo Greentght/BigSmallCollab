@@ -21,6 +21,7 @@ import yaml
 from experiments import config_loader
 from experiments.distill import run_distill as legacy
 from experiments.storage import external_path, require_external_output, resolve_local_file
+from data import loso_source
 
 
 class _Tee:
@@ -40,9 +41,22 @@ class _Tee:
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(
         prog="python experiments/distill/run_distill.py",
-        description="Run a distillation experiment from configs/experiments/*.yaml")
+        description="Run a distillation method matrix YAML from configs/experiments/.")
     parser.add_argument("--config", required=True)
+    parser.add_argument("--datasets", nargs="+", default=None,
+                        help="select datasets from the method config")
+    parser.add_argument("--seeds", nargs="+", type=int, default=None,
+                        help="select seeds from the method config/dataset defaults")
+    parser.add_argument("--variants", nargs="+", default=None,
+                        help="select method variants from a variant-matrix config")
+    parser.add_argument("--teachers", "--teacher", nargs="+", default=None,
+                        help="select teacher models from the method config")
+    parser.add_argument("--students", "--student", nargs="+", default=None,
+                        help="select student models from the method config")
     parser.add_argument("--gpu", type=int, default=None)
+    parser.add_argument("--no-auto-teacher-cache", "--no_auto_teacher_cache",
+                        dest="no_auto_teacher_cache", action="store_true",
+                        help="read LOSO teacher targets only; do not generate missing caches")
     write_mode = parser.add_mutually_exclusive_group()
     write_mode.add_argument("--resume", action="store_true")
     write_mode.add_argument("--force", action="store_true")
@@ -58,7 +72,7 @@ def _device(gpu):
     return "cpu"
 
 
-def _namespace(spec, artifact_root):
+def _namespace(spec, artifact_root, no_auto_teacher_cache=False, gpu=None):
     params = dict(spec["params"])
     training = dict(spec["training"])
     return SimpleNamespace(
@@ -78,6 +92,8 @@ def _namespace(spec, artifact_root):
         weight_decay=float(training["weight_decay"]),
         batch_size=int(training["batch_size"]),
         artifact_root=str(artifact_root),
+        no_auto_teacher_cache=bool(no_auto_teacher_cache),
+        gpu=gpu,
     )
 
 
@@ -150,8 +166,15 @@ def _config_sha256(path):
     return digest.hexdigest()
 
 
-def _run_key(dataset, subject, seed, method):
-    return f'{dataset}__S{int(subject) + 1}__seed{int(seed)}__{method}'
+def _run_key(dataset, subject, seed, method, artifact_run_id=None):
+    key = f'{dataset}__S{int(subject) + 1}__seed{int(seed)}__{method}'
+    return f'{artifact_run_id}__{key}' if artifact_run_id else key
+
+
+def _condition_run_id(spec, method):
+    if method == 'Base' and spec.get('control_run_id'):
+        return spec['control_run_id']
+    return spec['run_id']
 
 
 def _artifact_paths(run_root):
@@ -163,7 +186,8 @@ def _artifact_paths(run_root):
 
 
 def _artifact_file_map(run_root, row):
-    key = _run_key(row['dataset'], row['key'], row['seed'], row['method'])
+    key = _run_key(row['dataset'], row['key'], row['seed'], row['method'],
+                   row.get('artifact_run_id'))
     roots = _artifact_paths(run_root)
     return {
         'history': roots['history'] / f'{key}.json',
@@ -174,6 +198,18 @@ def _artifact_file_map(run_root, row):
 
 def _row_complete(row, run_root):
     if row.get('failure_status') != 'complete':
+        return False
+    if row.get('protocol') == 'loso':
+        if not row.get('source_manifest_sha256'):
+            return False
+        if not row.get('student_input_policy_sha256'):
+            return False
+        if row.get('method') != 'Base' and not row.get('teacher_input_policy_sha256'):
+            return False
+    if row.get('artifact_run_id') is None and row.get('config_name') not in {
+            'distill_mi', 'distill_mi_lam05'}:
+        # Older generic matrices shared checkpoint paths across protocols and
+        # grid cells, so their rows cannot prove which condition a file belongs to.
         return False
     for value in (row.get('acc'), row.get('test_balanced_accuracy'), row.get('kappa')):
         try:
@@ -188,6 +224,11 @@ def _row_complete(row, run_root):
         checkpoint = torch.load(resolve_local_file(files['checkpoint']), map_location='cpu')
         if not isinstance(checkpoint, dict) or not checkpoint.get('complete', False):
             return False
+        expected_run_key = _run_key(
+            row['dataset'], row['key'], row['seed'], row['method'],
+            row.get('artifact_run_id'))
+        if checkpoint.get('run_key') != expected_run_key:
+            return False
         history = json.loads(resolve_local_file(files['history']).read_text())
         if not history or len(history) != int(row.get('student_epochs', 0)):
             return False
@@ -196,9 +237,82 @@ def _row_complete(row, run_root):
     return True
 
 
+def _verify_resume_data_identity(specs, prior_rows, selected_row_keys,
+                                 no_auto_teacher_cache=False, gpu=None):
+    """Reject completed rows whose recorded data identity differs from cache."""
+    spec_by_row = {}
+    for spec in specs:
+        keys = (spec.get('subjects') if spec.get('subjects') is not None else
+                list(range(int(legacy.config.load_dataset_config(spec['dataset'])['num_subjects']))))
+        seeds = spec.get('seeds')
+        if seeds is None:
+            dcfg = legacy.config.load_dataset_config(spec['dataset'])
+            seeds = dcfg.get('loso', {}).get('seeds', dcfg['seeds']) \
+                if spec['protocol'] == 'loso' else dcfg['seeds']
+        for key in keys:
+            for seed in seeds:
+                for method in spec['methods']:
+                    run_id = _condition_run_id(spec, method)
+                    row_key = _row_key({
+                        'run_id': run_id, 'dataset': spec['dataset'],
+                        'teacher': spec['teacher'], 'student': spec['student'],
+                        'key': key, 'seed': seed, 'method': method,
+                    })
+                    spec_by_row[row_key] = (spec, int(key), int(seed), method)
+
+    dataset_cache = {}
+    target_cache = {}
+    for row in prior_rows:
+        row_key = _row_key(row)
+        if row_key not in selected_row_keys or row.get('failure_status') != 'complete':
+            continue
+        selection = spec_by_row.get(row_key)
+        if selection is None:
+            continue
+        spec, fold, seed, method = selection
+        if spec['protocol'] != 'loso':
+            continue
+        cache_key = (spec['dataset'], spec['student'], spec['artifact_root'])
+        if cache_key not in dataset_cache:
+            dataset_cache[cache_key] = loso_source.load_dataset(
+                spec['dataset'], spec['student'],
+                cache_root=config_loader.resolve_path(spec['artifact_root']))
+        student_data = dataset_cache[cache_key]
+        expected = {
+            'source_manifest_sha256': student_data.source_manifest_sha256,
+            'student_input_manifest_sha256': student_data.input_manifest_sha256 or '',
+            'student_input_policy_sha256': student_data.identity.get(
+                'input_policy_sha256', ''),
+        }
+        if method != 'Base':
+            target_key = (spec['dataset'], spec['teacher'], seed, fold,
+                          spec['student'], spec['artifact_root'])
+            if target_key not in target_cache:
+                target_cache[target_key] = legacy._load_or_ensure_loso_teacher_targets(
+                    spec['dataset'], spec['teacher'], seed, fold,
+                    student_data=student_data,
+                    cache_root=config_loader.resolve_path(spec['artifact_root']),
+                    gpu=gpu,
+                    no_auto_teacher_cache=no_auto_teacher_cache)
+            targets = target_cache[target_key]
+            expected.update({
+                'teacher_input_manifest_sha256': targets['_input_manifest_sha256'] or '',
+                'teacher_input_policy_sha256': targets['_input_policy_sha256'] or '',
+                'teacher_target_manifest_sha256': targets['_manifest_sha256'],
+                'teacher_checkpoint_sha256': targets['_manifest'].get(
+                    'teacher_checkpoint_sha256', ''),
+            })
+        for field, current in expected.items():
+            recorded = row.get(field, '')
+            if recorded != current:
+                raise ValueError(
+                    f"--resume refuses completed row {_row_key(row)}: {field} "
+                    f"recorded={recorded!r}, current={current!r}")
+
+
 def _write_rows(path, rows):
     priority = [
-        "config_name", "run_id", "grid_index", "dataset", "protocol",
+        "config_name", "run_id", "variant", "grid_index", "dataset", "protocol",
         "teacher", "student", "teacher_artifact", "subject", "key", "session", "seed",
         "method", "acc", "kappa", "n_train", "n_test", "num_classes",
         "condition_label", "test_accuracy", "test_balanced_accuracy", "test_kappa",
@@ -229,14 +343,21 @@ def _build_manifest(specs):
             keys = list(range(int(dcfg['num_subjects'])))
         seeds = spec.get('seeds')
         if seeds is None:
-            seeds = list(dcfg['seeds'])
+            seeds = list(dcfg.get('loso', {}).get('seeds', dcfg['seeds'])
+                         if spec['protocol'] == 'loso' else dcfg['seeds'])
         for key in keys:
             for seed in seeds:
                 for method in spec['methods']:
+                    condition_run_id = _condition_run_id(spec, method)
                     manifest.append({
-                        'run_key': _run_key(spec['dataset'], key, seed, method),
+                        'run_key': _run_key(
+                            spec['dataset'], key, seed, method,
+                            None if spec['method'] == 'mi' else condition_run_id),
                         'config_name': spec['config_name'],
-                        'run_id': spec['run_id'],
+                        'run_id': condition_run_id,
+                        'variant': spec.get('variant', ''),
+                        'artifact_run_id': (
+                            '' if spec['method'] == 'mi' else condition_run_id),
                         'dataset': spec['dataset'],
                         'subject': int(key) + 1,
                         'key': int(key),
@@ -251,8 +372,19 @@ def _build_manifest(specs):
     return manifest
 
 
+def _merge_manifest(existing, current):
+    """Retain statuses from earlier runtime selections in the same output."""
+    merged = {str(row['run_key']): dict(row) for row in existing}
+    for row in current:
+        # Revalidate a selected cell from its checkpoint before considering it
+        # complete; prior manifest status alone is not enough.
+        merged[str(row['run_key'])] = dict(row)
+    return list(merged.values())
+
+
 def _update_manifest(manifest, row, status, reason=''):
-    run_key = _run_key(row['dataset'], row['key'], row['seed'], row['method'])
+    run_key = _run_key(row['dataset'], row['key'], row['seed'], row['method'],
+                       row.get('artifact_run_id'))
     for item in manifest:
         if item['run_key'] == run_key:
             item['status'] = status
@@ -269,7 +401,8 @@ def _upsert_rows(rows, incoming):
 
 def _write_manifest(path, manifest):
     fields = [
-        'run_key', 'config_name', 'run_id', 'dataset', 'subject', 'key', 'seed',
+        'run_key', 'config_name', 'run_id', 'variant', 'artifact_run_id', 'dataset',
+        'subject', 'key', 'seed',
         'protocol', 'teacher', 'student', 'condition', 'status', 'failure_reason',
     ]
     _atomic_write_csv(path, manifest, fields)
@@ -312,36 +445,60 @@ def _load_existing_complete_rows(output, run_root):
 
 
 def _run_spec(spec, device, existing_keys, fail_fast, run_root=None,
-              manifest=None, total_runs=None, persist=None):
+              manifest=None, total_runs=None, progress_keys=None, persist=None,
+              no_auto_teacher_cache=False, gpu=None):
     dcfg = legacy.config.load_dataset_config(spec["dataset"])
     keys = spec.get("subjects")
     if keys is None:
         keys = list(range(dcfg["num_subjects"]))
     seeds = spec.get("seeds")
     if seeds is None:
-        seeds = list(dcfg["seeds"])
+        if spec["protocol"] == 'loso':
+            seeds = list(dcfg.get('loso', {}).get('seeds', dcfg['seeds']))
+        else:
+            seeds = list(dcfg["seeds"])
     val_split = spec.get("val_split")
     if val_split is None:
         val_split = dcfg["val_split"]
-    args = _namespace(spec, config_loader.resolve_path(spec["artifact_root"]))
+    args = _namespace(
+        spec, config_loader.resolve_path(spec["artifact_root"]),
+        no_auto_teacher_cache=no_auto_teacher_cache, gpu=gpu)
     expected_policy = legacy._expected_split_policy(spec["protocol"])
     teacher_artifact = legacy._teacher_artifact_name(
         spec["teacher"], spec["protocol"])
+    student_data = (loso_source.load_dataset(
+        spec['dataset'], model=spec['student'], cache_root=args.artifact_root)
+        if spec['protocol'] == 'loso' else None)
     rows, errors = [], []
     for seed in seeds:
         for key in keys:
-            prefix = (spec["run_id"], spec["dataset"], spec["teacher"],
-                      spec["student"], str(key), str(seed))
-            if all(prefix + (method,) in existing_keys for method in spec["methods"]):
+            prefix = (spec["dataset"], spec["teacher"], spec["student"],
+                      str(key), str(seed))
+            pending_methods = [
+                method for method in spec["methods"]
+                if ((_condition_run_id(spec, method),) + prefix + (method,))
+                not in existing_keys
+            ]
+            if not pending_methods:
                 print(f"[resume] skip dataset={spec['dataset']} key={key} seed={seed} run_id={spec['run_id']}", flush=True)
                 continue
             try:
-                X_tr, y_tr, X_te, y_te, uid_tr, uid_te, subj_tr = legacy._split_cell(
-                    spec["dataset"], spec["protocol"], key, seed,
-                    val_split, spec.get("train_percentage"))
-                tch = legacy._load_teacher(
-                    spec["dataset"], teacher_artifact, key, seed, y_tr, uid_tr,
-                    expected_policy, args.artifact_root)
+                if student_data is not None:
+                    train_mask = student_data.subjects != int(key)
+                    test_mask = ~train_mask
+                    X_tr = student_data.x[train_mask]
+                    y_tr = student_data.y[train_mask]
+                    X_te = student_data.x[test_mask]
+                    y_te = student_data.y[test_mask]
+                    uid_tr = student_data.sample_uid[train_mask]
+                    uid_te = student_data.sample_uid[test_mask]
+                    subj_tr = student_data.subjects[train_mask]
+                    if not len(y_te) or not len(y_tr):
+                        raise ValueError(f'{spec["dataset"]}: fold {key} has an empty train or test split')
+                else:
+                    X_tr, y_tr, X_te, y_te, uid_tr, uid_te, subj_tr = legacy._split_cell(
+                        spec["dataset"], spec["protocol"], key, seed,
+                        val_split, spec.get("train_percentage"))
                 # The MI pilot compares three conditions on the exact same
                 # fold initialization.  Capture one deterministic state once
                 # and load it into Base/KD_all/CE_MI; no checkpoint is written.
@@ -350,8 +507,9 @@ def _run_spec(spec, device, existing_keys, fail_fast, run_root=None,
                     initial_state_dict = legacy._capture_initial_state(
                         args, spec["dataset"], spec["student"], X_tr,
                         int(dcfg["num_classes"]), device, seed)
-                for method in spec["methods"]:
-                    row_key = prefix + (method,)
+                for method in pending_methods:
+                    condition_run_id = _condition_run_id(spec, method)
+                    row_key = (condition_run_id,) + prefix + (method,)
                     if row_key in existing_keys:
                         continue
                     started = time.time()
@@ -360,6 +518,31 @@ def _run_spec(spec, device, existing_keys, fail_fast, run_root=None,
                         method_kwargs = {}
                         if initial_state_dict is not None:
                             method_kwargs["initial_state_dict"] = initial_state_dict
+                        if method == 'Base':
+                            # A supervised CE control does not depend on teacher
+                            # targets, so it remains runnable while a separate
+                            # KD target is unavailable.
+                            tch = {}
+                        elif student_data is not None:
+                            tch = legacy._load_or_ensure_loso_teacher_targets(
+                                spec['dataset'], spec['teacher'], seed, key,
+                                student_data=student_data,
+                                cache_root=args.artifact_root,
+                                gpu=args.gpu,
+                                no_auto_teacher_cache=args.no_auto_teacher_cache)
+                            alignment = legacy._check_teacher(
+                                tch, y_tr, uid_tr, expected_policy,
+                                f'{spec["dataset"]} {spec["teacher"]} key={key} seed={seed}')
+                            tch['_uid_alignment'] = alignment
+                            tch['_artifact_info'] = legacy._artifact_info(tch['_artifact_path'])
+                            tch['_student_input_manifest_sha256'] = (
+                                student_data.input_manifest_sha256 or '')
+                            tch['_student_input_policy_sha256'] = student_data.identity.get(
+                                'input_policy_sha256', '')
+                        else:
+                            tch = legacy._load_teacher(
+                                spec["dataset"], teacher_artifact, key, seed, y_tr, uid_tr,
+                                expected_policy, args.artifact_root)
                         row, details = legacy._run_method(
                             args, spec["dataset"], spec["protocol"], spec["teacher"],
                             spec["student"], teacher_artifact, key, seed, method,
@@ -367,8 +550,24 @@ def _run_spec(spec, device, existing_keys, fail_fast, run_root=None,
                             int(dcfg["num_classes"]), device,
                             uid_tr=uid_tr, uid_te=uid_te, return_details=True,
                             **method_kwargs)
+                        if student_data is not None:
+                            row.update(
+                                source_manifest_sha256=student_data.source_manifest_sha256,
+                                student_input_manifest_sha256=(
+                                    student_data.input_manifest_sha256 or ''),
+                                student_input_policy_sha256=student_data.identity.get(
+                                    'input_policy_sha256', ''),
+                                input_manifest_sha256=(
+                                    student_data.input_manifest_sha256 or ''),
+                                data_source_path=str(student_data.source_path),
+                                data_input_path=(str(student_data.input_manifest_path.parent)
+                                                 if student_data.input_manifest_path else ''),
+                            )
                         row.update(config_name=spec["config_name"],
-                                   run_id=spec["run_id"], grid_index=spec["grid_index"],
+                                   run_id=condition_run_id, grid_index=spec["grid_index"],
+                                   variant=spec.get("variant", ""),
+                                   artifact_run_id=(
+                                       '' if spec['method'] == 'mi' else condition_run_id),
                                    runtime_seconds=round(time.time() - started, 3))
                         if run_root is not None:
                             model = details.pop('model')
@@ -379,7 +578,9 @@ def _run_spec(spec, device, existing_keys, fail_fast, run_root=None,
                             }
                             checkpoint_payload = {
                                 'complete': True,
-                                'run_key': _run_key(spec['dataset'], key, seed, method),
+                                'run_key': _run_key(
+                                    spec['dataset'], key, seed, method,
+                                    None if spec['method'] == 'mi' else condition_run_id),
                                 'dataset': spec['dataset'],
                                 'subject': int(key) + 1,
                                 'seed': int(seed),
@@ -403,12 +604,15 @@ def _run_spec(spec, device, existing_keys, fail_fast, run_root=None,
                             else row.get('failure_status', 'invalid_metrics'))
                         rows.append(row)
                         existing_keys.add(row_key)
+                        if progress_keys is not None:
+                            progress_keys.add(_row_key(row))
                         if manifest is not None:
                             _update_manifest(manifest, row, row['failure_status'],
                                              row.get('failure_reason', ''))
                         if persist is not None:
                             persist([row])
-                        completed = len(existing_keys)
+                        completed = (len(progress_keys) if progress_keys is not None
+                                     else len(existing_keys))
                         progress = (f'{completed}/{total_runs}'
                                     if total_runs is not None else str(completed))
                         print(
@@ -420,7 +624,10 @@ def _run_spec(spec, device, existing_keys, fail_fast, run_root=None,
                         reason = str(exc)
                         failure = {
                             'config_name': spec['config_name'],
-                            'run_id': spec['run_id'],
+                            'run_id': condition_run_id,
+                            'variant': spec.get('variant', ''),
+                            'artifact_run_id': (
+                                '' if spec['method'] == 'mi' else condition_run_id),
                             'grid_index': spec['grid_index'],
                             'dataset': spec['dataset'],
                             'subject': int(key) + 1,
@@ -436,6 +643,19 @@ def _run_spec(spec, device, existing_keys, fail_fast, run_root=None,
                             'failure_reason': reason,
                             'runtime_seconds': round(time.time() - started, 3),
                         }
+                        if student_data is not None:
+                            failure.update(
+                                source_manifest_sha256=student_data.source_manifest_sha256,
+                                student_input_manifest_sha256=(
+                                    student_data.input_manifest_sha256 or ''),
+                                student_input_policy_sha256=student_data.identity.get(
+                                    'input_policy_sha256', ''),
+                                input_manifest_sha256=(
+                                    student_data.input_manifest_sha256 or ''),
+                                data_source_path=str(student_data.source_path),
+                                data_input_path=(str(student_data.input_manifest_path.parent)
+                                                 if student_data.input_manifest_path else ''),
+                            )
                         rows.append(failure)
                         if manifest is not None:
                             _update_manifest(manifest, failure, 'failed', reason)
@@ -453,9 +673,13 @@ def _run_spec(spec, device, existing_keys, fail_fast, run_root=None,
                 errors.append(message)
                 print(f"[ERR] {message}", flush=True)
                 for method in spec['methods']:
+                    condition_run_id = _condition_run_id(spec, method)
                     row = {
                         'config_name': spec['config_name'],
-                        'run_id': spec['run_id'],
+                        'run_id': condition_run_id,
+                        'variant': spec.get('variant', ''),
+                        'artifact_run_id': (
+                            '' if spec['method'] == 'mi' else condition_run_id),
                         'grid_index': spec['grid_index'],
                         'dataset': spec['dataset'],
                         'subject': int(key) + 1,
@@ -811,7 +1035,61 @@ def _write_report(run_root, loaded, rows, subject_rows, dataset_rows, macro,
     return conclusion
 
 
-def run(args, loaded):
+def _select_model_runs(loaded, teachers=None, students=None):
+    """Filter an expanded matrix by model pair and reattach shared controls."""
+    if teachers is None and students is None:
+        return loaded
+    if loaded.get("config", {}).get("method") == "mi":
+        raise ValueError("the formal CE+MI few-shot matrix does not support model filtering")
+    if teachers is None or students is None:
+        raise ValueError("pass both --teachers and --students to select model pairs")
+
+    runs = loaded["runs"]
+    available_teachers = list(dict.fromkeys(spec["teacher"] for spec in runs))
+    available_students = list(dict.fromkeys(spec["student"] for spec in runs))
+    selected_teachers = list(teachers)
+    selected_students = list(students)
+    for option, selected, available in (
+            ("--teachers", selected_teachers, available_teachers),
+            ("--students", selected_students, available_students)):
+        if not selected or len(set(selected)) != len(selected):
+            raise ValueError(f"{option} must be non-empty and unique")
+        unknown = [value for value in selected if value not in available]
+        if unknown:
+            raise ValueError(
+                f"{option} contains values outside this config: {unknown}; "
+                f"available: {available}")
+
+    available_pairs = {(spec["teacher"], spec["student"]) for spec in runs}
+    missing_pairs = [
+        (teacher, student) for teacher in selected_teachers
+        for student in selected_students
+        if (teacher, student) not in available_pairs
+    ]
+    if missing_pairs:
+        raise ValueError(
+            f"model selection contains pairs outside this config: {missing_pairs}")
+
+    selected_runs = [
+        dict(spec) for spec in runs
+        if spec["teacher"] in selected_teachers
+        and spec["student"] in selected_students
+    ]
+    if not selected_runs:
+        raise ValueError("model selection produced no runs")
+    config = dict(loaded["config"])
+    selection = dict(config.get("runtime_selection") or {})
+    selection.update({"teachers": selected_teachers, "students": selected_students})
+    config["runtime_selection"] = selection
+    if config.get("variants") is not None:
+        config_loader._assign_variant_controls(selected_runs, config)
+    selected_loaded = dict(loaded)
+    selected_loaded["config"] = config
+    selected_loaded["runs"] = selected_runs
+    return selected_loaded
+
+
+def _run_formal_ce_mi(args, loaded):
     config_loader.require_experiment_type(loaded, "distill")
     legacy._set_thread_defaults()
     specs = loaded["runs"]
@@ -994,8 +1272,11 @@ def run(args, loaded):
         new_rows, spec_errors = _run_spec(
             spec, device, existing_keys,
             bool(args.fail_fast or spec.get("fail_fast", False)),
-            run_root=run_root, manifest=manifest, total_runs=len(manifest),
-            persist=persist)
+            run_root=run_root, manifest=manifest,
+            total_runs=len(manifest),
+            persist=persist,
+            no_auto_teacher_cache=args.no_auto_teacher_cache,
+            gpu=args.gpu)
         persist(new_rows)
         errors.extend(spec_errors)
     _write_rows(output, rows)
@@ -1041,10 +1322,158 @@ def run(args, loaded):
     return 1 if errors else 0
 
 
+def _run_method_matrix(args, loaded):
+    config_loader.require_experiment_type(loaded, "distill")
+    specs = loaded["runs"]
+    if not specs:
+        raise ValueError("resolved distillation config contains no runs")
+    output = config_loader.resolve_path(specs[0]["output"])
+    run_root = output.with_suffix("")
+    resolved = config_loader.resolved_path(output, specs[0]["config_name"])
+    manifest_path = run_root / "run_manifest.csv"
+    provenance_path = run_root / "execution_provenance.json"
+    run_results_path = run_root / "results_per_run.csv"
+    run_root_contents = (
+        [path for path in run_root.iterdir() if path.name != "execution.log"]
+        if run_root.is_dir() else []
+    )
+    if (output.exists() or resolved.exists() or run_root_contents) \
+            and not (args.force or args.resume):
+        existing = output if output.exists() else resolved if resolved.exists() else run_root_contents[0]
+        raise FileExistsError(
+            f"refusing to overwrite formal output target {existing}; "
+            "use --resume or --force")
+    selected_manifest = _build_manifest(specs)
+    selected_row_keys = {
+        _row_key({
+            'run_id': item['run_id'], 'dataset': item['dataset'],
+            'teacher': item['teacher'], 'student': item['student'],
+            'key': item['key'], 'seed': item['seed'],
+            'method': item['condition'],
+        })
+        for item in selected_manifest
+    }
+    if args.resume:
+        prior_path = output if output.exists() else run_results_path
+        prior_for_check = _read_rows(prior_path)
+        if prior_for_check:
+            _verify_resume_data_identity(
+                specs, prior_for_check, selected_row_keys,
+                no_auto_teacher_cache=args.no_auto_teacher_cache,
+                gpu=args.gpu)
+    run_root.mkdir(parents=True, exist_ok=True)
+    config_loader.save_resolved(loaded, output)
+
+    manifest = selected_manifest
+    if args.resume and manifest_path.exists():
+        manifest = _merge_manifest(_read_rows(manifest_path), selected_manifest)
+    git_before = {
+        "commit": _git_value("rev-parse", "HEAD"),
+        "status_short": _git_value("status", "--short"),
+    }
+    source_path = config_loader.resolve_path(loaded["source_path"])
+    provenance = {
+        "status": "running",
+        "source_config": str(source_path),
+        "config_sha256": _config_sha256(source_path),
+        "runtime_selection": loaded.get("config", {}).get("runtime_selection"),
+        "datasets": sorted({item["dataset"] for item in manifest}),
+        "protocols": sorted({item["protocol"] for item in manifest}),
+        "seeds": sorted({int(item["seed"]) for item in manifest}),
+        "git": {"before": git_before},
+        "gpu": {"physical_gpu": os.environ.get("CUDA_VISIBLE_DEVICES", "not-set"),
+                "requested_logical_gpu": args.gpu, "device": None},
+        "created_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+    }
+    _atomic_write_json(provenance_path, provenance)
+    _write_manifest(manifest_path, manifest)
+
+    device = _device(args.gpu)
+    provenance["gpu"]["device"] = device
+    _atomic_write_json(provenance_path, provenance)
+    prior_path = output if output.exists() else run_results_path
+    prior_all = _upsert_rows([], _read_rows(prior_path) if args.resume else [])
+    prior_complete = (_load_existing_complete_rows(prior_path, run_root)
+                      if args.resume and prior_path.exists() else [])
+    existing_keys = {_row_key(row) for row in prior_complete}
+    progress_keys = {key for key in existing_keys if key in selected_row_keys}
+    for row in prior_complete:
+        _update_manifest(manifest, row, "complete", "")
+    rows = list(prior_all)
+    errors = []
+
+    def persist(incoming):
+        nonlocal rows
+        rows = _upsert_rows(rows, incoming)
+        _write_rows(output, rows)
+        _write_rows(run_results_path, rows)
+        _write_manifest(manifest_path, manifest)
+
+    print(f"[config] {loaded['source_path']} type=distill specs={len(specs)} "
+          f"device={device} resume={args.resume}", flush=True)
+    print(f"[resolved] {resolved}", flush=True)
+    for spec in specs:
+        new_rows, spec_errors = _run_spec(
+            spec, device, existing_keys,
+            bool(args.fail_fast or spec.get("fail_fast", False)),
+            run_root=run_root, manifest=manifest,
+            total_runs=len(selected_manifest),
+            progress_keys=progress_keys, persist=persist,
+            no_auto_teacher_cache=args.no_auto_teacher_cache,
+            gpu=args.gpu)
+        persist(new_rows)
+        errors.extend(spec_errors)
+    _write_rows(output, rows)
+    _write_rows(run_results_path, rows)
+    _write_manifest(manifest_path, manifest)
+    provenance.update({
+        "status": "complete" if not errors else "completed_with_failures",
+        "finished_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+        "git": {"before": git_before,
+                "after": {"commit": _git_value("rev-parse", "HEAD"),
+                          "status_short": _git_value("status", "--short")}},
+        "completed_condition_runs": sum(
+            item["status"] == "complete" for item in manifest),
+        "failed_condition_runs": sum(
+            item["status"] == "failed" for item in manifest),
+    })
+    _atomic_write_json(provenance_path, provenance)
+    print(f"[write] {output} rows={len(rows)}", flush=True)
+    print(f"[write] formal directory={run_root}", flush=True)
+    if errors:
+        print(f"[errors] {len(errors)} cells failed", flush=True)
+        for error in errors:
+            print(f"  {error}", flush=True)
+    return 1 if errors else 0
+
+
+def run(args, loaded):
+    if loaded.get("config", {}).get("method") == "mi":
+        return _run_formal_ce_mi(args, loaded)
+    return _run_method_matrix(args, loaded)
+
+
 def main(argv=None):
     args = parse_args(argv)
     loaded = config_loader.load_experiment(args.config)
     config_loader.require_experiment_type(loaded, "distill")
+    model_filters = args.teachers is not None or args.students is not None
+    if loaded["config"]["method"] == "mi" and (
+            args.datasets is not None or args.seeds is not None
+            or args.variants is not None or model_filters):
+        raise ValueError("the formal CE+MI few-shot matrix does not support runtime filtering")
+    has_default_variants = (
+        loaded["config"].get("method") != "mi"
+        and loaded["config"].get("variants") is not None
+        and loaded["config"].get("default_variants") is not None)
+    if (args.datasets is not None or args.seeds is not None
+            or args.variants is not None or model_filters
+            or has_default_variants):
+        loaded = config_loader.select_experiment_runs(
+            loaded, datasets=args.datasets, seeds=args.seeds,
+            variants=args.variants)
+    loaded = _select_model_runs(
+        loaded, teachers=args.teachers, students=args.students)
     output = config_loader.resolve_path(loaded["runs"][0]["output"])
     # Formal MI logs live with the run manifest and checkpoints, rather than
     # in the generic distillation log directory.

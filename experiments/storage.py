@@ -21,14 +21,18 @@ WEIGHTS_ROOT = PROJECT_DATA_ROOT / 'weights'
 PRETRAINED_WEIGHTS_ROOT = SHARED_DATA_ROOT / 'pre_weight'
 LFS_ROOT = PROJECT_DATA_ROOT / 'git_lfs'
 LEGACY_LOGS_ROOT = RESULTS_ROOT / 'logs/legacy'
-BNCI14001_SOURCE_ROOT = SHARED_DATA_ROOT / 'BNCI2014001/broadband_0p1_75hz'
+BNCI14001_SOURCE_ROOT = SHARED_DATA_ROOT / 'BNCI2014001/wide_fre_band'
+BNCI14004_SOURCE_ROOT = SHARED_DATA_ROOT / 'BNCI2014004/wide_fre_band'
+BNCI15001_SOURCE_ROOT = SHARED_DATA_ROOT / 'BNCI2015001/wide_fre_band'
+BNCI14001_OLD_ROOT = SHARED_DATA_ROOT / 'BNCI2014001/old'
+BNCI14004_OLD_ROOT = SHARED_DATA_ROOT / 'BNCI2014004/old'
+BNCI15001_OLD_ROOT = SHARED_DATA_ROOT / 'BNCI2015001/old'
+LOSO_CACHE_ROOT = DATA_CACHE_ROOT / 'artifact-loso'
+LOSO_INPUT_ROOT = LOSO_CACHE_ROOT / 'model_inputs'
+LOSO_TEACHER_TARGET_ROOT = LOSO_CACHE_ROOT / 'teacher_targets'
 
-# Versioned execution specifications have been removed from the active config
-# tree. Preserve read compatibility for in-flight jobs and historical manifests;
-# the current KD specification is byte-identical at its canonical location.
+# Preserve read compatibility for canonical configs and historical manifests.
 _CANONICAL_CONFIGS = {
-    'loso_source_refresh_distillation_004_5001_v1.yaml':
-        PROJECT_ROOT / 'configs/experiments/loso_distillation.yaml',
     'loso_source_refresh_004_5001_v1.yaml':
         PROJECT_ROOT / 'configs/protocols/loso.yaml',
     'bnci14001_wideband_loso_v3.yaml':
@@ -41,6 +45,7 @@ _RETIRED_CONFIGS = {
         'loso_config_alignment_v2.yaml',
         'loso_cbramod_0014_npy_source_control_20261006.yaml',
         'loso_001_all_models_wideband_v1.yaml',
+        'loso_source_refresh_distillation_004_5001_v1.yaml',
     )
 }
 
@@ -54,6 +59,54 @@ _LEGACY_ABSOLUTE_ROOTS = (
     (SHARED_DATA_ROOT / 'BigSmallCollab_git_lfs', LFS_ROOT),
     (PROJECT_ROOT / '.git/lfs', LFS_ROOT),
 )
+
+_LEGACY_BNCI_FILES = {
+    'BNCI2014001': {'X.npy', 'labels.npy', 'meta.csv'},
+    'BNCI2014004': {'X.npy', 'labels.npy', 'meta004.csv'},
+    'BNCI2015001': {'X.npy', 'labels.npy', 'meta.csv'},
+}
+
+# Historical broadband directory names remain source identity labels in
+# manifests, but the physical source now has one canonical directory name.
+_BNCI_SOURCE_DIRECTORY_ALIASES = (
+    (SHARED_DATA_ROOT / 'BNCI2014001/broadband_0p1_75hz', BNCI14001_SOURCE_ROOT),
+    (SHARED_DATA_ROOT / 'BNCI2014004/broadband_0_120hz', BNCI14004_SOURCE_ROOT),
+    (SHARED_DATA_ROOT / 'BNCI2015001/broadband_0p1_75hz', BNCI15001_SOURCE_ROOT),
+)
+
+_OLD_WIDEBAND_INPUT_ROOT = (
+    DATA_CACHE_ROOT / 'eegfm_alignment_v2/model_inputs/wideband_npy_v3'
+)
+_WIDEBAND_MODEL_INPUT_ALIASES = tuple(
+    (
+        _OLD_WIDEBAND_INPUT_ROOT / dataset / model / 'all_sessions_source_train_session',
+        LOSO_INPUT_ROOT / dataset / model,
+    )
+    for dataset in ('BNCI2014001', 'BNCI2014001-4')
+    for model in ('cbramod', 'mirepnet')
+) + tuple(
+    (
+        _OLD_WIDEBAND_INPUT_ROOT / dataset / model,
+        LOSO_INPUT_ROOT / dataset / model,
+    )
+    for dataset in ('BNCI2014001', 'BNCI2014001-4')
+    for model in ('cbramod', 'mirepnet')
+) + tuple(
+    (_OLD_WIDEBAND_INPUT_ROOT / dataset, LOSO_INPUT_ROOT / dataset)
+    for dataset in ('BNCI2014001', 'BNCI2014001-4')
+) + ((_OLD_WIDEBAND_INPUT_ROOT, LOSO_INPUT_ROOT),)
+_REFRESHED_INPUT_ROOT = (
+    DATA_CACHE_ROOT / 'reproductions/loso_source_refresh_004_5001_v1/model_inputs'
+)
+_REFRESHED_TEACHER_TARGET_ROOT = (
+    DATA_CACHE_ROOT / 'reproductions/loso_source_refresh_004_5001_distillation_v1/teacher_targets'
+)
+_LOSO_CACHE_ALIASES = tuple(sorted(
+    (*_WIDEBAND_MODEL_INPUT_ALIASES,
+     (_REFRESHED_INPUT_ROOT, LOSO_INPUT_ROOT),
+     (_REFRESHED_TEACHER_TARGET_ROOT, LOSO_TEACHER_TARGET_ROOT)),
+    key=lambda pair: len(pair[0].parts), reverse=True,
+))
 
 _ROOTS = {
     'data_cache': DATA_CACHE_ROOT,
@@ -95,6 +148,20 @@ def _canonical_artifact_path(path: Path) -> Path:
     """Apply cache relocations after resolving a historical storage root."""
     if path in _PRETRAINED_WEIGHT_ALIASES:
         return _PRETRAINED_WEIGHT_ALIASES[path]
+    for dataset, filenames in _LEGACY_BNCI_FILES.items():
+        dataset_root = SHARED_DATA_ROOT / dataset
+        if path.parent == dataset_root and path.name in filenames:
+            return dataset_root / 'old' / path.name
+    for old_root, new_root in _BNCI_SOURCE_DIRECTORY_ALIASES:
+        try:
+            return new_root / path.relative_to(old_root)
+        except ValueError:
+            pass
+    for old_root, new_root in _LOSO_CACHE_ALIASES:
+        try:
+            return new_root / path.relative_to(old_root)
+        except ValueError:
+            pass
     if path.name == 'teacher_train.npz':
         try:
             relative = path.relative_to(_PILOT_TEACHER_WEIGHT_ROOT)
@@ -257,6 +324,26 @@ def require_external_output(path: str | os.PathLike[str]) -> Path:
         raise ValueError(
             f'禁止把数据、模型或实验产物保存在项目目录内：{destination}。'
             '请使用 /data1/llx 下的路径。'
+        )
+    return destination
+
+
+def require_loso_cache_output(path: str | os.PathLike[str]) -> Path:
+    """Resolve an active LOSO cache output under the canonical cache tree.
+
+    Known historical cache aliases are canonicalized before validation, so a
+    caller cannot recreate a retired experiment-named cache directory.
+    """
+    destination = require_external_output(path)
+    allowed_roots = (
+        LOSO_INPUT_ROOT.resolve(strict=False),
+        LOSO_TEACHER_TARGET_ROOT.resolve(strict=False),
+    )
+    if not any(destination == root or root in destination.parents
+               for root in allowed_roots):
+        raise ValueError(
+            'LOSO caches must be written under '
+            f'{LOSO_INPUT_ROOT} or {LOSO_TEACHER_TARGET_ROOT}: {destination}'
         )
     return destination
 
