@@ -21,11 +21,14 @@ All teacher artifacts must contain sample_uid and split_policy metadata.
 import argparse
 from contextlib import redirect_stderr, redirect_stdout
 import csv
+from datetime import datetime, timezone
 import hashlib
 import json
 import os
+from pathlib import Path
 import sys
 import time
+import traceback
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
@@ -43,7 +46,7 @@ from data import loso_source
 from eval import metrics
 from models import BIG_MODELS, SMALL_MODELS, get_adapter
 from sklearn.metrics import balanced_accuracy_score
-from experiments.storage import (LOSO_CACHE_ROOT, external_path,
+from experiments.storage import (LOSO_CACHE_ROOT, REPORTS_ROOT, external_path,
                                  require_external_output, resolve_local_file)
 
 
@@ -723,6 +726,44 @@ def _print_summary(rows):
         )
 
 
+def _log_timestamp():
+    return datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S.%fZ')
+
+
+def _open_default_log(args):
+    """Create a unique persistent LOSO log without replacing older runs."""
+    timestamp = _log_timestamp()
+    pid = os.getpid()
+    if args.out_csv:
+        output = Path(args.out_csv).expanduser().resolve(strict=False)
+        parent = output.parent
+        stem = output.stem or 'distill'
+        basename = f'{stem}_{timestamp}_{pid}'
+    else:
+        parent = Path(REPORTS_ROOT) / 'loso' / 'distill' / 'logs'
+        basename = f'{timestamp}_{pid}'
+    parent.mkdir(parents=True, exist_ok=True)
+    index = 0
+    while True:
+        suffix = '' if index == 0 else f'_{index}'
+        path = parent / f'{basename}{suffix}.log'
+        try:
+            return path, path.open('x', buffering=1)
+        except FileExistsError:
+            index += 1
+
+
+def _log_seed_policy(args):
+    if args.seeds is None:
+        student = ('dataset configuration seeds (LOSO: loso.seeds, then seeds; '
+                   'other protocols: seeds)')
+    else:
+        student = f'explicit --seeds {list(args.seeds)}'
+    teacher = (f'explicit --teacher-seed {int(args.teacher_seed)}'
+               if args.teacher_seed is not None else 'same-as-student-seed')
+    return f'student={student}; teacher={teacher}'
+
+
 def _run(args):
     _set_thread_defaults()
     protocol = data.canonical_protocol(args.protocol)
@@ -921,16 +962,33 @@ def _run(args):
 
 
 def main(argv=None):
-    args = parse_args(argv)
-    if not args.log_file:
+    raw_argv = normalize_cli_argv(argv)
+    args = parse_args(raw_argv)
+    if args.log_file:
+        log_path = Path(args.log_file).expanduser()
+        os.makedirs(os.path.dirname(os.path.abspath(log_path)), exist_ok=True)
+        log_f = log_path.open('w', buffering=1)
+    elif args.protocol == 'loso':
+        log_path, log_f = _open_default_log(args)
+        args.log_file = str(log_path)
+    else:
         return _run(args)
-    os.makedirs(os.path.dirname(os.path.abspath(args.log_file)), exist_ok=True)
-    with open(args.log_file, 'w', buffering=1) as log_f:
+
+    with log_f:
         tee_out = _Tee(sys.stdout, log_f)
         tee_err = _Tee(sys.stderr, log_f)
         with redirect_stdout(tee_out), redirect_stderr(tee_err):
-            print(f'[log] writing stdout/stderr to {args.log_file}', flush=True)
-            return _run(args)
+            print(f'[log] writing stdout/stderr to {log_path}', flush=True)
+            print(f'[run] argv={json.dumps(raw_argv, ensure_ascii=False)}', flush=True)
+            print(f'[seed-policy] {_log_seed_policy(args)}', flush=True)
+            try:
+                return _run(args)
+            except BaseException:
+                print('[exception] direct distillation run failed; traceback follows',
+                      file=log_f, flush=True)
+                traceback.print_exc(file=log_f)
+                log_f.flush()
+                raise
 
 
 if __name__ == "__main__":
