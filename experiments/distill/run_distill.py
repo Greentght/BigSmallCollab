@@ -47,7 +47,8 @@ from eval import metrics
 from models import BIG_MODELS, SMALL_MODELS, get_adapter
 from sklearn.metrics import balanced_accuracy_score
 from experiments.storage import (LOSO_CACHE_ROOT, REPORTS_ROOT, external_path,
-                                 require_external_output, resolve_local_file)
+                                 require_external_output, require_report_output,
+                                 resolve_local_file)
 
 
 DEFAULT_METHODS = ('Base', 'KD_all', 'KD_masked', 'MMD', 'KD_MMD')
@@ -656,22 +657,45 @@ def _write_csv(path, rows):
             writer.writerow({k: row.get(k, '') for k in BASE_FIELDS})
 
 
-def _default_out_csv(args, datasets, teachers, students, protocol):
+def _output_run_id():
+    return f'{_log_timestamp()}_{os.getpid()}'
+
+
+def _is_wideband_loso(dataset, protocol):
+    return protocol == 'loso' and dataset in {
+        'BNCI2014001', 'BNCI2014001-4', 'BNCI2014004', 'BNCI2015001',
+    }
+
+
+def _default_out_csv(args, datasets, teachers, students, protocol, run_id=None):
     if args.out_csv:
-        return args.out_csv
-    out_dir = os.environ.get(
-        'REPRO_OUT',
-        os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-                     '/data1/llx/BigSmallcollab/results'),
-    )
+        return str(require_report_output(args.out_csv))
+    out_dir = (Path(REPORTS_ROOT) / 'loso' / 'distill'
+               if protocol == 'loso' else Path(REPORTS_ROOT) / 'distill')
+    run_id = run_id or _output_run_id()
     if len(datasets) == len(teachers) == len(students) == 1:
-        name = f'{datasets[0]}_{protocol}_distill_{teachers[0]}_to_{students[0]}.csv'
+        source_suffix = '_wide_fre_band' if _is_wideband_loso(datasets[0], protocol) else ''
+        name = (f'{datasets[0]}_{protocol}_distill_{teachers[0]}_to_{students[0]}'
+                f'{source_suffix}_{run_id}.csv')
     else:
-        name = f'{protocol}_distill_matrix.csv'
-    if getattr(args, '_wide_source_default', False):
-        stem, ext = os.path.splitext(name)
-        name = f'{stem}_wide_fre_band{ext or ".csv"}'
-    return os.path.join(out_dir, name)
+        name = f'{protocol}_distill_matrix_{run_id}.csv'
+    return str(require_report_output(out_dir / name))
+
+
+def _pair_out_csv(out_csv, dataset, teacher, student, protocol,
+                  explicit_out, multi_combo):
+    if not multi_combo:
+        return str(out_csv)
+    out_dir = os.path.dirname(os.path.abspath(out_csv))
+    stem, ext = os.path.splitext(os.path.basename(out_csv))
+    ext = ext or '.csv'
+    if explicit_out:
+        filename = f'{stem}_{dataset}_{protocol}_{teacher}_to_{student}{ext}'
+    else:
+        source_suffix = '_wide_fre_band' if _is_wideband_loso(dataset, protocol) else ''
+        filename = (f'{stem}_{dataset}_{protocol}_{teacher}_to_{student}'
+                    f'{source_suffix}{ext}')
+    return str(require_report_output(Path(out_dir) / filename))
 
 
 def _write_outputs(out_csv, rows, protocol, explicit_out, multi_combo):
@@ -684,22 +708,11 @@ def _write_outputs(out_csv, rows, protocol, explicit_out, multi_combo):
         _write_csv(out_csv, rows)
         return [(out_csv, len(rows))]
 
-    out_dir = os.path.dirname(os.path.abspath(out_csv))
-    stem, ext = os.path.splitext(os.path.basename(out_csv))
-    ext = ext or '.csv'
     paths = []
     for dataset, teacher, student in sorted(combos):
-        if explicit_out:
-            path = os.path.join(
-                out_dir,
-                f'{stem}_{dataset}_{protocol}_{teacher}_to_{student}{ext}',
-            )
-        else:
-            suffix = '_wide_fre_band' if protocol == 'loso' else ''
-            path = os.path.join(
-                out_dir,
-                f'{dataset}_{protocol}_distill_{teacher}_to_{student}{suffix}.csv',
-            )
+        path = _pair_out_csv(
+            out_csv, dataset, teacher, student, protocol,
+            explicit_out=explicit_out, multi_combo=True)
         _write_csv(path, combos[(dataset, teacher, student)])
         paths.append((path, len(combos[(dataset, teacher, student)])))
     return paths
@@ -793,21 +806,22 @@ def _run(args):
 
     device = _device(args.gpu)
     expected_policy = _expected_split_policy(protocol)
-    out_csv = _default_out_csv(args, datasets, teachers, students, protocol)
+    output_run_id = _output_run_id()
+    out_csv = _default_out_csv(
+        args, datasets, teachers, students, protocol, run_id=output_run_id)
     if args.out_csv is None and protocol == 'loso':
-        out_dir = os.path.dirname(os.path.abspath(out_csv))
         default_outputs = (
             [out_csv] if len(datasets) == len(teachers) == len(students) == 1
-            else [os.path.join(
-                out_dir,
-                f'{dataset}_{protocol}_distill_{teacher}_to_{student}_wide_fre_band.csv')
+            else [_pair_out_csv(
+                out_csv, dataset, teacher, student, protocol,
+                explicit_out=False, multi_combo=True)
                   for dataset in datasets for teacher in teachers for student in students]
         )
         existing = [path for path in default_outputs if os.path.exists(path)]
         if existing:
             raise FileExistsError(
-                f'refusing to overwrite current wide LOSO output(s): {existing}; '
-                'pass an explicit --out_csv to choose an output path')
+                f'refusing to overwrite existing LOSO output(s): {existing}; '
+                'this run was assigned unique automatic output paths')
     print(
         f'[distill] datasets={datasets} teachers={teachers} students={students} '
         f'protocol={protocol} methods={methods} device={device} '
@@ -964,6 +978,8 @@ def _run(args):
 def main(argv=None):
     raw_argv = normalize_cli_argv(argv)
     args = parse_args(raw_argv)
+    if args.out_csv:
+        args.out_csv = str(require_report_output(args.out_csv))
     if args.log_file:
         log_path = Path(args.log_file).expanduser()
         os.makedirs(os.path.dirname(os.path.abspath(log_path)), exist_ok=True)
