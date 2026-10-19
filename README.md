@@ -154,22 +154,24 @@ python -B -m experiments.distill.run_distill \
   当前命令输出的是留出被试的 LOSO 测试结果，不能用该测试分数选择参数。
   `--val_split` 在此入口仅用于 few-shot，不能为 LOSO 增加源侧验证划分。
 
-### 并行队列命令设计（待实现，不可直接执行）
+### 并行队列（已实现）
 
-**当前没有 `experiments.distill.queue` 模块，`run_distill` 也不支持 `--enqueue`。**
-下列命令记录讨论中的接口，须完成队列实现后才能使用。候选参数由用户逐组指定，
-队列负责调度、保存完整参数和汇总运行状态。
+候选参数由用户逐组指定。队列保存提交时的完整模型/数据集配置，等待空闲 GPU，
+并行运行和逐折保存结果。所有命令在项目根目录的 `mirepnet` 环境执行。
 
-1. 在一个 tmux 中启动调度器，指定 GPU 和每卡并发数。下面计划同时运行三组实验：
+1. 在一个 tmux 中启动调度器，指定 GPU 和每卡并发数。下面最多同时运行三组实验：
 
-   ```text
-   python -m experiments.distill.queue run --gpus 0 2 4 --per-gpu 1
+   ```bash
+   tmux new -s kd-queue
+   conda activate mirepnet
+   cd /home/lixinli/BigSmallCollab
+   python -B -m experiments.distill.queue run --gpus 0 2 4 --per-gpu 1
    ```
 
 2. 在普通终端提交一组候选参数，无须另开 tmux 或为任务指定输出路径：
 
-   ```text
-   python -m experiments.distill.run_distill \
+   ```bash
+   python -B -m experiments.distill.run_distill \
      --enqueue \
      --dataset BNCI2014004 \
      --teacher cbramod \
@@ -185,17 +187,41 @@ python -B -m experiments.distill.run_distill \
      --temperature 1.0
    ```
 
-   下一组直接修改参数后再提交。调度器分配指定 GPU 的空闲执行位置；超出并发容量的任务等待。
-   提交时保存实际参数快照，CSV 和日志自动生成，后续修改 YAML 不改变已提交任务的参数。
+   下一组直接修改参数后再提交。每次选择一个数据集、一个教师和一个学生；不需要 `--gpu`、
+   `--out_csv` 或 `--log_file`。相同配置重复提交会返回已有任务 ID。
+   后续修改 YAML 不改变已提交任务的参数；修改训练代码后旧任务会明确报告版本不匹配。
 
 3. 统一查看等待、运行、完成和失败的任务，以及分配的 GPU、参数和完成折数：
 
-   ```text
-   python -m experiments.distill.queue status
+   ```bash
+   python -B -m experiments.distill.queue status
    ```
 
-计划支持暂停调度、调整待运行任务顺序和逐折保存结果；继续任务时复用已完成折，
-尚未完成的折重新运行。任务汇总自动维护；用户要求登记时，按 `AGENTS.md` 的规则更新
+默认只在指定卡没有其他计算进程、已用显存不超过 512 MiB、利用率不超过 10% 时启动首个任务。
+卡被占用或 GPU 查询失败就等待，不会结束其他进程。`--per-gpu 1` 表示每卡一个队列任务。
+
+每个任务的参数、逐折进度、CSV 和每次尝试的独立日志自动保存在
+`results/loso/distill/queue/jobs/<任务ID>/`。`progress.json` 是恢复依据，
+`results.csv` 每完成一折立即更新。断电或进程中断后，重启调度器会重新排入中断任务，
+复用身份校验通过的完整折；当前尚未完成的折从头训练，不从 epoch 中间恢复。
+关闭调度器时，已启动的 worker 会继续运行；再次启动调度器不会重复启动存活 worker。
+
+```bash
+# 暂停/恢复分发，已运行任务继续
+python -B -m experiments.distill.queue pause
+python -B -m experiments.distill.queue resume
+
+# 将 JOB_ID 替换为 status 显示的任务 ID；等当前折完成后暂停该任务
+python -B -m experiments.distill.queue stop JOB_ID
+python -B -m experiments.distill.queue resume JOB_ID
+
+# 失败任务修复原因后重试，保留已完成折；待运行任务前移或取消
+python -B -m experiments.distill.queue retry JOB_ID
+python -B -m experiments.distill.queue move JOB_ID
+python -B -m experiments.distill.queue cancel JOB_ID
+```
+
+队列不自动搜索参数或选择最优方法。用户要求登记时，按 `AGENTS.md` 的规则更新
 `docs/exp_log.csv`，仅登记完整的 666、667、668 三 seed 结果。
 
 ## 冒烟自检

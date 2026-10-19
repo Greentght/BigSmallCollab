@@ -21,12 +21,14 @@ All teacher artifacts must contain sample_uid and split_policy metadata.
 import argparse
 from contextlib import redirect_stderr, redirect_stdout
 import csv
+import copy
 from datetime import datetime, timezone
 import hashlib
 import json
 import os
 from pathlib import Path
 import sys
+import tempfile
 import time
 import traceback
 
@@ -159,7 +161,131 @@ def parse_args(argv=None):
                    dest='no_auto_teacher_cache', action='store_true',
                    help='read LOSO teacher targets only; do not generate missing caches')
     p.add_argument('--fail_fast', action='store_true')
+    p.add_argument('--enqueue', action='store_true',
+                   help='save this manually specified experiment to the parallel queue')
+    p.add_argument('--queue-root', default=None,
+                   help='queue report directory; default results/loso/distill/queue')
+    p.add_argument('--resume', action='store_true',
+                   help='persist every completed fold and reuse it with the same output path')
+    p.add_argument('--snapshot', default=None, help=argparse.SUPPRESS)
+    p.add_argument('--progress', default=None, help=argparse.SUPPRESS)
+    p.add_argument('--stop-file', default=None, help=argparse.SUPPRESS)
     return p.parse_args(normalize_cli_argv(argv))
+
+
+def _json_hash(value):
+    return hashlib.sha256(json.dumps(
+        value, sort_keys=True, separators=(',', ':'), ensure_ascii=False,
+        allow_nan=False).encode()).hexdigest()
+
+
+def freeze_run(args):
+    """Freeze effective configuration without loading EEG or allocating a GPU."""
+    protocol = data.canonical_protocol(args.protocol)
+    _validate_teacher_seed_protocol(protocol, args.teacher_seed)
+    if protocol != 'loso':
+        raise ValueError('the resumable manual queue currently supports protocol=loso')
+    datasets = _resolve_list(args.datasets, args.dataset, ['BNCI2014004'])
+    teachers = _resolve_list(args.teachers, args.teacher, ['mirepnet'])
+    students = _resolve_list(args.students, args.student, ['ifnet'])
+    _validate_names(teachers, students)
+    if len(datasets) != 1 or len(teachers) != 1 or len(students) != 1:
+        raise ValueError('enqueue one dataset, one teacher and one student per command')
+    methods = _parse_methods(args.methods)
+    if 'CE_MI' in methods or args.teacher_artifact is not None:
+        raise ValueError('queued LOSO does not support CE_MI or teacher_artifact overrides')
+    if args.val_split is not None or args.train_percentage is not None:
+        raise ValueError('LOSO has no source validation split; fewshot split flags do not apply')
+    dataset_configs = {d: config.load_dataset_config(d) for d in datasets}
+    student_configs, teacher_configs = {}, {}
+    for d in datasets:
+        for student in students:
+            cfg = config.load_model_config(student, d, protocol)
+            for name in ('epochs', 'lr', 'weight_decay', 'batch_size'):
+                if getattr(args, name) is not None:
+                    cfg[name] = getattr(args, name)
+            if int(cfg.get('epochs', 50)) <= 0 or int(cfg.get('batch_size', 16)) <= 0:
+                raise ValueError('epochs and batch_size must be positive')
+            if float(cfg.get('lr', .001)) <= 0 or float(cfg.get('weight_decay', .01)) < 0:
+                raise ValueError('lr must be positive and weight_decay non-negative')
+            student_configs[f'{d}/{student}'] = cfg
+        for teacher in teachers:
+            teacher_configs[f'{d}/{teacher}'] = config.load_model_config(teacher, d, protocol)
+    dcfg = dataset_configs[datasets[0]]
+    seeds = list(args.seeds if args.seeds is not None else
+                 dcfg.get('loso', {}).get('seeds', dcfg['seeds']))
+    keys = list(args.keys if args.keys is not None else range(int(dcfg['num_subjects'])))
+    if not seeds or len(set(seeds)) != len(seeds) or any(s < 0 for s in seeds):
+        raise ValueError('seeds must be a nonempty unique list of non-negative integers')
+    if not keys or len(set(keys)) != len(keys) or any(
+            k < 0 or k >= int(dcfg['num_subjects']) for k in keys):
+        raise ValueError('subjects must be unique valid zero-based fold indices')
+    if not np.isfinite(args.temperature) or args.temperature <= 0:
+        raise ValueError('temperature must be positive and finite')
+    for name in ('lam_kd', 'lam_mmd', 'lam_mi'):
+        if not np.isfinite(getattr(args, name)) or getattr(args, name) < 0:
+            raise ValueError(f'{name} must be non-negative and finite')
+    if not args.mmd_sigmas or any(not np.isfinite(x) or x <= 0 for x in args.mmd_sigmas):
+        raise ValueError('mmd_sigmas must be positive finite numbers')
+    controls = {'enqueue', 'queue_root', 'snapshot', 'progress', 'stop_file',
+                'gpu', 'out_csv', 'log_file', 'resume'}
+    frozen_args = {k: v for k, v in vars(args).items()
+                   if not k.startswith('_') and k not in controls}
+    frozen_args.update(protocol=protocol, datasets=datasets, teachers=teachers,
+                       students=students, methods=methods, seeds=seeds, keys=keys,
+                       artifact_root=str(args.artifact_root or LOSO_CACHE_ROOT))
+    effective = student_configs[f'{datasets[0]}/{students[0]}']
+    frozen_args.update(dataset=datasets[0], teacher=teachers[0], student=students[0])
+    for name, default in (('epochs', 50), ('lr', .001),
+                          ('weight_decay', .01), ('batch_size', 16)):
+        frozen_args[name] = effective.get(name, default)
+    yaml_configs = {}
+    config_root = Path(config.CONFIG_DIR)
+    for group in ('datasets', 'models'):
+        for path in sorted((config_root / group).glob('*.yaml')):
+            yaml_configs[path.relative_to(config_root).as_posix()] = config._load_yaml(path)
+    project = Path(__file__).resolve().parents[2]
+    code_files = {'config.py', 'experiments/distill/run_distill.py',
+                  'experiments/distill/progress.py',
+                  'experiments/distill/loso_target_cache.py'}
+    for directory in ('models', 'collab', 'data', 'experiments/finetune'):
+        code_files.update(p.relative_to(project).as_posix()
+                          for p in (project / directory).rglob('*.py'))
+    return {'schema_version': 1, 'args': frozen_args,
+            'dataset_configs': dataset_configs, 'student_configs': student_configs,
+            'teacher_configs': teacher_configs, 'yaml_configs': yaml_configs,
+            'code_sha256': {name: _sha256_file(project / name) for name in sorted(code_files)},
+            'environment': {key: os.environ.get(key) for key in
+                            ('MIREPNET_WEIGHT', 'CBRAMOD_WEIGHT', 'LABRAM_WEIGHT')}}
+
+
+def _activate_snapshot(args):
+    path = Path(args.snapshot).resolve()
+    with path.open() as handle:
+        payload = json.load(handle)
+    frozen = payload.get('snapshot', payload)
+    if frozen.get('schema_version') != 1:
+        raise ValueError('unsupported queued configuration snapshot')
+    if 'snapshot_sha256' in payload and payload['snapshot_sha256'] != _json_hash(frozen):
+        raise ValueError('queued configuration snapshot integrity mismatch')
+    project = Path(__file__).resolve().parents[2]
+    for name, expected in frozen['code_sha256'].items():
+        if _sha256_file(project / name) != expected:
+            raise ValueError(f'queued training code changed since submission: {name}')
+    execution = {k: getattr(args, k) for k in
+                 ('snapshot', 'progress', 'stop_file', 'gpu', 'out_csv', 'log_file')}
+    restored = parse_args([])
+    vars(restored).update(copy.deepcopy(frozen['args']))
+    vars(restored).update(execution)
+    restored.resume = True
+    restored._frozen = frozen
+    for key, value in frozen.get('environment', {}).items():
+        if value is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = value
+    os.environ['BIGSMALL_RUN_SNAPSHOT'] = str(path)
+    return restored
 
 
 def _resolve_list(plural, singular, default):
@@ -437,7 +563,9 @@ def _teacher_acc(tch, y_tr):
 
 
 def _student_runtime_cfg(student, dataset, protocol, args, X_tr):
-    cfg = config.load_model_config(student, dataset, protocol)
+    frozen = getattr(args, '_frozen', None)
+    cfg = (copy.deepcopy(frozen['student_configs'][f'{dataset}/{student}'])
+           if frozen else config.load_model_config(student, dataset, protocol))
     for key in ('epochs', 'lr', 'weight_decay', 'batch_size'):
         value = getattr(args, key)
         if value is not None:
@@ -650,11 +778,20 @@ def _capture_initial_state(args, dataset, student, X_tr, nc, device, seed):
 
 def _write_csv(path, rows):
     os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
-    with open(path, 'w', newline='') as f:
-        writer = csv.DictWriter(f, fieldnames=BASE_FIELDS)
-        writer.writeheader()
-        for row in rows:
-            writer.writerow({k: row.get(k, '') for k in BASE_FIELDS})
+    fields = list(dict.fromkeys([*BASE_FIELDS, *(key for row in rows for key in row)]))
+    fd, temporary = tempfile.mkstemp(prefix=f'.{Path(path).name}.',
+                                      dir=str(Path(path).parent))
+    try:
+        with os.fdopen(fd, 'w', newline='') as f:
+            writer = csv.DictWriter(f, fieldnames=fields)
+            writer.writeheader()
+            writer.writerows(rows)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
 
 
 def _output_run_id():
@@ -777,7 +914,110 @@ def _log_seed_policy(args):
     return f'student={student}; teacher={teacher}'
 
 
+def _cell_identity(args, dataset, teacher, student, seed, key, method,
+                   X_tr, y_tr, uid_tr, uid_te, student_data):
+    return {
+        'dataset': dataset, 'teacher': teacher, 'student': student,
+        'seed': int(seed), 'key': int(key), 'method': method,
+        'teacher_seed': (None if method == 'Base' else
+                         _resolve_teacher_seed(seed, args.teacher_seed)),
+        'student_config': _student_runtime_cfg(student, dataset, args.protocol, args, X_tr),
+        'train_uid_sha256': _sha256_array(uid_tr),
+        'test_uid_sha256': _sha256_array(uid_te),
+        'train_labels_sha256': _sha256_array(y_tr),
+        'source_manifest_sha256': (student_data.source_manifest_sha256
+                                   if student_data is not None else ''),
+        'student_input_manifest_sha256': (student_data.input_manifest_sha256 or ''
+                                          if student_data is not None else ''),
+        'student_input_policy_sha256': (student_data.identity.get('input_policy_sha256', '')
+                                        if student_data is not None else ''),
+    }
+
+
+def _stop_requested(args):
+    path = getattr(args, 'stop_file', None)
+    return path is not None and Path(path).exists()
+
+
+class ResumeIdentityError(ValueError):
+    """A completed fold belongs to different data or teacher provenance."""
+
+
+def _verify_completed_teacher(args, cell, row):
+    if cell[-1] == 'Base':
+        return
+    path = row.get('teacher_target_manifest_path')
+    expected = row.get('teacher_target_manifest_sha256')
+    if path and expected and Path(path).is_file() and _sha256_file(path) != expected:
+        raise ResumeIdentityError(f'completed teacher target identity mismatch: {cell}')
+    # Metrics remain readable after checkpoint/target pruning. Only compare
+    # retained teacher metadata; never recreate a teacher just to read results.
+    checkpoint = row.get('teacher_checkpoint_sha256')
+    if checkpoint:
+        dataset, teacher, _student, seed, key, _method = cell
+        teacher_seed = _resolve_teacher_seed(seed, args.teacher_seed)
+        try:
+            baseline = loso_source._baseline_teacher_manifest(
+                dataset, teacher, teacher_seed, key)
+        except FileNotFoundError:
+            baseline = None
+        if baseline is not None and Path(baseline).is_file():
+            with Path(baseline).open() as handle:
+                current = json.load(handle)
+            if current.get('final_model_sha256') != checkpoint:
+                raise ResumeIdentityError(f'completed teacher checkpoint identity mismatch: {cell}')
+
+
+def _preflight_progress(args, progress, dataset, teacher, student, student_data):
+    """Validate every retained fold before starting any missing fold."""
+    for record in progress.all_records():
+        cell = record['cell']
+        if cell[:3] != [dataset, teacher, student]:
+            continue
+        _d, _t, _s, seed, key, method = cell
+        train = student_data.subjects != int(key)
+        identity = _cell_identity(
+            args, dataset, teacher, student, seed, key, method,
+            student_data.x[train], student_data.y[train],
+            student_data.sample_uid[train], student_data.sample_uid[~train], student_data)
+        try:
+            row = progress.get(cell, identity)
+        except ValueError as exc:
+            raise ResumeIdentityError(str(exc)) from exc
+        _verify_completed_teacher(args, cell, row)
+
+
 def _run(args):
+    progress_path = getattr(args, 'progress', None)
+    if not progress_path and not getattr(args, 'resume', False):
+        return _run_impl(args)
+    if args.protocol != 'loso':
+        raise ValueError('fold resume is currently implemented for LOSO only')
+    from experiments.distill.progress import ProgressStore
+
+    frozen = getattr(args, '_frozen', None) or freeze_run(args)
+    if args.out_csv is None:
+        fa = frozen['args']
+        args.out_csv = _default_out_csv(
+            args, fa['datasets'], fa['teachers'], fa['students'], fa['protocol'])
+    progress_path = progress_path or str(Path(args.out_csv).with_suffix('.progress.json'))
+    if Path(args.out_csv).exists() and not Path(progress_path).exists():
+        raise FileExistsError('existing CSV has no matching progress identity; preserving it')
+    total = (len(frozen['args']['keys']) * len(frozen['args']['seeds']) *
+             len(frozen['args']['methods']))
+    with ProgressStore(progress_path, frozen) as progress:
+        progress.set_status('running', total_cells=total)
+        try:
+            result = _run_impl(args, progress)
+        except BaseException:
+            progress.set_status('failed')
+            raise
+        progress.set_status('paused' if result == 75 else
+                            'completed' if result == 0 else 'failed')
+        return result
+
+
+def _run_impl(args, progress=None):
     _set_thread_defaults()
     protocol = data.canonical_protocol(args.protocol)
     args.protocol = protocol
@@ -834,9 +1074,15 @@ def _run(args):
         flush=True,
     )
 
-    rows, errors = [], []
+    rows, errors = (progress.all_rows() if progress is not None else []), []
+    multi_combo = not (len(datasets) == len(teachers) == len(students) == 1)
+    if _stop_requested(args):
+        print('[queue] pause requested; completed folds are retained', flush=True)
+        return 75
     for dataset in datasets:
-        dcfg = config.load_dataset_config(dataset)
+        frozen = getattr(args, '_frozen', None)
+        dcfg = (copy.deepcopy(frozen['dataset_configs'][dataset])
+                if frozen else config.load_dataset_config(dataset))
         keys = args.keys if args.keys is not None else list(range(dcfg['num_subjects']))
         seeds = (args.seeds if args.seeds is not None else
                  dcfg.get('loso', {}).get('seeds', dcfg['seeds'])
@@ -856,6 +1102,8 @@ def _run(args):
                     dataset, student, cache_root=args.artifact_root,
                     no_auto_teacher_cache=getattr(args, 'no_auto_teacher_cache', False))
                     if protocol == 'loso' else None)
+                if progress is not None and student_data is not None:
+                    _preflight_progress(args, progress, dataset, teacher, student, student_data)
                 for seed in seeds:
                     resolved_teacher_seed = _resolve_teacher_seed(
                         seed, explicit_teacher_seed)
@@ -889,6 +1137,23 @@ def _run(args):
                                 initial_state_dict = _capture_initial_state(
                                     args, dataset, student, X_tr, nc, device, seed)
                             for method in methods:
+                                if _stop_requested(args):
+                                    print('[queue] pause requested at fold boundary', flush=True)
+                                    return 75
+                                cell = [dataset, teacher, student, int(seed), int(key), method]
+                                identity = None
+                                if progress is not None:
+                                    identity = _cell_identity(
+                                        args, dataset, teacher, student, seed, key, method,
+                                        X_tr, y_tr, uid_tr, uid_te, student_data)
+                                    try:
+                                        completed = progress.get(cell, identity)
+                                    except ValueError as exc:
+                                        raise ResumeIdentityError(str(exc)) from exc
+                                    if completed is not None:
+                                        print(f'[resume] reuse dataset={dataset} {teacher}->{student} '
+                                              f'seed={seed} fold={key + 1} method={method}', flush=True)
+                                        continue
                                 if student_data is not None:
                                     if method == 'Base':
                                         method_tch = dict(tch)
@@ -925,6 +1190,7 @@ def _run(args):
                                     teacher_artifact, key, seed, method,
                                     X_tr, y_tr, X_te, y_te, subj_tr, method_tch,
                                     nc, device,
+                                    uid_tr=uid_tr, uid_te=uid_te,
                                     **method_kwargs)
                                 row['teacher_seed'] = (
                                     '' if method == 'Base' else resolved_teacher_seed)
@@ -937,7 +1203,12 @@ def _run(args):
                                             'input_policy_sha256', ''),
                                         input_manifest_sha256=(
                                             student_data.input_manifest_sha256 or ''))
+                                if progress is not None:
+                                    progress.put(cell, identity, row)
                                 rows.append(row)
+                                _write_outputs(
+                                    out_csv, rows, protocol, explicit_out=args.out_csv is not None,
+                                    multi_combo=multi_combo)
                                 print(
                                     f'[{dataset}] {teacher}->{student} key={key} '
                                     f'student_seed={seed} teacher_seed='
@@ -949,6 +1220,8 @@ def _run(args):
                                 if device != 'cpu':
                                     torch.cuda.empty_cache()
                         except Exception as e:  # noqa: BLE001 - keep filling matrix
+                            if isinstance(e, ResumeIdentityError):
+                                raise
                             msg = (f'{dataset} {teacher_artifact}->{student} '
                                    f'key={key} seed={seed}: {e}')
                             errors.append(msg)
@@ -972,12 +1245,17 @@ def _run(args):
     if errors:
         print(f'[errors] {len(errors)} cells failed', flush=True)
     print('Done.', flush=True)
-    return 1 if errors and not rows else 0
+    return 1 if errors else 0
 
 
 def main(argv=None):
     raw_argv = normalize_cli_argv(argv)
     args = parse_args(raw_argv)
+    if args.enqueue:
+        from experiments.distill.queue import enqueue_args
+        return enqueue_args(args)
+    if args.snapshot:
+        args = _activate_snapshot(args)
     if args.out_csv:
         args.out_csv = str(require_report_output(args.out_csv))
     if args.log_file:

@@ -15,6 +15,9 @@ running against a freshly fine-tuned checkpoint:
     LABRAM_WEIGHT=/path/to/labram-base.pth
     CODEBRAIN_WEIGHT=/path/to/CodeBrain.pth
 """
+import copy
+from functools import lru_cache
+import json
 import os
 
 import yaml
@@ -45,7 +48,24 @@ def _canonical_protocol(protocol):
     return _PROTOCOL_ALIASES.get(p, p)
 
 
+@lru_cache(maxsize=4)
+def _queued_yaml_snapshot(path):
+    with open(path) as handle:
+        payload = json.load(handle)
+    return payload.get('snapshot', payload)['yaml_configs']
+
+
 def _load_yaml(path):
+    # A queued experiment freezes model/dataset YAMLs at submission time.
+    # The environment also reaches teacher-cache subprocesses, so their
+    # preparation cannot silently pick up later edits to the live YAMLs.
+    snapshot = os.environ.get('BIGSMALL_RUN_SNAPSHOT')
+    if snapshot:
+        relative = os.path.relpath(path, CONFIG_DIR).replace(os.sep, '/')
+        frozen = _queued_yaml_snapshot(os.path.abspath(snapshot))
+        if relative not in frozen:
+            raise ValueError(f'configuration absent from queued snapshot: {relative}')
+        return copy.deepcopy(frozen[relative])
     with open(path) as f:
         return yaml.safe_load(f)
 

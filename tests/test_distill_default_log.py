@@ -1,6 +1,7 @@
 """Default direct-LOSO log paths and exception capture without training."""
 
 import pytest
+from pathlib import Path
 
 from experiments.distill import run_distill
 
@@ -17,6 +18,7 @@ def test_loso_default_log_sits_next_to_explicit_csv_and_never_overwrites(
         monkeypatch, tmp_path):
     reports = tmp_path / 'reports'
     out_csv = tmp_path / 'custom' / 'scores.csv'
+    monkeypatch.setattr(run_distill, 'require_report_output', Path)
     monkeypatch.setattr(run_distill, 'REPORTS_ROOT', reports)
     monkeypatch.setattr(run_distill, '_log_timestamp', lambda: '20300102T030405.000006Z')
     monkeypatch.setattr(run_distill.os, 'getpid', lambda: 12345)

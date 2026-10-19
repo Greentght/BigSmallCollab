@@ -269,6 +269,7 @@ def test_explicit_teacher_seed_is_rejected_for_fewshot():
 
 def test_direct_loso_cache_uses_teacher_seed_but_trains_with_student_seed(
         tmp_path, monkeypatch):
+    monkeypatch.setattr(run_distill, 'require_report_output', Path)
     target_calls = []
     training_calls = []
     student_data = _student_data()
