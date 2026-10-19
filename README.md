@@ -244,6 +244,7 @@ tail -n 30 -f results/loso/distill/queue/manager.log
 | `results.csv` | 每完成一折立即更新的结果；未完成任务的 CSV 是部分结果 |
 | `attempt_001.log`、`attempt_001.console.log` | 第一次尝试的训练与异常日志；重试依次编号，旧日志保留 |
 | `state.json`、`worker.log` | 当前任务状态与 worker 启动信息 |
+| `experiment_log_registration.json` | 自动登记状态、实际参数、结果来源及跳过/失败原因 |
 
 查看训练细节时，把下面的 `JOB_ID` 替换为 `status` 显示的实际任务 ID；重试后使用最新编号：
 
@@ -251,8 +252,28 @@ tail -n 30 -f results/loso/distill/queue/manager.log
 tail -n 50 -f results/loso/distill/queue/jobs/JOB_ID/attempt_001.console.log
 ```
 
-`manager.log` 记录派发、等卡等调度信息。用户要求登记结果时，按 `AGENTS.md` 的规则更新
-`docs/exp_log.csv`，仅登记完整的 666、667、668 三 seed 结果。
+`manager.log` 记录派发、等卡等调度信息。
+
+**任务跑完后会自动把实际参数和结果登记到 `docs/exp_log.csv`，提交命令无需增加参数。**
+仅登记 seeds 恰为 **666、667、668**、每个 seed 的全部 LOSO 被试都完整且唯一的结果；
+先计算每个 seed 的被试平均 Accuracy，再对三个 seed 等权平均，以百分数保留两位小数。
+Epoch、lr、Batch、T、λ 等来自该次任务冻结配置和实际逐折记录，之后修改 YAML 不影响登记。
+
+自动登记保留当前表头和用户新增列，按教师、学生、方法及完整参数匹配记录；
+不同参数另加一行，之前的 `none` 基线保留。新增列的历史参数无法核验时留空并在登记记录中说明。
+已有非空的人工历史记录若缺少完整参数来源，会保留原行并新建带来源记录的实验行。
+不完整结果、其它 seed 集合和固定 `none` 基线会说明跳过原因。
+
+`status` 中完成任务的 `exp_log=written` 表示已写入，`unchanged` 表示已登记过，
+`skipped` 表示不符合登记条件，`error` 表示登记失败。登记失败保留训练完成状态及结果，
+后台登记检查会重试。检查并修复原因后也可手动补登记，任务不需重训：
+
+```bash
+python -B -m experiments.distill.queue register JOB_ID
+```
+
+队列目录中的 `experiment_log_registry.json` 保存登记来源与参数指纹，
+`registration_watcher.log` 记录为既有运行队列接入的后台登记检查。
 
 #### 4. 暂停、恢复、重试和调整顺序
 

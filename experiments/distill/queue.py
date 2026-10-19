@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 import fcntl
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import signal
@@ -255,6 +256,79 @@ def progress_for(store, state):
     return progress, len(records) if isinstance(records, (dict, list)) else 0
 
 
+def register_job_log(store, job_id, force=False):
+    """Register completed metrics without changing the training outcome."""
+    with store.lock():
+        state = store.load(job_id)
+        if state['status'] != 'completed':
+            return None
+        previous = state.get('log_registration', {})
+        if not force:
+            if previous.get('status') in {'written', 'unchanged', 'skipped'}:
+                return previous
+            if time.time() < previous.get('retry_after', 0):
+                return previous
+    try:
+        from experiments.distill.experiment_log import register_completed_job
+        result = dict(register_completed_job(store.job_dir(job_id)))
+    except Exception as exc:
+        result = {'status': 'error', 'reason': f'{type(exc).__name__}: {exc}'}
+    result['checked_at'] = utc_now()
+    if result.get('status') == 'error':
+        result['retry_after'] = time.time() + 60
+    with store.lock():
+        state = store.load(job_id)
+        state['log_registration'] = result
+        store.save(state)
+    print(f"[experiment-log] {job_id} {result.get('status')}: "
+          f"{result.get('reason', '')}", flush=True)
+    return result
+
+
+def register_completed_logs(store, job_ids=None, force=False):
+    with store.lock():
+        for job_id in job_ids or []:
+            store.load(job_id)  # An unknown requested ID must not look successful.
+        candidates = [state['id'] for state in store.states()
+                      if state['status'] == 'completed' and
+                      (not job_ids or state['id'] in job_ids)]
+    return {job_id: register_job_log(store, job_id, force) for job_id in candidates}
+
+
+def watch_registration(args):
+    """Cover already-running workers without restarting their GPU processes."""
+    store = QueueStore(validated_root(args.root))
+    stopping = False
+
+    def stop(signum, frame):
+        nonlocal stopping
+        stopping = True
+
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        signal.signal(sig, stop)
+    with file_lock(store.root / 'registration_watcher.lock', blocking=False):
+        atomic_json(store.root / 'registration_watcher.json', {
+            'process': process_identity(), 'status': 'running',
+            'started_at': utc_now(), 'poll_seconds': args.poll_seconds})
+        print(f'[experiment-log] watching completed jobs in {store.root}', flush=True)
+        try:
+            while not stopping:
+                try:
+                    with store.lock():
+                        reconcile(store)
+                    register_completed_logs(store)
+                except Exception as exc:
+                    print(f'[experiment-log] scan error: {type(exc).__name__}: {exc}', flush=True)
+                deadline = time.monotonic() + args.poll_seconds
+                while not stopping and time.monotonic() < deadline:
+                    time.sleep(min(.25, max(0, deadline - time.monotonic())))
+        finally:
+            atomic_json(store.root / 'registration_watcher.json', {
+                'process': process_identity(), 'status': 'stopped',
+                'stopped_at': utc_now()})
+    return 0
+
+
 def reconcile(store):
     """Called under the state lock; orphan live workers/children keep their slot."""
     for state in store.states():
@@ -342,6 +416,10 @@ def run_manager(args):
         print(f'[queue] manager active, GPUs={args.gpus}, per_gpu={args.per_gpu}', flush=True)
         try:
             while not stopping:
+                try:
+                    register_completed_logs(store)
+                except Exception as exc:
+                    print(f'[experiment-log] registration scan failed: {exc}', flush=True)
                 with store.lock():
                     reconcile(store)
                     states = store.states()
@@ -480,6 +558,11 @@ def run_worker(args):
             state.update(status=status, message=message, returncode=returncode,
                          child=None, worker=None, launcher=None)
             store.save(state)
+        if status == 'completed':
+            try:
+                register_job_log(store, args.job)
+            except Exception as exc:
+                print(f'[experiment-log] registration failed; training completed: {exc}', flush=True)
         return 0 if status in {'completed', 'paused'} else 1
 
 
@@ -561,6 +644,10 @@ def show_status(store, as_json=False):
               f"UUID={state.get('gpu_uuid') or '-'} "
               f"folds={state['completed_cells']}/{state['total_cells'] or '?'} "
               f"{dataset} {teacher}->{student} {parameters}")
+        if state['status'] == 'completed':
+            registration = state.get('log_registration', {})
+            print(f"  exp_log={registration.get('status', 'pending')} "
+                  f"{registration.get('reason', '')}")
         if state.get('message'):
             print('  ' + state['message'])
 
@@ -580,6 +667,12 @@ def parse_args(argv=None):
     status = subparsers.add_parser('status')
     status.add_argument('--root', '--queue-root', default=str(DEFAULT_ROOT))
     status.add_argument('--json', action='store_true')
+    register = subparsers.add_parser('register', help='register complete results in docs/exp_log.csv')
+    register.add_argument('jobs', nargs='*')
+    register.add_argument('--root', '--queue-root', default=str(DEFAULT_ROOT))
+    register.add_argument('--watch', action='store_true',
+                          help='watch completed jobs without restarting the training manager')
+    register.add_argument('--poll-seconds', type=float, default=15)
     for name in ('pause', 'resume', 'retry', 'stop', 'cancel', 'move'):
         command = subparsers.add_parser(name)
         command.add_argument('jobs', nargs='*')
@@ -590,6 +683,9 @@ def parse_args(argv=None):
     worker.add_argument('--gpu', type=int, required=True)
     worker.add_argument('--launch-token', required=True)
     args = parser.parse_args(argv)
+    if args.command == 'register' and (not math.isfinite(args.poll_seconds) or
+                                       args.poll_seconds <= 0):
+        parser.error('poll-seconds must be positive and finite')
     if args.command == 'run' and (args.per_gpu < 1 or args.poll_seconds <= 0 or
                                   args.min_free_mb < 0 or args.max_used_mb < 0 or
                                   not 0 <= args.max_utilization <= 100 or
@@ -606,9 +702,18 @@ def main(argv=None):
             return run_manager(args)
         if args.command == '_worker':
             return run_worker(args)
+        if args.command == 'register' and args.watch:
+            if args.jobs:
+                raise ValueError('register --watch scans the entire queue; omit job IDs')
+            return watch_registration(args)
         store = QueueStore(validated_root(args.root))
         if args.command == 'status':
             show_status(store, args.json)
+        elif args.command == 'register':
+            results = register_completed_logs(store, args.jobs, force=True)
+            if not results:
+                print('[experiment-log] no completed jobs selected', flush=True)
+            return 1 if any(r and r.get('status') == 'error' for r in results.values()) else 0
         else:
             mutate_job(store, args.command, args.jobs)
             show_status(store)
