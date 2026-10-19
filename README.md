@@ -114,7 +114,7 @@ CodeBrain 保留专用审计 runner `experiments/finetune/run_codebrain.py` 以�
 
 ## KD 手动调参与并行队列
 
-### 单组实验命令（当前可用）
+### 直接运行单组实验
 
 在项目根目录和 `mirepnet` 环境中执行；一条命令选择一个数据集、一个教师、一个学生，
 参数直接写在命令后面。下面以 BNCI2014004、CBraMod → IFNet 为例：
@@ -154,75 +154,165 @@ python -B -m experiments.distill.run_distill \
   当前命令输出的是留出被试的 LOSO 测试结果，不能用该测试分数选择参数。
   `--val_split` 在此入口仅用于 few-shot，不能为 LOSO 增加源侧验证划分。
 
-### 并行队列（已实现）
+### 队列实验：日常操作
 
-候选参数由用户逐组指定。队列保存提交时的完整模型/数据集配置，等待空闲 GPU，
-并行运行和逐折保存结果。所有命令在项目根目录的 `mirepnet` 环境执行。
+一个任务包含**一个数据集、一个教师、一个学生、一组手动参数及指定 seeds 的完整 LOSO**。
+不同任务可以分配到不同 GPU 同时训练；同一任务内的 seed 和折顺序执行。
 
-1. 在一个 tmux 中启动调度器，指定 GPU 和每卡并发数。下面最多同时运行三组实验：
+本机已建立 tmux 会话 **`kd-parallel-queue`**，启动配置为 GPU **0–9**、每卡一个任务、
+每 15 秒检查一次空卡。此前剩余的 19 组普通 KD 已登记，来源清单在
+`results/loso/distill/queue/continuation_manifest.json`。日常提交任务只需普通终端；
+调度器当前是否存活以 `status` 为准。
 
-   ```bash
-   tmux new -s kd-queue
-   conda activate mirepnet
-   cd /home/lixinli/BigSmallCollab
-   python -B -m experiments.distill.queue run --gpus 0 2 4 --per-gpu 1
-   ```
-
-2. 在普通终端提交一组候选参数，无须另开 tmux 或为任务指定输出路径：
-
-   ```bash
-   python -B -m experiments.distill.run_distill \
-     --enqueue \
-     --dataset BNCI2014004 \
-     --teacher cbramod \
-     --student ifnet \
-     --protocol loso \
-     --seeds 666 667 668 \
-     --methods kd \
-     --epochs 50 \
-     --lr 0.001 \
-     --weight_decay 0.0001 \
-     --batch_size 16 \
-     --lam_kd 0.25 \
-     --temperature 1.0
-   ```
-
-   下一组直接修改参数后再提交。每次选择一个数据集、一个教师和一个学生；不需要 `--gpu`、
-   `--out_csv` 或 `--log_file`。相同配置重复提交会返回已有任务 ID。
-   后续修改 YAML 不改变已提交任务的参数；修改训练代码后旧任务会明确报告版本不匹配。
-
-3. 统一查看等待、运行、完成和失败的任务，以及分配的 GPU、参数和完成折数：
-
-   ```bash
-   python -B -m experiments.distill.queue status
-   ```
-
-默认只在指定卡没有其他计算进程、已用显存不超过 512 MiB、利用率不超过 10% 时启动首个任务。
-卡被占用或 GPU 查询失败就等待，不会结束其他进程。`--per-gpu 1` 表示每卡一个队列任务。
-
-每个任务的参数、逐折进度、CSV 和每次尝试的独立日志自动保存在
-`results/loso/distill/queue/jobs/<任务ID>/`。`progress.json` 是恢复依据，
-`results.csv` 每完成一折立即更新。断电或进程中断后，重启调度器会重新排入中断任务，
-复用身份校验通过的完整折；当前尚未完成的折从头训练，不从 epoch 中间恢复。
-关闭调度器时，已启动的 worker 会继续运行；再次启动调度器不会重复启动存活 worker。
+#### 1. 进入环境并查看队列
 
 ```bash
-# 暂停/恢复分发，已运行任务继续
+conda activate mirepnet
+cd /home/lixinli/BigSmallCollab
+python -B -m experiments.distill.queue status
+```
+
+**`manager=running` 表示调度器正在工作。**已派发的任务会显示 `starting` / `running` 和 GPU 编号；
+`pending` 表示等待分配。全部卡被占用时，调度器保持运行、任务继续等待。
+
+#### 2. 提交自己选择的参数
+
+下面提交 BNCI2014004、CbraMod → IFnet、三个 seed 的普通 KD，参数直接写在命令后面：
+
+```bash
+python -B -m experiments.distill.run_distill \
+  --enqueue \
+  --dataset BNCI2014004 \
+  --teacher cbramod \
+  --student ifnet \
+  --protocol loso \
+  --seeds 666 667 668 \
+  --methods kd \
+  --epochs 50 \
+  --lr 0.001 \
+  --weight_decay 0.0001 \
+  --batch_size 16 \
+  --lam_kd 0.25 \
+  --temperature 1.0
+```
+
+提交后终端显示任务 ID 并返回。继续比较另一组参数时，复制整条命令，修改希望比较的数值再提交。
+无需另开 tmux，也无需指定 GPU、输出 CSV 或 log。相同配置重复提交会返回已有任务 ID。
+
+| 选择项 | 命令参数与可选值 |
+|---|---|
+| 数据集 | `--dataset BNCI2014004`、`BNCI2014001`、`BNCI2014001-4`、`BNCI2015001`、`AlexMI` |
+| 教师 | `--teacher mirepnet` 或 `--teacher cbramod`；两者均在 `mirepnet` 环境提交 |
+| 学生 | `--student ifnet`、`eegnet` 或 `adfcnn` |
+| 学生训练 | `--epochs`、`--lr`、`--weight_decay`、`--batch_size` |
+| 普通 KD | `--methods kd`，设置 `--lam_kd`、`--temperature` |
+| KD + MMD | 改为 `--methods kd_mmd`，另外指定例如 `--lam_mmd 0.1` |
+| 教师正确样本 KD / 纯 MMD | `--methods kd_masked` / `--methods mmd` |
+| seed | `--seeds 666 667 668`；只运行一个可写 `--seeds 666` |
+
+当前队列支持 LOSO 的逐参数入口。省略的学生训练参数来自 `configs/models/<student>.yaml`，
+数据集设置来自 `configs/datasets/<dataset>.yaml`；`--config` 的 YAML 实验入口尚未接入此队列。
+提交时会冻结完整参数，之后修改 YAML 不会改变已登记任务。队列按用户提交的候选运行。
+
+#### 3. 查看进度和训练日志
+
+```bash
+python -B -m experiments.distill.queue status
+# 每 15 秒刷新；Ctrl-C 只退出查看
+watch -n 15 'python -B -m experiments.distill.queue status'
+# 查看本机已启动调度器的日志
+tail -n 30 -f results/loso/distill/queue/manager.log
+```
+
+`folds=5/27` 表示已有 5 折完整保存；9 位被试、3 个 seed、单一方法共 27 折。
+状态的含义如下：
+
+| 状态 | 含义 |
+|---|---|
+| `pending` / `starting` | 等待分配 / 正在启动 |
+| `running` | 任务进程运行中，可能正在准备缓存或训练；详情看任务日志 |
+| `stopping` / `paused` | 已请求当前折结束后暂停 / 已暂停 |
+| `completed` | 本任务所有指定 seed、折和方法都已完成 |
+| `failed` / `cancelled` | 需要检查日志并重试 / 用户已取消 |
+
+默认结果目录为 `results/loso/distill/queue/jobs/<任务ID>/`，每个师生配对独立保存：
+
+| 文件 | 内容 |
+|---|---|
+| `spec.json` | 提交时的完整配置快照和命令 |
+| `progress.json` | 已完成折的指标与来源记录，也是续跑依据 |
+| `results.csv` | 每完成一折立即更新的结果；未完成任务的 CSV 是部分结果 |
+| `attempt_001.log`、`attempt_001.console.log` | 第一次尝试的训练与异常日志；重试依次编号，旧日志保留 |
+| `state.json`、`worker.log` | 当前任务状态与 worker 启动信息 |
+
+查看训练细节时，把下面的 `JOB_ID` 替换为 `status` 显示的实际任务 ID；重试后使用最新编号：
+
+```bash
+tail -n 50 -f results/loso/distill/queue/jobs/JOB_ID/attempt_001.console.log
+```
+
+`manager.log` 记录派发、等卡等调度信息。用户要求登记结果时，按 `AGENTS.md` 的规则更新
+`docs/exp_log.csv`，仅登记完整的 666、667、668 三 seed 结果。
+
+#### 4. 暂停、恢复、重试和调整顺序
+
+下面的 `JOB_ID` 同样替换为实际任务 ID：
+
+```bash
+# 暂停/恢复分发；已运行的任务继续，已暂停的单个任务仍保持暂停
 python -B -m experiments.distill.queue pause
 python -B -m experiments.distill.queue resume
 
-# 将 JOB_ID 替换为 status 显示的任务 ID；等当前折完成后暂停该任务
+# 等当前折完整保存后暂停这个任务；看到 paused 后再恢复
 python -B -m experiments.distill.queue stop JOB_ID
 python -B -m experiments.distill.queue resume JOB_ID
 
-# 失败任务修复原因后重试，保留已完成折；待运行任务前移或取消
+# 修复失败原因后重试，复用已完成折
 python -B -m experiments.distill.queue retry JOB_ID
+
+# 将等待中的任务移到最前，或取消它（保留已保存的文件）
 python -B -m experiments.distill.queue move JOB_ID
 python -B -m experiments.distill.queue cancel JOB_ID
 ```
 
-队列不自动搜索参数或选择最优方法。用户要求登记时，按 `AGENTS.md` 的规则更新
-`docs/exp_log.csv`，仅登记完整的 666、667、668 三 seed 结果。
+恢复时会检查配置和数据来源，复用已完整保存的折；中断时尚未完成的折从头训练。
+若训练代码发生改变，应重新提交当前代码下的任务；旧任务的 `retry` 仍会校验原版本。
+
+#### 5. 调度器停止后如何启动
+
+先用 `status` 确认 `manager=stopped`。若 `kd-parallel-queue` 会话仍在，进入原会话：
+
+```bash
+tmux attach -t kd-parallel-queue
+```
+
+若会话已经不存在，先创建它：
+
+```bash
+tmux new -s kd-parallel-queue
+```
+
+然后在该会话中执行下面的启动命令。`--gpus` 是允许使用的物理卡号，按需修改；
+`--per-gpu 1` 表示每卡同时最多一个队列任务。
+
+```bash
+conda activate mirepnet
+cd /home/lixinli/BigSmallCollab
+mkdir -p results/loso/distill/queue
+python -B -m experiments.distill.queue run \
+  --gpus 0 1 2 3 4 5 6 7 8 9 \
+  --per-gpu 1 \
+  --poll-seconds 15 >> results/loso/distill/queue/manager.log 2>&1
+```
+
+按 **Ctrl-B，再按 D** 脱离 tmux，调度器继续运行。每个队列只启动一个调度器。
+默认仅在卡没有其他计算进程、已用显存不超过 512 MiB、利用率不超过 10% 时启动首个任务；
+GPU 查询失败也会等待。多张空闲卡会并行运行不同任务。
+
+在调度器中按 Ctrl-C 会退出调度器，已启动的 worker 继续运行；重启后会识别存活 worker。
+机器或 worker 意外退出后，调度器先检查是否还有存活进程，再恢复任务状态；
+可恢复的中断任务会重新排队，已完成折保留。
+`paused` 任务需 `resume JOB_ID`，`failed` 任务需检查日志后 `retry JOB_ID`。
 
 ## 冒烟自检
 
