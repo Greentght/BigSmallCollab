@@ -41,6 +41,12 @@ its tuning grid. The ten CE epochs count toward the YAML's total epoch budget
 It covers all configured datasets and teacher/student pairs and retains the
 shared supervised baseline. Results record `KD_warmup10` and the warmup length.
 
+For KD plus native feature cosine alignment, select `--variants kd_feature`
+with the same command. It covers all five datasets and six teacher/student
+pairs, using fixed KD and `feature.params.lam_feat` values (currently 0.5).
+There is no CE-only warmup for this variant. The trained linear feature
+projector is retained in the student checkpoint for later reuse.
+
 The loader merges model defaults, pair values, dataset overrides, and the current
 grid cell, validates fields, expands dataset/protocol/pair/grid combinations, and
 writes a sibling <name>.resolved.yaml next to the output CSV. Legacy direct CLI

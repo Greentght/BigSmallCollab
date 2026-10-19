@@ -1,6 +1,7 @@
 # LOSO distillation methods. A plain run uses KD only.
 # Add methods at launch, for example: --variants kd mmd or --variants kd kd_mmd.
 # --variants warmup10_kd uses 10 CE-only epochs followed by KD within the same budget.
+# --variants kd_feature adds native feature cosine alignment using fixed component params.
 # Valid teacher targets are reused; missing targets are exported from the same-fold teacher.
 name: distill_kd_wide_fre_band
 type: distill
@@ -13,6 +14,8 @@ variants:
     grid_components: [kd]
   warmup10_kd:
     method: warmup10_kd
+  kd_feature:
+    method: kd_feature
   kd_masked:
     method: kd_masked
   mmd:
@@ -48,6 +51,9 @@ pairs:
       mmd:
         params: {lam_mmd: 0.5}
         grid: {}
+      feature:
+        params: {lam_feat: 0.5}
+        grid: {}
 
   - teacher: mirepnet
     student: eegnet
@@ -58,6 +64,9 @@ pairs:
       mmd:
         params: {lam_mmd: 0.5}
         grid: {}
+      feature:
+        params: {lam_feat: 0.5}
+        grid: {}
 
   - teacher: mirepnet
     student: adfcnn
@@ -67,6 +76,9 @@ pairs:
         grid: {}
       mmd:
         params: {lam_mmd: 0.5}
+        grid: {}
+      feature:
+        params: {lam_feat: 0.5}
         grid: {}
 
   - teacher: cbramod
@@ -79,6 +91,9 @@ pairs:
       mmd:
         params: {lam_mmd: 0.5}
         grid: {}
+      feature:
+        params: {lam_feat: 0.5}
+        grid: {}
 
   - teacher: cbramod
     student: eegnet
@@ -89,6 +104,9 @@ pairs:
       mmd:
         params: {lam_mmd: 0.5}
         grid: {}
+      feature:
+        params: {lam_feat: 0.5}
+        grid: {}
 
   - teacher: cbramod
     student: adfcnn
@@ -98,4 +116,7 @@ pairs:
         grid: {}
       mmd:
         params: {lam_mmd: 0.5}
+        grid: {}
+      feature:
+        params: {lam_feat: 0.5}
         grid: {}

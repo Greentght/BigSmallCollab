@@ -86,6 +86,7 @@ def _namespace(spec, artifact_root, no_auto_teacher_cache=False, gpu=None):
         train_percentage=spec.get("train_percentage"), val_split=spec.get("val_split"),
         methods=spec["methods"],
         lam_kd=float(params.get("lam_kd", 0.5)),
+        lam_feat=float(params.get("lam_feat", 0.0)),
         lam_mi=float(params.get("lam_mi", 0.1)),
         lam_mmd=float(params.get("lam_mmd", 0.5)),
         temperature=float(params.get("temperature", 2.0)),
@@ -305,6 +306,13 @@ def _row_complete(row, run_root):
             return False
     except Exception:  # noqa: BLE001
         return False
+    if row.get('method') == 'KD_feature' and float(row.get('lam_feat', 0)) > 0:
+        projector = checkpoint.get('projector_state_dict')
+        recorded_hash = row.get('projector_state_hash')
+        if not projector or not recorded_hash:
+            raise ValueError('completed KD_feature result lacks its trained projector; refusing to retrain')
+        if legacy._sha256_state_dict(projector) != recorded_hash:
+            raise ValueError('completed KD_feature projector hash mismatch; refusing to retrain')
     return True
 
 
@@ -533,6 +541,13 @@ def _save_run_artifacts(run_root, row, details, checkpoint_payload):
         path.parent.mkdir(parents=True, exist_ok=True)
     history = details.get('training_history', [])
     _atomic_write_json(files['history'], history)
+    projector = details.pop('projector', None)
+    if projector is not None:
+        checkpoint_payload = dict(checkpoint_payload)
+        checkpoint_payload['projector_state_dict'] = {
+            name: value.detach().cpu().clone()
+            for name, value in projector.state_dict().items()
+        }
     checkpoint_tmp = files['checkpoint'].with_name(
         f'.{files["checkpoint"].name}.tmp-{os.getpid()}')
     torch.save(checkpoint_payload, require_external_output(checkpoint_tmp))
@@ -671,7 +686,7 @@ def _run_spec(spec, device, existing_keys, fail_fast, run_root=None,
                                 spec["dataset"], teacher_artifact, key, seed, y_tr, uid_tr,
                                 expected_policy, args.artifact_root)
                         method_runner = legacy._run_method
-                        if method == "KD_warmup10":
+                        if method in {"KD_warmup10", "KD_feature"}:
                             from experiments.distill.warmup_kd import run_method
                             method_runner = run_method
                         row, details = method_runner(

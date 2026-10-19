@@ -35,6 +35,7 @@ FUSION_FIELDS = COMMON_FIELDS | {"include_controls"}
 
 DISTILL_RUNTIME_METHODS = {
     "kd": "KD_all",
+    "kd_feature": "KD_feature",
     "warmup10_kd": "KD_warmup10",
     "kd_masked": "KD_masked",
     "mmd": "MMD",
@@ -43,6 +44,7 @@ DISTILL_RUNTIME_METHODS = {
 }
 DISTILL_METHOD_ALIASES = {
     "kd": "kd",
+    "kd_feature": "kd_feature",
     "warmup10_kd": "warmup10_kd",
     "kd_all": "kd",
     "kd_masked": "kd_masked",
@@ -69,6 +71,7 @@ MMD_FIELDS = {
 }
 DISTILL_COMPONENTS = {
     "kd": ("kd",),
+    "kd_feature": ("kd", "feature"),
     "warmup10_kd": ("kd",),
     "kd_masked": ("kd",),
     "mmd": ("mmd",),
@@ -77,6 +80,7 @@ DISTILL_COMPONENTS = {
 PARAM_FIELDS = {
     "distill": {
         "kd": {"temperature", "lam_kd", "teacher_seed"},
+        "kd_feature": {"temperature", "lam_kd", "teacher_seed", "lam_feat"},
         "warmup10_kd": {"temperature", "lam_kd", "teacher_seed"},
         "kd_masked": {"temperature", "lam_kd", "teacher_seed"},
         "mmd": set(MMD_FIELDS) | {"teacher_seed"},
@@ -95,6 +99,7 @@ PARAM_FIELDS = {
 METHOD_DEFAULT_PARAMS = {
     "distill": {
         "kd": {"temperature": 2.0, "lam_kd": 0.5},
+        "kd_feature": {"temperature": 2.0, "lam_kd": 0.5, "lam_feat": 0.5},
         "warmup10_kd": {"temperature": 2.0, "lam_kd": 0.5},
         "kd_masked": {"temperature": 2.0, "lam_kd": 0.5},
         "mmd": {
@@ -189,7 +194,7 @@ def _validate_param_value(name: str, value: Any, context: str) -> None:
         _number(value, f"{context}.{name}", minimum=0.0)
         if float(value) <= 0:
             _fail(f"{context}.{name}", "must be > 0")
-    elif name in {"lam_kd", "lam_mi", "lam_mmd", "weight_decay", "alpha", "beta"}:
+    elif name in {"lam_kd", "lam_feat", "lam_mi", "lam_mmd", "weight_decay", "alpha", "beta"}:
         _number(value, f"{context}.{name}", minimum=0.0)
     elif name == "big_weight":
         _number(value, f"{context}.{name}", minimum=0.0, maximum=1.0)
@@ -304,7 +309,7 @@ def _validate_common(raw: Mapping, kind: str) -> dict:
                 components = DISTILL_COMPONENTS.get(variant_method)
                 if components is None:
                     _fail(f"variants.{variant_name}.method",
-                          "variant matrices support kd, warmup10_kd, kd_masked, mmd, and kd_mmd")
+                          "variant matrices support kd, kd_feature, warmup10_kd, kd_masked, mmd, and kd_mmd")
                 grid_components = definition.get("grid_components", [])
                 if (not isinstance(grid_components, list)
                         or not all(isinstance(item, str) for item in grid_components)):
@@ -413,6 +418,7 @@ def _validate_variant_pair(raw: Any, kind: str, variants: Mapping,
                   f"must define exactly the components {sorted(needed)}")
         normalized_components = {}
         component_fields = {"kd": PARAM_FIELDS["distill"]["kd"],
+                            "feature": {"lam_feat"},
                             "mmd": PARAM_FIELDS["distill"]["mmd"]}
         for component, block in component_blocks.items():
             context = f"pairs[{index}].components.{component}"
