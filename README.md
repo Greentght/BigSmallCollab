@@ -112,6 +112,92 @@ conda run -n mirepnet python experiments/fusion/run_fusion.py \
 
 CodeBrain 保留专用审计 runner `experiments/finetune/run_codebrain.py` 以便复现；当前不属于活动协同 baseline 或 teacher。已完成的三 seed 结果和负结果结论见 [CodeBrain 结果报告](docs/codebrain_results.md)。
 
+## KD 手动调参与并行队列
+
+### 单组实验命令（当前可用）
+
+在项目根目录和 `mirepnet` 环境中执行；一条命令选择一个数据集、一个教师、一个学生，
+参数直接写在命令后面。下面以 BNCI2014004、CBraMod → IFNet 为例：
+
+```bash
+conda activate mirepnet
+cd /home/lixinli/BigSmallCollab
+
+python -B -m experiments.distill.run_distill \
+  --dataset BNCI2014004 \
+  --teacher cbramod \
+  --student ifnet \
+  --protocol loso \
+  --seeds 666 667 668 \
+  --methods kd \
+  --epochs 50 \
+  --lr 0.001 \
+  --weight_decay 0.0001 \
+  --batch_size 16 \
+  --lam_kd 0.25 \
+  --temperature 1.0 \
+  --gpu 0 \
+  --fail_fast
+```
+
+- 直接修改 `--epochs`、`--lr`、`--weight_decay`、`--batch_size`、`--lam_kd` 和
+  `--temperature` 的数值来指定候选参数；前四项描述学生训练，`--methods kd` 只运行普通 KD。
+- 数据集可选 `BNCI2014004`、`BNCI2014001`、`BNCI2014001-4`、`BNCI2015001`、`AlexMI`；
+  教师使用 `mirepnet` 或 `cbramod`，学生使用 `ifnet`、`eegnet` 或 `adfcnn`。
+- `--gpu 0` 表示 GPU 编号，运行前按实际可用资源修改。当前入口在一次调用内顺序执行各 seed 和被试。
+- **CSV 和 log 自动生成，无须填写 `--out_csv` 或 `--log_file`**：CSV 位于
+  `results/loso/distill/`，日志位于 `results/loso/distill/logs/`，以运行时间和 PID 区分各次运行。
+  CSV 名还包含数据集、教师和学生；选择多个配对时，每个配对分别输出。
+- LOSO 默认使用 `/data1/llx/BigSmallcollab/cache/artifact-loso/`；教师 seed 默认与学生 seed 一致。
+  教师目标缓存通过校验后复用，缺失或不匹配时默认自动准备并在日志中记录。
+- 上述示例使用逐参数入口，显式给出的参数直接生效。源训练集验证的调参方案尚待确定；
+  当前命令输出的是留出被试的 LOSO 测试结果，不能用该测试分数选择参数。
+  `--val_split` 在此入口仅用于 few-shot，不能为 LOSO 增加源侧验证划分。
+
+### 并行队列命令设计（待实现，不可直接执行）
+
+**当前没有 `experiments.distill.queue` 模块，`run_distill` 也不支持 `--enqueue`。**
+下列命令记录讨论中的接口，须完成队列实现后才能使用。候选参数由用户逐组指定，
+队列负责调度、保存完整参数和汇总运行状态。
+
+1. 在一个 tmux 中启动调度器，指定 GPU 和每卡并发数。下面计划同时运行三组实验：
+
+   ```text
+   python -m experiments.distill.queue run --gpus 0 2 4 --per-gpu 1
+   ```
+
+2. 在普通终端提交一组候选参数，无须另开 tmux 或为任务指定输出路径：
+
+   ```text
+   python -m experiments.distill.run_distill \
+     --enqueue \
+     --dataset BNCI2014004 \
+     --teacher cbramod \
+     --student ifnet \
+     --protocol loso \
+     --seeds 666 667 668 \
+     --methods kd \
+     --epochs 50 \
+     --lr 0.001 \
+     --weight_decay 0.0001 \
+     --batch_size 16 \
+     --lam_kd 0.25 \
+     --temperature 1.0
+   ```
+
+   下一组直接修改参数后再提交。调度器分配指定 GPU 的空闲执行位置；超出并发容量的任务等待。
+   提交时保存实际参数快照，CSV 和日志自动生成，后续修改 YAML 不改变已提交任务的参数。
+
+3. 统一查看等待、运行、完成和失败的任务，以及分配的 GPU、参数和完成折数：
+
+   ```text
+   python -m experiments.distill.queue status
+   ```
+
+计划支持暂停调度、调整待运行任务顺序和逐折保存结果；继续任务时复用已完成折，
+尚未完成的折重新运行。任务汇总自动维护；用户要求登记时，按 `AGENTS.md` 的规则更新
+`docs/exp_log.csv`，仅登记完整的 666、667、668 三 seed 结果。
+
 ## 冒烟自检
 
 ```bash
