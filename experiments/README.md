@@ -27,6 +27,20 @@ own YAML files.
 always expands exactly `Base`, `KD_all`, and `CE_MI`; `lam_mi: 0.1` is fixed as
 the pilot value and is not selected using evaluation data.
 
+For ten CE-only warmup epochs followed by ordinary KD, use the same LOSO YAML:
+
+```bash
+python -B -m experiments.distill.run_distill \
+  --config configs/experiments/loso/distill_kd.yaml \
+  --variants warmup10_kd --seeds 666 667 668 --gpu 0 --resume
+```
+
+`warmup10_kd` uses each pair's fixed KD component parameters without expanding
+its tuning grid. The ten CE epochs count toward the YAML's total epoch budget
+(currently 100); the optimizer and cosine schedule continue through epoch 11.
+It covers all configured datasets and teacher/student pairs and retains the
+shared supervised baseline. Results record `KD_warmup10` and the warmup length.
+
 The loader merges model defaults, pair values, dataset overrides, and the current
 grid cell, validates fields, expands dataset/protocol/pair/grid combinations, and
 writes a sibling <name>.resolved.yaml next to the output CSV. Legacy direct CLI

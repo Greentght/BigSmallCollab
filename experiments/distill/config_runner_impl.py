@@ -670,7 +670,11 @@ def _run_spec(spec, device, existing_keys, fail_fast, run_root=None,
                             tch = legacy._load_teacher(
                                 spec["dataset"], teacher_artifact, key, seed, y_tr, uid_tr,
                                 expected_policy, args.artifact_root)
-                        row, details = legacy._run_method(
+                        method_runner = legacy._run_method
+                        if method == "KD_warmup10":
+                            from experiments.distill.warmup_kd import run_method
+                            method_runner = run_method
+                        row, details = method_runner(
                             args, spec["dataset"], spec["protocol"], spec["teacher"],
                             spec["student"], teacher_artifact, key, seed, method,
                             X_tr, y_tr, X_te, y_te, subj_tr, tch,

@@ -35,6 +35,7 @@ FUSION_FIELDS = COMMON_FIELDS | {"include_controls"}
 
 DISTILL_RUNTIME_METHODS = {
     "kd": "KD_all",
+    "warmup10_kd": "KD_warmup10",
     "kd_masked": "KD_masked",
     "mmd": "MMD",
     "kd_mmd": "KD_MMD",
@@ -42,6 +43,7 @@ DISTILL_RUNTIME_METHODS = {
 }
 DISTILL_METHOD_ALIASES = {
     "kd": "kd",
+    "warmup10_kd": "warmup10_kd",
     "kd_all": "kd",
     "kd_masked": "kd_masked",
     "mmd": "mmd",
@@ -67,6 +69,7 @@ MMD_FIELDS = {
 }
 DISTILL_COMPONENTS = {
     "kd": ("kd",),
+    "warmup10_kd": ("kd",),
     "kd_masked": ("kd",),
     "mmd": ("mmd",),
     "kd_mmd": ("kd", "mmd"),
@@ -74,6 +77,7 @@ DISTILL_COMPONENTS = {
 PARAM_FIELDS = {
     "distill": {
         "kd": {"temperature", "lam_kd", "teacher_seed"},
+        "warmup10_kd": {"temperature", "lam_kd", "teacher_seed"},
         "kd_masked": {"temperature", "lam_kd", "teacher_seed"},
         "mmd": set(MMD_FIELDS) | {"teacher_seed"},
         "kd_mmd": {"temperature", "lam_kd", "teacher_seed"} | MMD_FIELDS,
@@ -91,6 +95,7 @@ PARAM_FIELDS = {
 METHOD_DEFAULT_PARAMS = {
     "distill": {
         "kd": {"temperature": 2.0, "lam_kd": 0.5},
+        "warmup10_kd": {"temperature": 2.0, "lam_kd": 0.5},
         "kd_masked": {"temperature": 2.0, "lam_kd": 0.5},
         "mmd": {
             "lam_mmd": 0.5,
@@ -299,7 +304,7 @@ def _validate_common(raw: Mapping, kind: str) -> dict:
                 components = DISTILL_COMPONENTS.get(variant_method)
                 if components is None:
                     _fail(f"variants.{variant_name}.method",
-                          "variant matrices support kd, kd_masked, mmd, and kd_mmd")
+                          "variant matrices support kd, warmup10_kd, kd_masked, mmd, and kd_mmd")
                 grid_components = definition.get("grid_components", [])
                 if (not isinstance(grid_components, list)
                         or not all(isinstance(item, str) for item in grid_components)):
@@ -753,6 +758,11 @@ def load_experiment(path: str | Path) -> dict:
                                                  explicit_training)
                     for grid_index, final_params, final_training in _grid_combinations(
                             params, training, grid, kind, method):
+                        if kind == "distill" and method == "warmup10_kd":
+                            if final_training["epochs"] <= 10:
+                                _fail("warmup10_kd", "epochs must exceed the 10 CE-only epochs")
+                            if final_params["lam_kd"] <= 0:
+                                _fail("warmup10_kd", "lam_kd must be > 0")
                         control_identity = {
                             "dataset": dataset,
                             "protocol": protocol,
