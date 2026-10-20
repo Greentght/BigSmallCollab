@@ -37,6 +37,7 @@ DISTILL_RUNTIME_METHODS = {
     "kd": "KD_all",
     "kd_feature": "KD_feature",
     "warmup10_kd": "KD_warmup10",
+    "warmup10_kd_feature": "KD_warmup10_feature",
     "kd_masked": "KD_masked",
     "mmd": "MMD",
     "kd_mmd": "KD_MMD",
@@ -46,6 +47,7 @@ DISTILL_METHOD_ALIASES = {
     "kd": "kd",
     "kd_feature": "kd_feature",
     "warmup10_kd": "warmup10_kd",
+    "warmup10_kd_feature": "warmup10_kd_feature",
     "kd_all": "kd",
     "kd_masked": "kd_masked",
     "mmd": "mmd",
@@ -73,6 +75,7 @@ DISTILL_COMPONENTS = {
     "kd": ("kd",),
     "kd_feature": ("kd", "feature"),
     "warmup10_kd": ("kd",),
+    "warmup10_kd_feature": ("kd", "feature"),
     "kd_masked": ("kd",),
     "mmd": ("mmd",),
     "kd_mmd": ("kd", "mmd"),
@@ -82,6 +85,7 @@ PARAM_FIELDS = {
         "kd": {"temperature", "lam_kd", "teacher_seed"},
         "kd_feature": {"temperature", "lam_kd", "teacher_seed", "lam_feat"},
         "warmup10_kd": {"temperature", "lam_kd", "teacher_seed"},
+        "warmup10_kd_feature": {"temperature", "lam_kd", "teacher_seed", "lam_feat"},
         "kd_masked": {"temperature", "lam_kd", "teacher_seed"},
         "mmd": set(MMD_FIELDS) | {"teacher_seed"},
         "kd_mmd": {"temperature", "lam_kd", "teacher_seed"} | MMD_FIELDS,
@@ -101,6 +105,7 @@ METHOD_DEFAULT_PARAMS = {
         "kd": {"temperature": 2.0, "lam_kd": 0.5},
         "kd_feature": {"temperature": 2.0, "lam_kd": 0.5, "lam_feat": 0.5},
         "warmup10_kd": {"temperature": 2.0, "lam_kd": 0.5},
+        "warmup10_kd_feature": {"temperature": 2.0, "lam_kd": 0.5, "lam_feat": 0.5},
         "kd_masked": {"temperature": 2.0, "lam_kd": 0.5},
         "mmd": {
             "lam_mmd": 0.5,
@@ -764,11 +769,11 @@ def load_experiment(path: str | Path) -> dict:
                                                  explicit_training)
                     for grid_index, final_params, final_training in _grid_combinations(
                             params, training, grid, kind, method):
-                        if kind == "distill" and method == "warmup10_kd":
+                        if kind == "distill" and method in {"warmup10_kd", "warmup10_kd_feature"}:
                             if final_training["epochs"] <= 10:
-                                _fail("warmup10_kd", "epochs must exceed the 10 CE-only epochs")
+                                _fail(method, "epochs must exceed the 10 CE-only epochs")
                             if final_params["lam_kd"] <= 0:
-                                _fail("warmup10_kd", "lam_kd must be > 0")
+                                _fail(method, "lam_kd must be > 0")
                         control_identity = {
                             "dataset": dataset,
                             "protocol": protocol,

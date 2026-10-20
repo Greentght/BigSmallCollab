@@ -47,6 +47,12 @@ pairs, using fixed KD and `feature.params.lam_feat` values (currently 0.5).
 There is no CE-only warmup for this variant. The trained linear feature
 projector is retained in the student checkpoint for later reuse.
 
+For the warmup version of KD+feature, use `--variants warmup10_kd_feature`
+with the same LOSO command. Epochs 1-10 train CE only; epochs 11-100 train
+CE+KD+cosine feature loss with each pair's fixed KD and feature parameters.
+The optimizer and cosine schedule continue through the switch. The trained
+projector is retained and validated when reusing a completed result.
+
 The loader merges model defaults, pair values, dataset overrides, and the current
 grid cell, validates fields, expands dataset/protocol/pair/grid combinations, and
 writes a sibling <name>.resolved.yaml next to the output CSV. Legacy direct CLI

@@ -23,6 +23,9 @@ def _method_kwargs(args, method="KD_warmup10"):
     elif method == "KD_feature":
         kwargs["distill_warmup_epochs"] = 0
         kwargs["lam_feat"] = args.lam_feat
+    elif method == "KD_warmup10_feature":
+        kwargs["distill_warmup_epochs"] = 10
+        kwargs["lam_feat"] = args.lam_feat
     else:
         raise ValueError(f"unsupported KD method {method!r}")
     return kwargs, weight_mode
@@ -196,8 +199,11 @@ def run_method(args, dataset, protocol, teacher, student, teacher_artifact,
         "session": legacy._session_default(dataset), "protocol": protocol,
         "teacher": teacher, "student": student, "teacher_artifact": teacher_artifact,
         "seed": int(seed), "method": method,
-        "condition_label": ("10-epoch CE warmup + Vanilla KD" if method == "KD_warmup10"
-                            else "KD + native cosine feature alignment"),
+        "condition_label": {
+            "KD_warmup10": "10-epoch CE warmup + Vanilla KD",
+            "KD_feature": "KD + native cosine feature alignment",
+            "KD_warmup10_feature": "10-epoch CE warmup + KD + native cosine feature alignment",
+        }[method],
         "acc": metrics["acc"], "test_accuracy": metrics["acc"],
         "test_balanced_accuracy": round(balanced_accuracy, 4),
         "kappa": metrics["kappa"], "test_kappa": metrics["kappa"],

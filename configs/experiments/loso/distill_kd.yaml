@@ -2,6 +2,7 @@
 # Add methods at launch, for example: --variants kd mmd or --variants kd kd_mmd.
 # --variants warmup10_kd uses 10 CE-only epochs followed by KD within the same budget.
 # --variants kd_feature adds native feature cosine alignment using fixed component params.
+# --variants warmup10_kd_feature enables both KD and feature loss after 10 CE-only epochs.
 # Valid teacher targets are reused; missing targets are exported from the same-fold teacher.
 name: distill_kd_wide_fre_band
 type: distill
@@ -16,6 +17,8 @@ variants:
     method: warmup10_kd
   kd_feature:
     method: kd_feature
+  warmup10_kd_feature:
+    method: warmup10_kd_feature
   kd_masked:
     method: kd_masked
   mmd:

@@ -306,7 +306,7 @@ def _row_complete(row, run_root):
             return False
     except Exception:  # noqa: BLE001
         return False
-    if row.get('method') == 'KD_feature' and float(row.get('lam_feat', 0)) > 0:
+    if row.get('method') in {'KD_feature', 'KD_warmup10_feature'} and float(row.get('lam_feat', 0)) > 0:
         projector = checkpoint.get('projector_state_dict')
         recorded_hash = row.get('projector_state_hash')
         if not projector or not recorded_hash:
@@ -686,7 +686,7 @@ def _run_spec(spec, device, existing_keys, fail_fast, run_root=None,
                                 spec["dataset"], teacher_artifact, key, seed, y_tr, uid_tr,
                                 expected_policy, args.artifact_root)
                         method_runner = legacy._run_method
-                        if method in {"KD_warmup10", "KD_feature"}:
+                        if method in {"KD_warmup10", "KD_feature", "KD_warmup10_feature"}:
                             from experiments.distill.warmup_kd import run_method
                             method_runner = run_method
                         row, details = method_runner(
