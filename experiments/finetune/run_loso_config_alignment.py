@@ -844,9 +844,17 @@ def write_seed_summary(base: Path, results: list[dict], expected_folds: int) -> 
 
 
 def run_worker(args, spec: dict, device: torch.device,
-               stop_after_subject: int | None = None) -> None:
+               stop_after_subject: int | None = None, *,
+               seed_output: Path | None = None,
+               training_overrides: dict | None = None) -> None:
     dataset, model = canonical_dataset(args.dataset), args.model
     cfg = profile_config(args.profile, model, dataset, spec)
+    if training_overrides:
+        allowed = {'epochs', 'lr', 'batch_size', 'weight_decay', 'optimizer'}
+        if set(training_overrides) - allowed:
+            raise ValueError(f'unsupported training overrides: {set(training_overrides) - allowed}')
+        cfg.update(training_overrides)
+        cfg['parameter_overrides'] = dict(training_overrides)
     variants = (['legacy_cache', 'rebuilt_source'] if args.profile == 'source_bridge'
                 else [WIDEBAND_VARIANT] if args.profile == WIDEBAND_PROFILE
                 else ['npy_source'] if args.profile == 'reference_aligned_npy'
@@ -854,7 +862,8 @@ def run_worker(args, spec: dict, device: torch.device,
     if args.profile == 'source_bridge' and dataset != 'BNCI2014001-4':
         raise ValueError('source_bridge supports BNCI2014001-4 only')
     subject_outputs = []
-    root = RESULT_ROOT / args.profile / dataset / model / f'seed_{args.seed}'
+    root = (require_external_output(seed_output) if seed_output is not None else
+            RESULT_ROOT / args.profile / dataset / model / f'seed_{args.seed}')
     # Match run_finetuning.run_single_seed: one seed, a throwaway model build,
     # then a fresh model at the start of every ordered LOSO split.
     set_seed(args.seed, device)
