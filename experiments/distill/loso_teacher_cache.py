@@ -137,7 +137,8 @@ def _source_payload(dataset, spec, snapshot):
         digest = _sha256(path)
         if digest != record['sha256']:
             raise RuntimeError(f'{dataset}: source file changed: {path}')
-        files[name] = {'path': str(path), 'sha256': digest, 'bytes': path.stat().st_size}
+        resolved = resolve_local_file(path)
+        files[name] = {'path': str(path), 'sha256': digest, 'bytes': resolved.stat().st_size}
     trial_sha = _sha256(protocol.TRIALS_PATH)
     if trial_sha != snapshot['manifests']['trial_manifest']['sha256']:
         raise RuntimeError('canonical trial manifest differs from frozen snapshot')

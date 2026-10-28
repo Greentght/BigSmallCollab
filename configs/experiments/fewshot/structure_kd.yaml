@@ -1,0 +1,73 @@
+# Three-method, calibration-only few-shot structure-aware KD campaign.
+# Historical CE and vanilla-KD CSVs are read as references; they are not trained.
+name: fewshot_structure_kd
+protocol: fewshot
+datasets:
+  - BNCI2014004
+  - BNCI2014001
+  - BNCI2014001-4
+  - BNCI2015001
+  - AlexMI
+teachers: [mirepnet, cbramod]
+students: [ifnet, eegnet, adfcnn]
+seeds: [666, 667, 668]
+methods: [kd_proto, kd_relation, ea_kd]
+
+split:
+  policy: fewshot_stratified_random
+  calibration_fraction: 0.30
+  test_fraction: 0.70
+  random_state: seed
+  session:
+    BNCI2014004: session_3
+    BNCI2014001: session_T
+    BNCI2014001-4: session_T
+    BNCI2015001: session_A
+    AlexMI: current_EEGDataset_subject_block
+
+source:
+  reader: data.loso_source.load_dataset(dataset, model=None)
+  bnci_root: /data1/llx/<dataset>/wide_fre_band/
+  BNCI2014001-4: shares /data1/llx/BNCI2014001/wide_fre_band/
+  AlexMI: preserve_current_loader_and_processing
+
+parameter_sources:
+  student_training: configs/models/{student}.yaml resolved for {dataset}/fewshot
+  ordinary_kd: configs/experiments/distill_kd.yaml pair params only; never expand grid
+  missing_student_optimizer: AdamW
+  missing_student_scheduler: CosineAnnealingLR stepped once at epoch end
+  student_warmup_epochs: 0
+  teacher_training: configs/models/{teacher}.yaml resolved for {dataset}/fewshot
+
+kd_parameters:
+  # Values are frozen from the current few-shot distillation config because the
+  # historical per-subject CSVs do not contain actual lambda/temperature fields.
+  mirepnet:
+    ifnet: {lam_kd: 0.5, temperature: 2.0}
+    eegnet: {lam_kd: 0.3, temperature: 3.0}
+    adfcnn: {lam_kd: 0.4, temperature: 2.0}
+  cbramod:
+    ifnet: {lam_kd: 0.25, temperature: 1.0}
+    eegnet: {lam_kd: 0.2, temperature: 2.0}
+    adfcnn: {lam_kd: 0.3, temperature: 2.0}
+
+method_parameters:
+  kd_proto:
+    lambda_proto: 0.5
+  kd_relation:
+    lambda_relation: 0.5
+    lambda_intra: 0.25
+    lambda_inter: 0.25
+  ea_kd:
+    entropy_temperature: 3.0
+    entropy_weight_scale: 0.5
+
+runtime:
+  cpu_threads_per_worker: 1
+  dataloader_workers: 0
+  evaluate_fixed_final_epoch: true
+  prediction_head: original_student_classifier
+
+cache_root: /data1/llx/BigSmallcollab/cache/artifact-fewshot
+report_root: results/fewshot/structure_kd
+historical_reference_pattern: results/{dataset}_fewshot_distill_{teacher}_to_{student}.csv

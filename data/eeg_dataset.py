@@ -9,6 +9,7 @@ from scipy.spatial.distance import cdist
 import pandas as pd
 from collections import Counter
 from data.channels import *
+from experiments.storage import resolve_local_file
 
 # Raw-data root. Default keeps the historical location; override for other machines:
 #   DATA_ROOT=/path/to/data python ...
@@ -22,11 +23,11 @@ class EEGDataset(Dataset):
 
         # 根据 dataset_name 决定加载哪个 npy
         if self.dataset_name == 'BNCI2014001-4':
-            X = np.load(os.path.join(_DATA_ROOT, 'BNCI2014001', 'X.npy'))
-            y = np.load(os.path.join(_DATA_ROOT, 'BNCI2014001', 'labels.npy'), allow_pickle=True)
+            X = np.load(resolve_local_file(os.path.join(_DATA_ROOT, 'BNCI2014001', 'X.npy')))
+            y = np.load(resolve_local_file(os.path.join(_DATA_ROOT, 'BNCI2014001', 'labels.npy')), allow_pickle=True)
         else:
-            X = np.load(os.path.join(_DATA_ROOT, self.dataset_name, 'X.npy'))
-            y = np.load(os.path.join(_DATA_ROOT, self.dataset_name, 'labels.npy'), allow_pickle=True)
+            X = np.load(resolve_local_file(os.path.join(_DATA_ROOT, self.dataset_name, 'X.npy')))
+            y = np.load(resolve_local_file(os.path.join(_DATA_ROOT, self.dataset_name, 'labels.npy')), allow_pickle=True)
         print("original data shape:", X.shape, "labels shape:", y.shape)
 
         if self.dataset_name == 'BNCI2014001-4':
@@ -66,7 +67,7 @@ class EEGDataset(Dataset):
             self.ch_num = 3
 
             meta_path = os.path.join(_DATA_ROOT, 'BNCI2014004', 'meta004.csv')
-            meta = pd.read_csv(meta_path)
+            meta = pd.read_csv(resolve_local_file(meta_path))
             data_mode = getattr(self.args, 'data_mode', 'session3')
             if data_mode != 'session3':
                 raise ValueError(f"BNCI2014004  data_mode='session3', got {data_mode}")
@@ -176,7 +177,8 @@ class EEGDataset(Dataset):
             self.num_subjects = 12
             self.ch_num = 13
 
-            meta = pd.read_csv(os.path.join(_DATA_ROOT, self.dataset_name, 'meta.csv'))
+            meta = pd.read_csv(resolve_local_file(
+                os.path.join(_DATA_ROOT, self.dataset_name, 'meta.csv')))
             subj_col = np.asarray(meta['subject'].values)  # 1-indexed
             target_subjects = (self.args.sub if hasattr(self.args, 'sub')
                                else range(self.num_subjects))

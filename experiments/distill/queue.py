@@ -499,12 +499,28 @@ def run_worker(args):
         log = folder / f'attempt_{attempt:03d}.log'
         console = folder / f'attempt_{attempt:03d}.console.log'
         spec = read_json(folder / 'spec.json')
-        command = [spec.get('python', sys.executable), '-B', '-m',
-                   'experiments.distill.run_distill', '--snapshot', str(folder / 'spec.json'),
-                   '--progress', str(folder / 'progress.json'),
-                   '--out_csv', str(folder / 'results.csv'), '--log_file', str(log),
-                   '--gpu', '0', '--stop-file', str(folder / 'stop'), '--resume']
+        snapshot = spec.get('snapshot', {})
+        training_python = spec.get('python', sys.executable)
+        if snapshot.get('kind') == 'cbramod_channel_feature_alignment':
+            command = [training_python, '-B', '-m',
+                       'experiments.distill.run_cbramod_channel_feature',
+                       '--snapshot', str(folder / 'spec.json'),
+                       '--progress', str(folder / 'progress.json'),
+                       '--gpu', '0', '--stop-file', str(folder / 'stop')]
+        else:
+            command = [training_python, '-B', '-m',
+                       'experiments.distill.run_distill', '--snapshot', str(folder / 'spec.json'),
+                       '--progress', str(folder / 'progress.json'),
+                       '--out_csv', str(folder / 'results.csv'), '--log_file', str(log),
+                       '--gpu', '0', '--stop-file', str(folder / 'stop'), '--resume']
         child_environment = os.environ.copy()
+        if snapshot.get('kind') == 'cbramod_channel_feature_alignment':
+            for name in ('OMP_NUM_THREADS', 'MKL_NUM_THREADS',
+                         'OPENBLAS_NUM_THREADS', 'NUMEXPR_NUM_THREADS',
+                         'BLIS_NUM_THREADS', 'VECLIB_MAXIMUM_THREADS',
+                         'BIGSMALLCOLLAB_CPU_THREADS'):
+                child_environment[name] = '1'
+            child_environment['TORCH_NUM_THREADS'] = '1'
         # Pin the physical GPU by UUID. CUDA ordinal zero then refers to that
         # same device in both the student and its teacher-cache subprocesses.
         child_environment['CUDA_VISIBLE_DEVICES'] = gpu_uuid
@@ -557,8 +573,14 @@ def run_worker(args):
             state = store.load(args.job)
             state.update(status=status, message=message, returncode=returncode,
                          child=None, worker=None, launcher=None)
+            if (status == 'completed' and
+                    snapshot.get('kind') == 'cbramod_channel_feature_alignment'):
+                state['log_registration'] = {
+                    'status': 'skipped',
+                    'reason': 'CBraMod channel-feature results are not tuning-log entries'}
             store.save(state)
-        if status == 'completed':
+        if (status == 'completed' and
+                snapshot.get('kind') != 'cbramod_channel_feature_alignment'):
             try:
                 register_job_log(store, args.job)
             except Exception as exc:

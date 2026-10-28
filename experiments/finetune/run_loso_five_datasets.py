@@ -122,11 +122,12 @@ def _verify_source_files(dataset, spec, snapshot):
     current = {}
     for name, record in source_info['files'].items():
         path = source_root / name
+        resolved = resolve_local_file(path)
         digest = _sha256(path)
         if digest != record['sha256']:
             raise RuntimeError(f'{dataset}: source file hash changed: {path}')
         current[name] = {'path': str(path), 'sha256': digest,
-                         'bytes': path.stat().st_size}
+                         'bytes': resolved.stat().st_size}
     return current
 
 
@@ -140,7 +141,7 @@ def _load_trials(dataset, spec):
         os.environ['MI2015001_SESSION'] = 'session_A'
     source = ds['source_dataset']
     meta_path = Path(_DATA_ROOT) / source / ('meta004.csv' if source == 'BNCI2014004' else 'meta.csv')
-    meta = pd.read_csv(meta_path, dtype={'session': str, 'run': str})
+    meta = pd.read_csv(resolve_local_file(meta_path), dtype={'session': str, 'run': str})
     y_raw = np.load(resolve_local_file(Path(_DATA_ROOT) / source / 'labels.npy'), allow_pickle=True).astype(str)
     args = SimpleNamespace(**kwargs)
     loaded = EEGDataset(args=args)

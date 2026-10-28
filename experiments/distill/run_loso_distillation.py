@@ -28,6 +28,9 @@ import yaml
 from models import get_adapter
 from experiments.finetune import run_loso_five_datasets as protocol
 from experiments.distill import loso_teacher_cache as teachers
+from collab.cbramod_channel_feature import (
+    channel_cosine_loss, mean_pool_temporal_patches,
+)
 from experiments.storage import external_path, require_external_output, resolve_local_file
 
 PLAN_PATH = protocol.ROOT / 'configs/reproductions/loso_distillation_v1.yaml'
@@ -59,8 +62,13 @@ def _plan(path):
     plan = yaml.safe_load(resolve_local_file(path).read_text())
     if list(plan['stages']) != list(STAGES):
         raise ValueError(f'Expected stage order {STAGES}')
-    if plan['loss']['feature_transform'] != 'native_penultimate':
-        raise ValueError('This runner aligns the native teacher feature only')
+    feature_transform = plan['loss']['feature_transform']
+    if feature_transform not in {
+            'native_penultimate', 'cbramod_channel_mean_patch_shared_student'}:
+        raise ValueError(f'unsupported feature transform: {feature_transform}')
+    if (feature_transform == 'cbramod_channel_mean_patch_shared_student'
+            and plan['teachers'].keys() != {'cbramod'}):
+        raise ValueError('channel mean-patch alignment is defined for CBraMod only')
     if plan['loss']['teacher_correct_mask'] or float(plan['loss']['ce_weight']) != 1.0:
         raise ValueError('This protocol uses unmasked KD and unit-weight CE')
     if float(plan['loss']['temperature']) <= 0:
@@ -164,8 +172,14 @@ def _losses(logits, feat, labels, teacher_logits, teacher_feat, projection,
                       F.softmax(teacher_logits.detach() / temperature, dim=1),
                       reduction='batchmean') * temperature ** 2
     if active and float(stage['lam_feat']) > 0:
-        feature = (1 - F.cosine_similarity(
-            projection(feat), teacher_feat.detach(), dim=1, eps=1e-8)).mean()
+        projected = projection(feat)
+        if teacher_feat.ndim == 3:
+            feature = channel_cosine_loss(projected, teacher_feat.detach())
+        elif teacher_feat.ndim == 2:
+            feature = (1 - F.cosine_similarity(
+                projected, teacher_feat.detach(), dim=1, eps=1e-8)).mean()
+        else:
+            raise ValueError(f'unsupported teacher feature shape {teacher_feat.shape}')
     total = ce + float(stage['lam_kd']) * kd + float(stage['lam_feat']) * feature
     return total, ce, kd, feature, active
 
@@ -323,13 +337,40 @@ def _fit(adapter, model, projection, x_tensor, labels, targets, cfg, stage,
     return history, elapsed_before + time.monotonic() - started
 
 
-def _run(args, plan, spec, snapshot, device):
+def _write_queue_progress(path, status, records, total):
+    if path is None:
+        return
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f'.{path.name}.{os.getpid()}.tmp')
+    temporary.write_text(json.dumps({
+        'status': status, 'records': sorted(records),
+        'completed_cells': len(records), 'total_cells': int(total),
+        'updated_unix': time.time(),
+    }, sort_keys=True, indent=2) + '\n')
+    os.replace(temporary, path)
+
+
+def _run(args, plan, spec, snapshot, device, *, queue_progress_path=None,
+         stop_file=None, write_summary=True):
     stage = plan['stages'][args.stage]
     datasets = args.datasets or plan['datasets']
     students = args.students or plan['students']
     seeds = args.seeds or plan['seeds']
     if len(set(seeds)) != len(seeds):
         raise ValueError('duplicate seeds')
+    total_cells = sum(
+        (len(range(int(spec['datasets'][dataset]['subjects']))
+             if args.folds is None else args.folds) * len(seeds))
+        for dataset in datasets) * len(students)
+    existing_progress = {}
+    if queue_progress_path is not None and Path(queue_progress_path).is_file():
+        try:
+            existing_progress = json.loads(Path(queue_progress_path).read_text())
+        except (OSError, json.JSONDecodeError):
+            existing_progress = {}
+    completed_cells = set(existing_progress.get('records', []))
+    _write_queue_progress(queue_progress_path, 'running', completed_cells, total_cells)
     for dataset in datasets:
         ds = spec['datasets'][dataset]
         folds = list(range(int(ds['subjects']))) if args.folds is None else args.folds
@@ -343,6 +384,11 @@ def _run(args, plan, spec, snapshot, device):
                 tr, te = subject_ids != fold, subject_ids == fold
                 x_tensor, shared_cfg = None, None
                 for seed in seeds:
+                    queue_cell = f'{dataset}/{student}/subject_{fold+1:02d}/seed_{seed}'
+                    if stop_file and Path(stop_file).exists():
+                        _write_queue_progress(queue_progress_path, 'paused',
+                                              completed_cells, total_cells)
+                        return
                     cfg, baseline_record, baseline_metrics = _baseline(
                         dataset, student, fold, seed, uids[tr], uids[te], y[te], ds['classes'])
                     targets, target_meta = teachers.load_cache(
@@ -352,6 +398,12 @@ def _run(args, plan, spec, snapshot, device):
                     if (targets['logits'].shape != (int(tr.sum()), len(ds['classes']))
                             or np.any(targets['sample_uid'][:, 0] == fold)):
                         raise RuntimeError('Teacher cache is not this source-training fold')
+                    if plan['loss']['feature_transform'] == \
+                            'cbramod_channel_mean_patch_shared_student':
+                        if args.teacher != 'cbramod':
+                            raise ValueError('channel target requested for a non-CBraMod teacher')
+                        targets['feats'] = mean_pool_temporal_patches(
+                            targets['feats'], int(x.shape[1]))
                     teacher_source = teachers.teacher_cell(args.teacher, dataset, fold, seed, spec)
                     expected_recipe = plan['teachers'][args.teacher].get('recipe_overrides', {}).get(
                         dataset, plan['teachers'][args.teacher]['default_recipe'])
@@ -382,6 +434,9 @@ def _run(args, plan, spec, snapshot, device):
                             print(f'[skip] {args.stage} {dataset} {args.teacher}->{student} '
                                   f'S{fold+1} seed={seed}', flush=True)
                             del targets
+                            completed_cells.add(queue_cell)
+                            _write_queue_progress(queue_progress_path, 'running',
+                                                  completed_cells, total_cells)
                             continue
                         # Teacher construction/export and reads happen before resetting
                         # the student RNG; its init follows the existing CE runner.
@@ -389,16 +444,24 @@ def _run(args, plan, spec, snapshot, device):
                         adapter = get_adapter(student, device=device, **cfg)
                         model = adapter.build(len(ds['classes']))
                         initial_hash = _state_hash(model)
-                        projection = _projector(student, model, targets['feats'].shape[1],
+                        target_dim = (200 if plan['loss']['feature_transform'] ==
+                                      'cbramod_channel_mean_patch_shared_student'
+                                      else targets['feats'].shape[1])
+                        projection = _projector(student, model, target_dim,
                                                 seed, adapter.device, stage['lam_feat'] > 0)
                         if shared_cfg is not None and cfg != shared_cfg:
                             raise RuntimeError('Different student input configs within a fold')
                         if x_tensor is None:
                             x_tensor = adapter.preprocess(x[tr])
                             shared_cfg = cfg
+                        teacher_feature_dim = (int(targets['feats'].shape[-1])
+                            if targets['feats'].ndim == 3 else
+                            int(targets['feats'].shape[1]))
                         print(f'[start] {args.stage} {dataset} {args.teacher}->{student} '
                               f'S{fold+1} seed={seed} train={int(tr.sum())} '
-                              f'feat_dim={targets["feats"].shape[1]} device={device}', flush=True)
+                              f'feat_dim={teacher_feature_dim} '
+                              f'channels={targets["feats"].shape[1] if targets["feats"].ndim == 3 else 1} '
+                              f'device={device}', flush=True)
                         if adapter.device.type == 'cuda':
                             torch.cuda.reset_peak_memory_stats(adapter.device)
                         history, elapsed = _fit(
@@ -423,7 +486,7 @@ def _run(args, plan, spec, snapshot, device):
                         manifest = {**run_config, 'run_fingerprint': fingerprint,
                                     'initial_state_sha256': initial_hash,
                                     'environment_snapshot': protocol._environment_snapshot(device),
-                                    'teacher_feature_dim': int(targets['feats'].shape[1]),
+                                    'teacher_feature_dim': teacher_feature_dim,
                                     'student_feature_dim': int(getattr(model, FEATURE_ATTR[student])),
                                     'student_parameters': sum(p.numel() for p in model.parameters()),
                                     'peak_gpu_allocated_bytes': (torch.cuda.max_memory_allocated(adapter.device)
@@ -432,6 +495,9 @@ def _run(args, plan, spec, snapshot, device):
                                         if adapter.device.type == 'cuda' else 0),
                                     'projector_parameters': (sum(p.numel() for p in projection.parameters())
                                                              if projection is not None else 0),
+                                    'feature_transform': plan['loss']['feature_transform'],
+                                    'teacher_feature_channels': (int(x.shape[1])
+                                        if targets['feats'].ndim == 3 else None),
                                     'train_sample_uids': uids[tr].tolist(),
                                     'test_sample_uids': uids[te].tolist(),
                                     'label_values': ds['classes'], 'window_label': ds.get(
@@ -446,6 +512,9 @@ def _run(args, plan, spec, snapshot, device):
                             'run_fingerprint': fingerprint, 'updated_unix': time.time(),
                             'test_metrics': metrics})
                         (cell / 'resume.pt').unlink(missing_ok=True)
+                        completed_cells.add(queue_cell)
+                        _write_queue_progress(queue_progress_path, 'running',
+                                              completed_cells, total_cells)
                         print(f'[done] {args.stage} {dataset} {args.teacher}->{student} '
                               f'S{fold+1} seed={seed} acc={metrics["accuracy"]:.4f} '
                               f'delta={metrics["delta_accuracy"]:+.4f} sec={elapsed:.1f}', flush=True)
@@ -454,15 +523,20 @@ def _run(args, plan, spec, snapshot, device):
                         if device.startswith('cuda'):
                             torch.cuda.empty_cache()
                 del x_tensor
-            _summarize(plan, spec)
+            if write_summary:
+                _summarize(plan, spec)
         del x, y, subject_ids, uids, local_uids
         gc.collect()
+    status = 'completed' if len(completed_cells) == total_cells else 'paused'
+    _write_queue_progress(queue_progress_path, status, completed_cells, total_cells)
 
 
 def _scan(plan, spec):
     counts, rows, latest = {}, [], None
     current_runner = protocol._sha256(Path(__file__))
-    current_spec = protocol._sha256(protocol.SPEC_PATH)
+    from experiments.distill.loso_teacher_prepare import load_verified_alexmi_spec
+    _, source_snapshot = load_verified_alexmi_spec(protocol)
+    current_spec = source_snapshot['spec_sha256']
     current_trials = protocol._sha256(protocol.TRIALS_PATH)
     student_codes = {name: _student_code(name) for name in plan['students']}
     for stage in STAGES:
@@ -566,6 +640,10 @@ def _smoke(args, plan, spec, device):
         seed = (args.seeds or plan['seeds'])[0]
         mask = subs != fold
         targets, _ = teachers.load_cache(args.teacher, ds_name, fold, seed, uid[mask], y[mask])
+        if plan['loss']['feature_transform'] == \
+                'cbramod_channel_mean_patch_shared_student':
+            targets['feats'] = mean_pool_temporal_patches(
+                targets['feats'], int(x.shape[1]))
         for student in args.students or plan['students']:
             cfg = json.loads((resolve_local_file(protocol.RESULTS_ROOT / ds_name / student
                              / 'scratch_supervised_loso_v1' / f'subject_{fold+1:02d}'
@@ -574,7 +652,10 @@ def _smoke(args, plan, spec, device):
                 protocol._set_seed(seed)
                 adapter = get_adapter(student, device=device, **cfg)
                 model = adapter.build(len(ds['classes']))
-                projection = _projector(student, model, targets['feats'].shape[1],
+                target_dim = (200 if plan['loss']['feature_transform'] ==
+                              'cbramod_channel_mean_patch_shared_student'
+                              else targets['feats'].shape[1])
+                projection = _projector(student, model, target_dim,
                                         seed, adapter.device, stage['lam_feat'] > 0)
                 xb = adapter.preprocess(x[mask][:4]).to(device)
                 feat, logits = adapter.forward(model, xb)
@@ -624,7 +705,8 @@ def _smoke(args, plan, spec, device):
 def main():
     args = _args()
     plan = _plan(args.config)
-    spec, snapshot = protocol._load_spec()
+    from experiments.distill.loso_teacher_prepare import load_verified_alexmi_spec
+    spec, snapshot = load_verified_alexmi_spec(protocol)
     if args.status or args.summarize or args.assert_stage_complete:
         counts, _, latest = (_summarize(plan, spec) if args.summarize
                               else _scan(plan, spec))
@@ -637,7 +719,11 @@ def main():
     if args.gpu is not None and not torch.cuda.is_available():
         raise RuntimeError('CUDA GPU requested but CUDA is unavailable')
     device = f'cuda:{args.gpu}' if args.gpu is not None else 'cpu'
-    torch.set_num_threads(int(os.environ.get('TORCH_NUM_THREADS', '4')))
+    torch.set_num_threads(int(os.environ.get('TORCH_NUM_THREADS', '1')))
+    try:
+        torch.set_num_interop_threads(1)
+    except RuntimeError:
+        pass
     if args.smoke_only:
         _smoke(args, plan, spec, device)
     else:
