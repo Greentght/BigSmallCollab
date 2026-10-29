@@ -56,6 +56,32 @@ def read_json(path, default=None):
         return default
 
 
+def resolve_training_python(preferred=None):
+    """Resolve the project's CUDA-capable interpreter for this V1 job."""
+    candidates = []
+    override = os.environ.get('BIGSMALLCOLLAB_TRAIN_PYTHON')
+    if override:
+        candidates.append(override)
+    conda_prefix = os.environ.get('CONDA_PREFIX')
+    if conda_prefix and Path(conda_prefix).parent.name == 'envs':
+        candidates.append(str(Path(conda_prefix) / 'bin' / 'python'))
+    executable = Path(sys.executable).resolve()
+    for ancestor in executable.parents:
+        candidates.append(str(ancestor / 'envs' / 'mirepnet' / 'bin' / 'python'))
+    candidates.extend([sys.executable, str(preferred) if preferred else None])
+    seen = set()
+    for candidate in candidates:
+        if not candidate:
+            continue
+        candidate = str(Path(candidate).expanduser())
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        if Path(candidate).is_file():
+            return candidate
+    raise RuntimeError('no training Python found; activate mirepnet or set BIGSMALLCOLLAB_TRAIN_PYTHON')
+
+
 @contextmanager
 def file_lock(path, blocking=True):
     path = Path(path)
@@ -507,6 +533,20 @@ def run_worker(args):
                        '--snapshot', str(folder / 'spec.json'),
                        '--progress', str(folder / 'progress.json'),
                        '--gpu', '0', '--stop-file', str(folder / 'stop')]
+        elif snapshot.get('kind') == 'student_aware_diffusion_prior_v1':
+            v1_python = resolve_training_python(spec.get('python'))
+            command = [v1_python, '-B', '-m',
+                       'experiments.distill.run_student_aware_diffusion_loso',
+                       '--config', snapshot['config'], '--run-id', snapshot['run_id'],
+                       '--expected-config-sha256', snapshot['config_sha256'],
+                       '--gpu', '0', '--progress', str(folder / 'progress.json'),
+                       '--stop-file', str(folder / 'stop')]
+            if snapshot.get('stage') == 'smoke':
+                command.append('--smoke')
+            elif snapshot.get('stage') == 'evaluate':
+                command.append('--evaluate')
+            else:
+                command.extend(['--fold', str(snapshot['fold'])])
         else:
             command = [training_python, '-B', '-m',
                        'experiments.distill.run_distill', '--snapshot', str(folder / 'spec.json'),
@@ -514,7 +554,8 @@ def run_worker(args):
                        '--out_csv', str(folder / 'results.csv'), '--log_file', str(log),
                        '--gpu', '0', '--stop-file', str(folder / 'stop'), '--resume']
         child_environment = os.environ.copy()
-        if snapshot.get('kind') == 'cbramod_channel_feature_alignment':
+        if snapshot.get('kind') in {
+                'cbramod_channel_feature_alignment', 'student_aware_diffusion_prior_v1'}:
             for name in ('OMP_NUM_THREADS', 'MKL_NUM_THREADS',
                          'OPENBLAS_NUM_THREADS', 'NUMEXPR_NUM_THREADS',
                          'BLIS_NUM_THREADS', 'VECLIB_MAXIMUM_THREADS',
@@ -573,14 +614,16 @@ def run_worker(args):
             state = store.load(args.job)
             state.update(status=status, message=message, returncode=returncode,
                          child=None, worker=None, launcher=None)
-            if (status == 'completed' and
-                    snapshot.get('kind') == 'cbramod_channel_feature_alignment'):
+            if status == 'completed' and snapshot.get('kind') in {
+                    'cbramod_channel_feature_alignment', 'student_aware_diffusion_prior_v1'}:
                 state['log_registration'] = {
                     'status': 'skipped',
-                    'reason': 'CBraMod channel-feature results are not tuning-log entries'}
+                    'reason': ('student-aware V1 uses its dedicated post-training evaluator'
+                               if snapshot.get('kind') == 'student_aware_diffusion_prior_v1'
+                               else 'CBraMod channel-feature results are not tuning-log entries')}
             store.save(state)
-        if (status == 'completed' and
-                snapshot.get('kind') != 'cbramod_channel_feature_alignment'):
+        if (status == 'completed' and snapshot.get('kind') not in {
+                'cbramod_channel_feature_alignment', 'student_aware_diffusion_prior_v1'}):
             try:
                 register_job_log(store, args.job)
             except Exception as exc:

@@ -1,0 +1,81 @@
+experiment_id: STUDENT_AWARE_DIFFUSION_PRIOR_V1
+dataset: BNCI2014004
+selected_session: session_3
+source_variant: wide_fre_band
+seed: 666
+
+# These artifacts define the already-audited 7/1/1 train/feedback/test split,
+# the same-fold seven-source MIRepNet T0, and the 100-epoch IFNet CE reference.
+# Their manifests and hashes are validated before any training starts.
+reference_run:
+  protocol_id: sample_utility_adaptive_weight_wideband_v1
+  resolved_config_sha256: 6dfe184f7f6a5ddd8b75e57e6d67c77ce4e68f1bdf4aa349d558c0240539342f
+  seed: 666
+
+student:
+  architecture: ifnet
+  epochs: 100
+  # The remaining model/optimizer fields are loaded from the reference run's
+  # immutable resolved.yaml, never from today's mutable model YAML defaults.
+  source_resolved_config: external_reference_run
+  kd_weight: 0.5
+  temperature: 2.0
+
+teacher_adaptation:
+  epochs: 10
+  batch_size: 8
+  optimizer: adam
+  lr: 0.0001
+  betas: [0.9, 0.999]
+  weight_decay: 0.000001
+  scheduler: none
+  model_mode: eval_with_autograd
+  gradient_clip_norm: 1.0
+  keep_weight: 1.0
+  aid_weight: 0.5
+  aid_temperature: 2.0
+  keep_temperature: 2.0
+
+feature_space:
+  tap: classifier_input_trial_vector
+  pca_max_dimensions: 32
+  numerical_rank_relative_threshold: 0.00001
+  whitening_eigenvalue_floor_relative: 0.0001
+  teacher_standard_deviation_floor: 0.000001
+  ridge_rho: 0.01
+
+gaussian_prior:
+  covariance: diagonal
+  variance_floor: 0.01
+
+diffusion_prior:
+  steps: 1000
+  beta_start: 0.0001
+  beta_end: 0.02
+  training_updates: 5000
+  batch_size_cap: 128
+  optimizer: adamw
+  lr: 0.0003
+  betas: [0.9, 0.999]
+  weight_decay: 0.0001
+  gradient_clip_norm: 1.0
+  hidden_dimensions: 128
+  time_embedding_dimensions: 32
+  class_embedding_dimensions: 8
+  diagnostic_interval: 500
+  diagnostic_noise_bins: 4
+
+feature_prior_adaptation:
+  lambda: 0.1
+  timestep_min: 100
+  timestep_max: 500
+  teacher_keep_weight: 1.0
+
+report:
+  primary_metric: balanced_accuracy
+  bootstrap_draws: 10000
+  bootstrap_seed: 20261029
+  tie_threshold_pp: 0.000001
+
+storage:
+  external_run_id: student_aware_diffusion_prior_loso_v1_seed666
