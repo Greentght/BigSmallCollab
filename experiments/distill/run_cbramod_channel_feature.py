@@ -1300,6 +1300,22 @@ def summarize_loso(report_dir: Path, cfg: dict[str, Any],
     if old_path.is_file():
         with old_path.open(newline='', encoding='utf-8') as stream:
             old_rows = list(csv.DictReader(stream))
+    reused_stage_coverage = {}
+    expected_reused_records = sum(
+        int(spec['datasets'][dataset]['subjects']) for dataset in cfg['datasets']) * \
+        len(cfg['students']) * len(cfg['seeds'])
+    for old_stage in ('logits_kd', 'warmup10_kd'):
+        selected = [row for row in old_rows if row.get('teacher') == 'cbramod'
+                    and row.get('stage') == old_stage]
+        keys = {(row['dataset'], row['student'], int(row['test_subject']),
+                 int(row['seed'])) for row in selected}
+        reused_stage_coverage[old_stage] = {
+            'records': len(selected), 'unique_records': len(keys),
+            'expected_records': expected_reused_records,
+            'complete': (len(selected) == expected_reused_records
+                         and len(keys) == expected_reused_records),
+            'source': str(old_path),
+        }
 
     datasets, students, seeds = cfg['datasets'], cfg['students'], cfg['seeds']
     summary, missing = [], []
@@ -1310,7 +1326,8 @@ def summarize_loso(report_dir: Path, cfg: dict[str, Any],
             candidate = [r for r in new_rows if r['dataset'] == dataset
                          and r['teacher'] == 'cbramod' and r['student'] == student
                          and r['stage'] == 'kd_feature']
-            ce_rows = [{**r, 'accuracy_pct': float(r['baseline_accuracy']) * 100.0}
+            ce_rows = [{**r, 'subject': int(r['test_subject']),
+                        'accuracy_pct': float(r['baseline_accuracy']) * 100.0}
                        for r in candidate]
             reused_sources = {
                 'kd': 'logits_kd', 'warmup10_kd': 'warmup10_kd',
@@ -1410,14 +1427,15 @@ def summarize_loso(report_dir: Path, cfg: dict[str, Any],
     _atomic_csv(path, summary)
     _atomic_csv(report_dir / 'loso_missing.csv', missing)
     _atomic_json(report_dir / 'loso_source_manifest.json', {
-        'new_channel_feature_results': str(plan['output_root'] / 'all_results.csv'),
+        'new_channel_feature_results': str(Path(plan['output_root']) / 'all_results.csv'),
         'teacher_test_feature_exports': str(
             Path(DATA_CACHE_ROOT) / 'artifact-loso' / 'teacher_test_features'),
         'reused_kd_results': str(old_path),
         'reused_ce_results': 'scratch supervised baseline references in new-run manifests',
         'reused_warmup_kd_results': str(old_path),
         'source_spec_sha256': snapshot['spec_sha256'],
-        'stage_scan': counts,
+        'new_run_stage_scan': counts,
+        'reused_stage_coverage': reused_stage_coverage,
     }, report=True)
     return path
 
