@@ -2188,7 +2188,10 @@ def _run_training(config_path: Path, config: dict, run_id: str, folds: list[int]
                       message='stop requested after fold boundary')
             return 75
     if smoke:
-        smoke_result = roots['run_result'] / 'smoke_result.json'
+        if len(folds) != 1:
+            raise RuntimeError('smoke mode must cover exactly one target fold')
+        smoke_roots = _run_roots(run_id, int(config['seed']), int(folds[0]))
+        smoke_result = smoke_roots['run_result'] / 'smoke_result.json'
         if not smoke_result.is_file() or _read_json(smoke_result).get('status') != 'passed':
             raise RuntimeError('smoke completed without a verified smoke_result.json')
         _progress(progress_path, run_id, records, len(folds), status='completed',
@@ -2202,7 +2205,7 @@ def _run_training(config_path: Path, config: dict, run_id: str, folds: list[int]
         cleanup = {'status': 'passed-smoke-weights-and-cache-removed',
                    'run_id': run_id, 'seed': int(config['seed']),
                    'retained': str(RESULTS_ROOT / 'distill' / run_id / seed_root)}
-        _atomic_json(roots['run_result'] / 'smoke_cleanup.json', cleanup)
+        _atomic_json(smoke_roots['run_result'] / 'smoke_cleanup.json', cleanup)
         return 0
     if folds != list(range(9)):
         _progress(progress_path, run_id, records, len(folds), status='completed',
