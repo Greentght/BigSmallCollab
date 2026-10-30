@@ -89,6 +89,28 @@ def _atomic_csv(path: str | Path, rows: list[dict]) -> None:
     reference._atomic_csv(Path(path), rows)
 
 
+def _report_atomic_json(path: str | Path, value: dict) -> None:
+    target = require_report_output(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temporary = target.with_suffix(target.suffix + '.tmp')
+    temporary.write_text(json.dumps(value, ensure_ascii=False, sort_keys=True,
+                                    indent=2) + '\n', encoding='utf-8')
+    os.replace(temporary, target)
+
+
+def _report_atomic_csv(path: str | Path, rows: list[dict]) -> None:
+    target = require_report_output(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temporary = target.with_suffix(target.suffix + '.tmp')
+    fieldnames = list(rows[0]) if rows else []
+    with temporary.open('w', encoding='utf-8', newline='') as stream:
+        if fieldnames:
+            writer = csv.DictWriter(stream, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerows(rows)
+    os.replace(temporary, target)
+
+
 def _read_yaml(path: str | Path) -> dict:
     with Path(resolve_local_file(path)).open(encoding='utf-8') as stream:
         return yaml.safe_load(stream)
@@ -2061,11 +2083,11 @@ def _write_reports(run_id: str, config: dict, subject_rows: list[dict],
     reference_status = [
         {'target_subject_id': row['fold'], 'available': row['kd_raw_reference_available'],
          'status': row['strict_kd_raw_reference']} for row in fold_records]
-    _atomic_csv(report_dir / 'summary.csv', summary_rows)
-    _atomic_csv(report_dir / 'subject_metrics.csv', subject_rows)
-    _atomic_csv(report_dir / 'paired_comparisons.csv', paired_rows)
-    _atomic_csv(report_dir / 'teacher_comparisons.csv', teacher_comparisons)
-    reference._atomic_json(report_dir / 'reference_artifact_audit.json', {
+    _report_atomic_csv(report_dir / 'summary.csv', summary_rows)
+    _report_atomic_csv(report_dir / 'subject_metrics.csv', subject_rows)
+    _report_atomic_csv(report_dir / 'paired_comparisons.csv', paired_rows)
+    _report_atomic_csv(report_dir / 'teacher_comparisons.csv', teacher_comparisons)
+    _report_atomic_json(report_dir / 'reference_artifact_audit.json', {
         'strict_KD_RAW_reference': reference_status,
         'included_in_summary': all_kd_raw,
         'method': 'previous T0 logits KD; no retraining',
@@ -2102,7 +2124,7 @@ def _write_reports(run_id: str, config: dict, subject_rows: list[dict],
         'teacher_comparisons_csv': str(report_dir / 'teacher_comparisons.csv'),
         'workbook': str(report_dir / 'summary.xlsx'), 'conclusions': conclusions,
     }
-    reference._atomic_json(report_dir / 'summary.json', summary)
+    _report_atomic_json(report_dir / 'summary.json', summary)
     md = [
         '# MCC_TEACHER_ADAPT_DIFFKD_LOSO_V1', '',
         '数据：BNCI2014004 session_3；seed 666，9 个 LOSO 目标被试。',
@@ -2154,9 +2176,9 @@ def evaluate_run(config_path: Path, config: dict, run_id: str,
     ).get('implementation_sha256')
     cleanup = _prune_run_weights(run_id, int(config['seed']))
     summary['model_artifact_cleanup'] = cleanup
-    _atomic_json(REPORTS_ROOT / 'distill' / run_id / 'summary.json', summary)
-    summary_path = RESULTS_ROOT / 'distill' / run_id / 'final_summary.json'
-    _atomic_json(summary_path, summary)
+    _report_atomic_json(REPORTS_ROOT / 'distill' / run_id / 'summary.json', summary)
+    summary_path = REPORTS_ROOT / 'distill' / run_id / 'final_summary.json'
+    _report_atomic_json(summary_path, summary)
     if progress_path:
         progress = _read_json(progress_path)
         _progress(progress_path, run_id, progress.get('records', []), 9,
