@@ -559,6 +559,15 @@ def run_worker(args):
                 command.append('--smoke')
             elif snapshot.get('stage') == 'evaluate':
                 command.append('--evaluate')
+        elif snapshot.get('kind') == 'mcc_diffkd_cbramod_loso_v1':
+            bootstrap = (
+                'import torch,sys; torch.set_num_threads(1); '
+                'from experiments.distill.run_cbramod_mcc_diffkd_loso import main; '
+                'raise SystemExit(main(sys.argv[1:]))')
+            command = [training_python, '-B', '-c', bootstrap,
+                       '--config', snapshot['config'], '--seed', str(snapshot['seed']),
+                       '--run-id', snapshot['run_id'], '--gpu', '0', '--progress',
+                       str(folder / 'progress.json'), '--stop-file', str(folder / 'stop')]
         else:
             command = [training_python, '-B', '-m',
                        'experiments.distill.run_distill', '--snapshot', str(folder / 'spec.json'),
@@ -568,7 +577,7 @@ def run_worker(args):
         child_environment = os.environ.copy()
         if snapshot.get('kind') in {
                 'cbramod_channel_feature_alignment', 'student_aware_diffusion_prior_v1',
-                'mcc_diffkd_loso_v1'}:
+                'mcc_diffkd_loso_v1', 'mcc_diffkd_cbramod_loso_v1'}:
             for name in ('OMP_NUM_THREADS', 'MKL_NUM_THREADS',
                          'OPENBLAS_NUM_THREADS', 'NUMEXPR_NUM_THREADS',
                          'BLIS_NUM_THREADS', 'VECLIB_MAXIMUM_THREADS',
@@ -629,10 +638,12 @@ def run_worker(args):
                          child=None, worker=None, launcher=None)
             if status == 'completed' and snapshot.get('kind') in {
                     'cbramod_channel_feature_alignment', 'student_aware_diffusion_prior_v1',
-                    'mcc_diffkd_loso_v1'}:
+                    'mcc_diffkd_loso_v1', 'mcc_diffkd_cbramod_loso_v1'}:
                 state['log_registration'] = {
                     'status': 'skipped',
-                    'reason': ('single-seed MCC-DiffKD LOSO is summarized separately, not registered in the three-seed tuning log'
+                    'reason': ('CBraMod MCC-DiffKD LOSO is summarized separately, not registered in docs/exp_log.csv'
+                               if snapshot.get('kind') == 'mcc_diffkd_cbramod_loso_v1' else
+                               'single-seed MCC-DiffKD LOSO is summarized separately, not registered in the three-seed tuning log'
                                if snapshot.get('kind') == 'mcc_diffkd_loso_v1' else
                                'student-aware V1 uses its dedicated post-training evaluator'
                                if snapshot.get('kind') == 'student_aware_diffusion_prior_v1' else
@@ -640,7 +651,7 @@ def run_worker(args):
             store.save(state)
         if (status == 'completed' and snapshot.get('kind') not in {
                 'cbramod_channel_feature_alignment', 'student_aware_diffusion_prior_v1',
-                'mcc_diffkd_loso_v1'}):
+                'mcc_diffkd_loso_v1', 'mcc_diffkd_cbramod_loso_v1'}):
             try:
                 register_job_log(store, args.job)
             except Exception as exc:

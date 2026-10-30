@@ -1,0 +1,128 @@
+experiment_id: CBRAMOD_MCC_DIFFKD_LOSO_V1
+dataset: BNCI2014004
+selected_session: session_3
+source_variant: wide_fre_band
+seeds: [666, 667, 668]
+
+# Split/cache identity is inherited from the audited 7-train / 1-feedback / 1-test
+# wideband protocol. The historical resolved hash differs by seed.
+reference_run:
+  protocol_id: sample_utility_adaptive_weight_wideband_v1
+  resolved_config_sha256_by_seed:
+    666: 6dfe184f7f6a5ddd8b75e57e6d67c77ce4e68f1bdf4aa349d558c0240539342f
+    667: 775d37f4ee707b0593270a5c25892135171790c4365b3717b900745bf0b5ffdf
+    668: 1f11b668046af82a4d3bbea0012f05e5fb8258862f383e668e37c8d25e79cde2
+
+protocol:
+  folds: 9
+  train_subjects: 7
+  feedback_subjects: 1
+  target_subjects: 1
+  class_mapping: {left_hand: 0, right_hand: 1}
+  training_data_only_for_fitting: true
+  feedback_is_diagnostic_only: true
+  target_evaluation_after_all_folds_train: true
+
+# T0 uses the resolved CBraMod BNCI2014004/LOSO recipe in
+# configs/models/cbramod.yaml: 50 epochs, AdamW, lr=1e-4, batch=64,
+# weight_decay=.05, dropout=.1, label_smoothing=.1, no EA/CAR.
+teacher_source:
+  model: cbramod
+  pretrained_checkpoint: /data1/llx/pre_weight/cbramod.pth
+  finetune_config: configs/models/cbramod.yaml::BNCI2014004.loso
+  feature_head: flatten
+  classification_readout: native_flatten_dropout_linear_2400_to_2
+  channel_feature_tap: backbone_output_mean_over_four_patches
+  teacher_feature_shape: [batch, 3, 200]
+
+teacher_adaptation:
+  epochs: 10
+  optimizer: adam
+  lr: 0.0001
+  betas: [0.9, 0.999]
+  eps: 1.0e-8
+  weight_decay: 1.0e-6
+  batch_size: 8
+  scheduler: none
+  forward_mode: eval_with_autograd
+  precision: fp32
+  gradient_clip_norm: 1.0
+  mcc: {temperature: 2.0, weight: 1.0, entropy_epsilon: 1.0e-5,
+        row_denominator_epsilon: 1.0e-8}
+
+feature_space:
+  fit_population: D_train_channel_tokens_only
+  pca_native_dimension: 200
+  pca_max_dimensions: 32
+  rank_relative_threshold: 1.0e-5
+  whitening_eigenvalue_floor_relative: 1.0e-4
+  channels: 3
+  student_native_dimension: 512
+  student_layer_norm_epsilon: 1.0e-5
+  student_auxiliary_normalization: layer_norm_no_affine_epsilon_1e-5
+  student_projection: fixed_joint_gaussian_thin_qr_3d_by_512
+  student_projection_seed_base: 20261030
+  student_projection_views: one_distinct_fixed_view_per_teacher_channel
+  feature_loss: mean_squared_error_over_batch_channel_and_dimension
+
+diffusion:
+  conditioning: teacher_channel_id_only
+  steps: 1000
+  beta_start: 1.0e-4
+  beta_end: 0.02
+  hidden_dimensions: 128
+  time_embedding_dimensions: 32
+  channel_embedding_dimensions: 8
+  training_updates: 5000
+  batch_size_cap: 128
+  optimizer: adamw
+  lr: 3.0e-4
+  betas: [0.9, 0.999]
+  eps: 1.0e-8
+  weight_decay: 1.0e-4
+  gradient_clip_norm: 1.0
+  diagnostic_interval: 500
+  ddim_start_timestep: 250
+  ddim_timesteps: [250, 200, 150, 100, 50, 0]
+  ddim_eta: 0.0
+
+student:
+  architecture: ifnet
+  initialization: same_canonical_untrained_seed_state_as_paired_loso_runs
+  epochs: 100
+  batch_size: 16
+  optimizer: adamw
+  lr: 0.001
+  weight_decay: 0.01
+  scheduler: cosine_annealing_epoch_end
+  scheduler_t_max: 100
+  feature_weight: 0.5
+  feature_start_epoch: 1
+  classification_loss: cross_entropy
+  logits_kd: false
+  gradient_clip_norm: null
+  precision: fp32
+  augmentation: none
+
+conditions: [CE_FEATURE, MCC_FEATURE, CE_DIFFKD, MCC_DIFFKD]
+
+randomness:
+  teacher_seed_base: 100666
+  adaptation_schedule_seed_base: 101666
+  diffusion_seed_base: 202666
+  student_schedule_seed: follows_run_seed
+  student_initialization_seed: follows_run_seed
+  student_diffusion_noise_seed_base: 303666
+  paired_conditions_share_student_dropout_stream: true
+  paired_diffkd_conditions_share_noise_stream: true
+
+report:
+  primary_metric: balanced_accuracy
+  report_accuracy_and_balanced_accuracy_separately: true
+  aggregate: equal_subject_mean_per_seed_then_equal_seed_mean
+  paired_unit: subject_within_seed
+
+storage:
+  external_run_id_prefix: cbramod_mcc_diffkd_loso_v1
+  reused_student_initialization_run_666: student_aware_diffusion_prior_loso_v1_seed666
+  reused_student_initialization_run_667_668: mcc_diffkd_ifnet_initializations
