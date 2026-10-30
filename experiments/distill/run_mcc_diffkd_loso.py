@@ -309,9 +309,14 @@ def _progress(path: str | None, run_id: str, records: list[dict], total: int,
               status: str = 'running', message: str = '') -> None:
     if not path:
         return
-    _atomic_json(path, {'run_id': run_id, 'status': status,
-                        'total_cells': int(total), 'records': records,
-                        'message': message, 'updated_at': time.time()})
+    target = require_report_output(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temporary = target.with_suffix(target.suffix + '.tmp')
+    temporary.write_text(json.dumps({
+        'run_id': run_id, 'status': status, 'total_cells': int(total),
+        'records': records, 'message': message, 'updated_at': time.time(),
+    }, ensure_ascii=False, sort_keys=True, indent=2) + '\n', encoding='utf-8')
+    os.replace(temporary, target)
 
 
 def _stop_requested(stop_file: str | None) -> bool:
