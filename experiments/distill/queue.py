@@ -557,6 +557,8 @@ def run_worker(args):
                        *[str(fold) for fold in snapshot['folds']]]
             if snapshot.get('stage') == 'smoke':
                 command.append('--smoke')
+            elif snapshot.get('stage') == 'evaluate':
+                command.append('--evaluate')
         else:
             command = [training_python, '-B', '-m',
                        'experiments.distill.run_distill', '--snapshot', str(folder / 'spec.json'),

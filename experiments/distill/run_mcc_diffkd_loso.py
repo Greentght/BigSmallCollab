@@ -202,12 +202,16 @@ def _run_roots(run_id: str, seed: int, fold: int) -> dict[str, Path]:
 
 def _fold_fingerprint(config_path: Path, config: dict, cfg: dict,
                       identity: dict, roots: dict, models: dict,
-                      initial: dict, run_id: str) -> str:
+                      initial: dict, run_id: str,
+                      implementation_sha256: str | None = None) -> str:
     relevant = {
         'experiment_id': config['experiment_id'],
         'run_id': run_id,
         'config_sha256': _sha256(config_path),
-        'implementation_sha256': _sha256(__file__),
+        # Evaluation-only fixes can be made after the training artifacts are
+        # complete. Bind a read-only evaluation to the source hash recorded by
+        # that training run, while reporting the evaluator hash separately.
+        'implementation_sha256': implementation_sha256 or _sha256(__file__),
         'core_sha256': _sha256(PROJECT_ROOT / 'collab/mcc_diffkd.py'),
         'reference_runner_sha256': _sha256(reference.__file__),
         'pca_helper_sha256': _sha256(PROJECT_ROOT / 'collab/student_feature_prior.py'),
@@ -1586,7 +1590,13 @@ def _load_new_checkpoint(adapter, checkpoint_path: Path,
         model = adapter.build(2).to(device)
     finally:
         _restore_rng(rng, device)
-    _load_model_state(model, checkpoint_path, manifest['method_fingerprint'])
+    # Historical KD_RAW references predate method_fingerprint and store the
+    # checkpoint identity as run_fingerprint. Both values are checked against
+    # the identity embedded in the checkpoint payload by _load_model_state.
+    checkpoint_fingerprint = manifest.get('method_fingerprint') or manifest.get('run_fingerprint')
+    if not checkpoint_fingerprint:
+        raise RuntimeError(f'checkpoint manifest has no identity fingerprint: {checkpoint_path}')
+    _load_model_state(model, checkpoint_path, checkpoint_fingerprint)
     return model
 
 
@@ -1605,8 +1615,16 @@ def _evaluate_fold(config_path: Path, config: dict, run_id: str, fold: int,
     completion = _read_json(completion_path)
     if completion.get('status') != 'complete':
         raise RuntimeError(f'target evaluation blocked: fold {fold+1} has no completion record')
+    training_record = _read_json(roots['run_result'] / 'resolved_run.json')
+    if (training_record.get('status') != 'complete'
+            or training_record.get('run_fingerprint') != completion.get('run_fingerprint')):
+        raise RuntimeError(f'target evaluation blocked: fold {fold+1} resolved provenance is incomplete')
+    training_implementation_sha256 = training_record.get('implementation_sha256')
+    if not training_implementation_sha256:
+        raise RuntimeError(f'target evaluation blocked: fold {fold+1} has no training source hash')
     if completion.get('run_fingerprint') != _fold_fingerprint(
-            config_path, config, cfg, identity, roots, models, initial, run_id):
+            config_path, config, cfg, identity, roots, models, initial, run_id,
+            implementation_sha256=training_implementation_sha256):
         # The path is carried by the caller in config; all training inputs are
         # separately verified above, so this additionally rejects stale folds.
         raise RuntimeError(f'target evaluation blocked: fold {fold+1} identity changed')
@@ -2130,6 +2148,10 @@ def evaluate_run(config_path: Path, config: dict, run_id: str,
         print(f"[target-eval] fold={fold+1}/9 subject={fold+1} rows={len(rows)} source={source}",
               flush=True)
     summary = _write_reports(run_id, config, subject_rows, fold_records)
+    summary['evaluation_implementation_sha256'] = _sha256(__file__)
+    summary['training_implementation_sha256'] = _read_json(
+        _run_roots(run_id, int(config['seed']), 0)['run_result'] / 'resolved_run.json'
+    ).get('implementation_sha256')
     cleanup = _prune_run_weights(run_id, int(config['seed']))
     summary['model_artifact_cleanup'] = cleanup
     _atomic_json(REPORTS_ROOT / 'distill' / run_id / 'summary.json', summary)
@@ -2144,16 +2166,19 @@ def evaluate_run(config_path: Path, config: dict, run_id: str,
 
 
 def enqueue_run(config_path: Path, config: dict, smoke: bool = False,
-                queue_root: str | None = None) -> str:
+                queue_root: str | None = None, evaluate: bool = False) -> str:
     from experiments.distill.queue import DEFAULT_ROOT, enqueue_snapshot
     config_path = Path(config_path).resolve()
     formal_run_id = str(config['storage']['external_run_id'])
+    if smoke and evaluate:
+        raise ValueError('smoke and evaluate-only queue stages are mutually exclusive')
     run_id = formal_run_id + '_smoke' if smoke else formal_run_id
     folds = [0] if smoke else list(range(9))
     snapshot = {
         'kind': 'mcc_diffkd_loso_v1', 'config': str(config_path),
         'config_sha256': _sha256(config_path), 'run_id': run_id,
-        'stage': 'smoke' if smoke else 'train_evaluate', 'folds': folds,
+        'stage': 'smoke' if smoke else ('evaluate' if evaluate else 'train_evaluate'),
+        'folds': folds,
         'args': {
             'dataset': config['dataset'], 'teacher': 'mirepnet', 'student': 'ifnet',
             'seeds': [int(config['seed'])], 'methods': list(METHODS),
@@ -2167,6 +2192,8 @@ def enqueue_run(config_path: Path, config: dict, smoke: bool = False,
         snapshot, root=queue_root or DEFAULT_ROOT,
         argv=['mcc-diffkd', '--smoke' if smoke else '--full'],
         label=(f'MCC-DiffKD LOSO smoke seed={config["seed"]}' if smoke else
+               f'MCC-DiffKD LOSO seed={config["seed"]}, evaluate completed folds only'
+               if evaluate else
                f'MCC-DiffKD LOSO seed={config["seed"]}, 9 folds sequential'))
     return job_id
 
@@ -2231,6 +2258,8 @@ def parse_args(argv=None):
     parser.add_argument('--expected-config-sha256', default=None)
     parser.add_argument('--queue-root', default=None)
     parser.add_argument('--enqueue', action='store_true')
+    parser.add_argument('--enqueue-evaluate', action='store_true',
+                        help='queue target evaluation for completed folds without training')
     parser.add_argument('--smoke', action='store_true')
     parser.add_argument('--evaluate', action='store_true')
     args = parser.parse_args(argv)
@@ -2248,6 +2277,12 @@ def main(argv=None) -> int:
         config = _read_yaml(config_path)
         _validate_config(config)
         run_id = str(args.run_id or config['storage']['external_run_id'])
+        if args.enqueue and args.enqueue_evaluate:
+            raise ValueError('--enqueue and --enqueue-evaluate cannot be combined')
+        if args.enqueue_evaluate:
+            job = enqueue_run(config_path, config, queue_root=args.queue_root, evaluate=True)
+            print(f'[queue] evaluation_job={job} run_id={run_id}', flush=True)
+            return 0
         if args.enqueue:
             job = enqueue_run(config_path, config, smoke=args.smoke, queue_root=args.queue_root)
             print(f'[queue] job={job} run_id={run_id}', flush=True)
