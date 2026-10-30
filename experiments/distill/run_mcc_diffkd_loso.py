@@ -117,14 +117,23 @@ def _read_yaml(path: str | Path) -> dict:
 
 
 def _validate_config(config: dict) -> None:
+    seed = int(config.get('seed', -1))
+    if seed not in (666, 667, 668):
+        raise ValueError(f'only audited seeds 666/667/668 are supported, got {seed}')
+    resolved_hashes = {
+        666: '6dfe184f7f6a5ddd8b75e57e6d67c77ce4e68f1bdf4aa349d558c0240539342f',
+        667: '775d37f4ee707b0593270a5c25892135171790c4365b3717b900745bf0b5ffdf',
+        668: '1f11b668046af82a4d3bbea0012f05e5fb8258862f383e668e37c8d25e79cde2',
+    }
+    initial_run_id = ('student_aware_diffusion_prior_loso_v1_seed666'
+                      if seed == 666 else 'mcc_diffkd_ifnet_initializations')
     expected = {
         'experiment_id': 'MCC_TEACHER_ADAPT_DIFFKD_LOSO_V1',
         'dataset': 'BNCI2014004', 'selected_session': 'session_3',
-        'source_variant': 'wide_fre_band', 'seed': 666,
+        'source_variant': 'wide_fre_band', 'seed': seed,
         'reference_run': {
-            'protocol_id': 'sample_utility_adaptive_weight_wideband_v1', 'seed': 666,
-            'resolved_config_sha256':
-                '6dfe184f7f6a5ddd8b75e57e6d67c77ce4e68f1bdf4aa349d558c0240539342f',
+            'protocol_id': 'sample_utility_adaptive_weight_wideband_v1', 'seed': seed,
+            'resolved_config_sha256': resolved_hashes[seed],
         },
         'protocol': {'folds': 9, 'train_subjects': 7, 'feedback_subjects': 1,
                      'target_subjects': 1,
@@ -149,7 +158,7 @@ def _validate_config(config: dict) -> None:
                           'student_native_dimension': 512,
                           'student_layer_norm_epsilon': 1e-5,
                           'projection': 'fixed_gaussian_thin_qr',
-                          'projection_seed_base': 20261030},
+                          'projection_seed_base': 20261030 + seed - 666},
         'diffusion': {'conditioning': 'unconditional', 'steps': 1000,
                       'beta_start': 1e-4, 'beta_end': 0.02,
                       'training_updates': 5000, 'batch_size_cap': 128,
@@ -171,11 +180,11 @@ def _validate_config(config: dict) -> None:
                     'augmentation': 'none'},
         'conditions': list(METHODS),
         'randomness': {
-            'teacher_schedule_seed_base': 101666,
-            'diffusion_seed_base': 202666,
-            'student_schedule_seed': 666,
-            'student_initialization_seed': 666,
-            'student_feature_noise_seed_base': 303666,
+            'teacher_schedule_seed_base': 101000 + seed,
+            'diffusion_seed_base': 202000 + seed,
+            'student_schedule_seed': seed,
+            'student_initialization_seed': seed,
+            'student_feature_noise_seed_base': 303000 + seed,
             'paired_conditions_share_dropout_stream': True,
             'paired_diffkd_conditions_share_noise_stream': True,
         },
@@ -183,8 +192,8 @@ def _validate_config(config: dict) -> None:
                    'bootstrap_draws': 10000, 'bootstrap_seed': 20261030,
                    'tie_threshold_pp': 1e-6},
         'storage': {
-            'external_run_id': 'mcc_diffkd_loso_v1_seed666',
-            'reuse_initial_ifnet_run_id': 'student_aware_diffusion_prior_loso_v1_seed666',
+            'external_run_id': f'mcc_diffkd_loso_v1_seed{seed}',
+            'reuse_initial_ifnet_run_id': initial_run_id,
         },
     }
 
@@ -202,7 +211,7 @@ def _validate_config(config: dict) -> None:
             'sample_utility_adaptive_weight_wideband_v1':
         raise ValueError('unexpected historical reference protocol')
     if config.get('reference_run', {}).get('resolved_config_sha256') != \
-            '6dfe184f7f6a5ddd8b75e57e6d67c77ce4e68f1bdf4aa349d558c0240539342f':
+            resolved_hashes[seed]:
         raise ValueError('historical resolved-config hash changed')
 
 
@@ -262,10 +271,41 @@ def fold_from_identity(identity: dict) -> int:
 
 
 def _load_initial_student(config: dict, identity: dict, roots: dict,
-                          models: dict) -> dict:
+                          models: dict, *, resolved: dict | None = None,
+                          cfg: dict | None = None, data: dict | None = None,
+                          device: torch.device | None = None) -> dict:
     seed = int(config['seed'])
     reuse_id = config['storage']['reuse_initial_ifnet_run_id']
     path = WEIGHTS_ROOT / reuse_id / f'seed_{seed}' / f'ifnet_initial_seed_{seed}.pt'
+    if seed != 666:
+        if resolved is None or cfg is None or data is None or device is None:
+            raise ValueError('new-seed IFNet initialization requires resolved inputs and audit data')
+        init_roots = reference._run_roots(
+            reuse_id, seed, fold_from_identity(identity))
+        for key in ('run_result', 'run_seed_weights'):
+            require_external_output(init_roots[key]).mkdir(parents=True, exist_ok=True)
+        initial = reference._ensure_student_initial_state(init_roots, resolved, cfg, seed)
+        audit_path = init_roots['run_result'] / 'student_initialization_audit.json'
+        audit_fingerprint = _json_hash({
+            'audit_version': 'paired_ifnet_initialization_v1', 'seed': seed,
+            'target_subject_id': int(identity['manifest']['target_subject_id']),
+            'split_manifest_sha256': identity['sha256'],
+            'train_uid_sha256': identity['uid_sha256']['train'],
+            'resolved_config_sha256': cfg['resolved_config_sha256'],
+            'baseline_manifest_sha256': _sha256(roots['base_results'] / 'BASE_CE' / 'manifest.json'),
+            'warmup_state_sha256': models['warmup_payload']['warmup_state_sha256'],
+            'student_schedule_sha256': models['student_schedule_sha256'],
+            'initial_model_sha256': initial['model_sha256'],
+            'reference_runner_sha256': _sha256(reference.__file__),
+        })
+        audit = reference._verify_s0_initialization(
+            identity, init_roots, resolved, models, data, initial,
+            seed, device, audit_fingerprint)
+        return {**initial,
+                'baseline_initialization_audit': str(audit_path),
+                'baseline_initialization_audit_sha256': _sha256(audit_path),
+                'baseline_initialization_audit_record': audit}
+
     if not Path(resolve_local_file(path)).is_file():
         raise FileNotFoundError(f'canonical fresh IFNet initialization is missing: {path}')
     payload = torch.load(resolve_local_file(path), map_location='cpu', weights_only=False)
@@ -1239,7 +1279,10 @@ def _train_fold(config_path: Path, run_id: str, fold: int, config: dict,
         config, fold, roots, cfg['resolved_config_sha256'], include_test_labels=False)
     models = reference._load_reference_checkpoints(
         config, resolved, cfg, identity, roots, device)
-    initial = _load_initial_student(config, identity, roots, models)
+    data = reference._load_fold_data(identity, roots, resolved['student_config'], device)
+    initial = _load_initial_student(
+        config, identity, roots, models, resolved=resolved, cfg=cfg,
+        data=data, device=device)
     fingerprint = _fold_fingerprint(config_path, config, cfg, identity, roots,
                                     models, initial, run_id)
     _save_resolved(roots, config_path, config, cfg, identity, models, initial, fingerprint)
@@ -1250,7 +1293,6 @@ def _train_fold(config_path: Path, run_id: str, fold: int, config: dict,
             raise RuntimeError(f'fold {fold+1}: completion record belongs to another run')
         return {'status': 'complete', 'target_subject_id': fold + 1,
                 'run_fingerprint': fingerprint, 'resumed_existing': True}
-    data = reference._load_fold_data(identity, roots, resolved['student_config'], device)
     smoke_audits = {}
     if smoke:
         smoke_audits['mcc_equation'] = _audit_mcc_formula(device)
@@ -1631,8 +1673,10 @@ def _evaluate_fold(config_path: Path, config: dict, run_id: str, fold: int,
         config, fold, roots, cfg['resolved_config_sha256'], include_test_labels=True)
     models = reference._load_reference_checkpoints(
         config, resolved, cfg, identity, roots, device)
-    initial = _load_initial_student(config, identity, roots, models)
     data = reference._load_fold_data(identity, roots, resolved['student_config'], device)
+    initial = _load_initial_student(
+        config, identity, roots, models, resolved=resolved, cfg=cfg,
+        data=data, device=device)
     completion_path = roots['run_result'] / 'fold_complete.json'
     completion = _read_json(completion_path)
     if completion.get('status') != 'complete':
@@ -1849,7 +1893,8 @@ def _aggregate_rows(subject_rows: list[dict], condition: str) -> dict:
     if len(selected) != 9 or len({int(row['target_subject_id']) for row in selected}) != 9:
         raise RuntimeError(f'{condition}: expected exactly one result for each of nine subjects')
     out = {'condition': condition, 'model_role': selected[0]['model_role'],
-           'model': selected[0]['model'], 'seed': 666, 'n_seeds': 1, 'n_subjects': 9}
+           'model': selected[0]['model'], 'seed': int(selected[0]['seed']),
+           'n_seeds': 1, 'n_subjects': 9}
     for metric in ('balanced_accuracy', 'accuracy', 'kappa', 'cross_entropy'):
         values = np.asarray([float(row[metric]) for row in selected], dtype=np.float64)
         scale = 100.0 if metric in ('balanced_accuracy', 'accuracy') else 1.0
@@ -1874,7 +1919,8 @@ def _paired_row(label: str, left: str, right: str,
     bootstrap_means = differences[draws].mean(axis=1)
     return {
         'comparison': label, 'method': left, 'baseline': right,
-        'seed': 666, 'n_seeds': 1, 'n_subjects': len(differences),
+        'seed': int(left_rows[0]['seed']), 'n_seeds': 1,
+        'n_subjects': len(differences),
         'mean_balanced_accuracy_difference_pp': float(differences.mean()),
         'std_difference_pp': float(differences.std(ddof=1)),
         'paired_bootstrap_95ci_low_pp': float(np.percentile(bootstrap_means, 2.5)),
@@ -1978,7 +2024,8 @@ def _write_workbook(path: Path, summary_rows: list[dict],
     note_row = legend_row + len(legend) + 2
     notes = [
         '任务：BNCI2014004 session_3；指标分别报告 Balanced Accuracy 与 Accuracy。',
-        '汇总：seed 666；九个 LOSO 目标被试等权平均，SD 为被试间样本标准差，不是跨 seed SD。',
+        (f"汇总：seed {int(summary_rows[0]['seed'])}；九个 LOSO 目标被试等权平均，"
+         'SD 为被试间样本标准差，不是跨 seed SD。'),
         '四个新条件：从 T0 做 CE 或 CE+MCC 教师适配，再训练新 IFNet；FEATURE 是直接配对特征 MSE，DIFFKD 是五步 DDIM 后配对特征 MSE。',
         '颜色按对应指标与 MIRepNet T0、同一 IFNet 的 none CE 基线做严格大于比较；相等不计为大于。',
         'KD logits 仅在全部九折初始化、数据顺序、配置、epoch 与 T0 provenance 均严格匹配时列为历史参考。',
@@ -2072,7 +2119,8 @@ def _write_reports(run_id: str, config: dict, subject_rows: list[dict],
                       - np.asarray([row['balanced_accuracy'] for row in right_rows])) * 100.0
         teacher_comparisons.append({
             'comparison': f'{left} - {right}', 'metric': 'Balanced Accuracy (pp)',
-            'seed': 666, 'n_subjects': 9, 'mean_difference_pp': float(difference.mean()),
+            'seed': int(config['seed']), 'n_subjects': 9,
+            'mean_difference_pp': float(difference.mean()),
             'std_difference_pp': float(difference.std(ddof=1)),
             'wins': int(np.sum(difference > 1e-6)),
             'ties': int(np.sum(np.abs(difference) <= 1e-6)),
@@ -2103,14 +2151,17 @@ def _write_reports(run_id: str, config: dict, subject_rows: list[dict],
          f"{primary['wins']}/{primary['ties']}/{primary['losses']}。"),
         (f"教师 MCC 适配相对 CE 适配：ΔBA={mcc_teacher['mean_difference_pp']:+.2f} pp，"
          f"W/T/L={mcc_teacher['wins']}/{mcc_teacher['ties']}/{mcc_teacher['losses']}。"),
-        ('结果是 seed 666 的 9 被试探索性 pilot；LOSO 训练折重叠，区间不代表跨 seed 或跨数据集稳定性。'),
+        (f"结果是 seed {int(config['seed'])} 的 9 被试探索性 pilot；LOSO 训练折重叠，"
+         '区间不代表跨 seed 或跨数据集稳定性。'),
     ]
     summary = {
         'experiment_id': config['experiment_id'], 'run_id': run_id,
         'dataset': config['dataset'], 'session': config['selected_session'],
-        'source_variant': config['source_variant'], 'seed': 666, 'n_seeds': 1,
+        'source_variant': config['source_variant'], 'seed': int(config['seed']),
+        'n_seeds': 1,
         'subjects': list(range(1, 10)), 'primary_metric': 'Balanced Accuracy (%)',
-        'aggregation': 'equal-weight mean and sample SD over nine LOSO target subjects; seed 666 only',
+        'aggregation': (f'equal-weight mean and sample SD over nine LOSO target subjects; '
+                        f'seed {int(config["seed"])} only'),
         'bootstrap_unit': 'target subject', 'bootstrap_draws': int(config['report']['bootstrap_draws']),
         'bootstrap_seed': int(config['report']['bootstrap_seed']),
         'primary_comparison': primary, 'student_summary': summary_rows,
@@ -2127,7 +2178,7 @@ def _write_reports(run_id: str, config: dict, subject_rows: list[dict],
     _report_atomic_json(report_dir / 'summary.json', summary)
     md = [
         '# MCC_TEACHER_ADAPT_DIFFKD_LOSO_V1', '',
-        '数据：BNCI2014004 session_3；seed 666，9 个 LOSO 目标被试。',
+        f"数据：BNCI2014004 session_3；seed {int(config['seed'])}，9 个 LOSO 目标被试。",
         '主指标：逐被试 Balanced Accuracy；先对九被试等权汇总，报告均值和被试间样本 SD。',
         '四个正式条件均为新初始化 IFNet，CE + 配对特征损失；教师为 CE 或 CE+MCC 适配。',
         '', '## 汇总', '',

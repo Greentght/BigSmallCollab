@@ -351,7 +351,7 @@ def _load_fold_identity(config: dict, fold: int, roots: dict,
     if (manifest.get('dataset') != 'BNCI2014004'
             or manifest.get('source_variant') != 'wide_fre_band'
             or manifest.get('selected_session') != '3test'
-            or int(manifest.get('seed', -1)) != 666
+            or int(manifest.get('seed', -1)) != int(config['seed'])
             or int(manifest.get('target_subject_id', -1)) != fold + 1
             or int(manifest.get('feedback_subject_id', -1)) != (fold + 1) % 9 + 1
             or manifest.get('resolved_config_sha256') != resolved_sha):
@@ -548,6 +548,7 @@ def _target_rows(inputs: dict, target_uids: np.ndarray) -> np.ndarray:
 def _load_reference_checkpoints(config: dict, resolved: dict, cfg: dict,
                                 identity: dict, roots: dict,
                                 device: torch.device) -> dict:
+    seed = int(config['seed'])
     split = identity['manifest']
     expected_train_uid = identity['uid_sha256']['train']
     teacher_root = roots['base_teacher']
@@ -563,7 +564,7 @@ def _load_reference_checkpoints(config: dict, resolved: dict, cfg: dict,
             raise FileNotFoundError(f'required reference artifact is missing: {path}')
     teacher_provenance = _read_json(teacher_provenance_path)
     if (teacher_provenance.get('model') != 'mirepnet'
-            or int(teacher_provenance.get('seed', -1)) != 666
+            or int(teacher_provenance.get('seed', -1)) != seed
             or int(teacher_provenance.get('target_subject_id', -1)) != int(split['target_subject_id'])
             or int(teacher_provenance.get('feedback_subject_id', -1)) != int(split['feedback_subject_id'])
             or list(teacher_provenance.get('train_subject_ids', [])) != split['train_subject_ids']
@@ -584,7 +585,7 @@ def _load_reference_checkpoints(config: dict, resolved: dict, cfg: dict,
     if (base_manifest.get('status') != 'complete'
             or base_manifest.get('condition') != 'BASE_CE'
             or int(base_manifest.get('final_epoch', -1)) != 100
-            or int(base_manifest.get('student_seed', -1)) != 666
+            or int(base_manifest.get('student_seed', -1)) != seed
             or int(base_manifest.get('target_subject_id', -1)) != int(split['target_subject_id'])
             or int(base_manifest.get('feedback_subject_id', -1)) != int(split['feedback_subject_id'])
             or base_manifest.get('train_uid_sha256') != expected_train_uid
@@ -600,7 +601,7 @@ def _load_reference_checkpoints(config: dict, resolved: dict, cfg: dict,
     warmup = torch.load(resolve_local_file(warmup_checkpoint), map_location='cpu',
                         weights_only=False)
     if (int(warmup.get('epoch', -1)) != 10
-            or int(warmup.get('seed', -1)) != 666
+            or int(warmup.get('seed', -1)) != seed
             or warmup.get('train_uid_sha256') != expected_train_uid
             or warmup.get('resolved_config_sha256') != config['reference_run']['resolved_config_sha256']
             or warmup.get('warmup_state_sha256') != base_manifest.get('warmup_state_sha256')):
@@ -613,7 +614,7 @@ def _load_reference_checkpoints(config: dict, resolved: dict, cfg: dict,
     from experiments.distill import run_sample_utility_adaptive_rl_loso as pilot_runner
     train_uids = identity['uids']['train']
     student_schedule = pilot_protocol.epoch_schedule(
-        len(train_uids), int(resolved['student_config']['batch_size']), 100, 666)
+        len(train_uids), int(resolved['student_config']['batch_size']), 100, seed)
     student_schedule_sha = pilot_runner._schedule_hash(student_schedule, train_uids)
     if student_schedule_sha != base_manifest.get('schedule_sha256'):
         raise RuntimeError('new paired-student data order differs from the audited S0 schedule')

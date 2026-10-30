@@ -1,0 +1,112 @@
+experiment_id: MCC_TEACHER_ADAPT_DIFFKD_LOSO_V1
+dataset: BNCI2014004
+selected_session: session_3
+source_variant: wide_fre_band
+seed: 668
+reference_run:
+  protocol_id: sample_utility_adaptive_weight_wideband_v1
+  seed: 668
+  resolved_config_sha256: 1f11b668046af82a4d3bbea0012f05e5fb8258862f383e668e37c8d25e79cde2
+protocol:
+  folds: 9
+  train_subjects: 7
+  feedback_subjects: 1
+  target_subjects: 1
+  class_mapping:
+    left_hand: 0
+    right_hand: 1
+  training_subject_data_only: true
+  feedback_is_diagnostic_only: true
+  target_evaluation_after_all_training: true
+teacher_adaptation:
+  epochs: 10
+  optimizer: adam
+  lr: 0.0001
+  betas:
+  - 0.9
+  - 0.999
+  eps: 1.0e-08
+  weight_decay: 1.0e-06
+  batch_size: 8
+  scheduler: none
+  forward_mode: eval_with_autograd
+  precision: fp32
+  gradient_clip_norm: 1.0
+  mcc:
+    temperature: 2.0
+    weight: 1.0
+    entropy_epsilon: 1.0e-05
+    row_denominator_epsilon: 1.0e-08
+feature_space:
+  teacher_native_dimension: 256
+  pca_max_dimensions: 32
+  rank_relative_threshold: 1.0e-05
+  whitening_eigenvalue_floor_relative: 0.0001
+  student_native_dimension: 512
+  student_layer_norm_epsilon: 1.0e-05
+  projection: fixed_gaussian_thin_qr
+  projection_seed_base: 20261032
+diffusion:
+  conditioning: unconditional
+  steps: 1000
+  beta_start: 0.0001
+  beta_end: 0.02
+  hidden_dimensions: 128
+  time_embedding_dimensions: 32
+  training_updates: 5000
+  batch_size_cap: 128
+  optimizer: adamw
+  lr: 0.0003
+  betas:
+  - 0.9
+  - 0.999
+  eps: 1.0e-08
+  weight_decay: 0.0001
+  gradient_clip_norm: 1.0
+  diagnostic_interval: 500
+  diagnostic_examples_per_noise_bin: 64
+  ddim_start_timestep: 250
+  ddim_timesteps:
+  - 250
+  - 200
+  - 150
+  - 100
+  - 50
+  - 0
+  ddim_eta: 0.0
+student:
+  architecture: ifnet
+  epochs: 100
+  batch_size: 16
+  optimizer: adamw
+  lr: 0.001
+  weight_decay: 0.01
+  scheduler: cosine_annealing_epoch_end
+  scheduler_t_max: 100
+  scheduler_eta_min: 0.0
+  feature_weight: 0.5
+  feature_start_epoch: 1
+  gradient_clip_norm: null
+  precision: fp32
+  augmentation: none
+conditions:
+- CE_FEATURE
+- MCC_FEATURE
+- CE_DIFFKD
+- MCC_DIFFKD
+randomness:
+  teacher_schedule_seed_base: 101668
+  diffusion_seed_base: 202668
+  student_schedule_seed: 668
+  student_initialization_seed: 668
+  student_feature_noise_seed_base: 303668
+  paired_conditions_share_dropout_stream: true
+  paired_diffkd_conditions_share_noise_stream: true
+report:
+  primary_metric: balanced_accuracy
+  bootstrap_draws: 10000
+  bootstrap_seed: 20261030
+  tie_threshold_pp: 1.0e-06
+storage:
+  external_run_id: mcc_diffkd_loso_v1_seed668
+  reuse_initial_ifnet_run_id: mcc_diffkd_ifnet_initializations
