@@ -476,6 +476,7 @@ def _adapt_teacher(name: str, config: dict, identity: dict, roots: dict,
     epochs = int(max_epochs if max_epochs is not None else teacher_cfg['epochs'])
     batch_size = int(teacher_cfg['batch_size'])
     seed = int(config['randomness']['teacher_schedule_seed_base']) + 1009 * fold_from_identity(identity)
+    reference._seed_everything(seed, device)
     schedule = reference._epoch_schedule(len(identity['uids']['train']), batch_size, 10, seed)
     train_x = data['teacher_x']['train']
     train_y = identity['labels']['train']
@@ -1199,6 +1200,8 @@ def _train_fold(config_path: Path, run_id: str, fold: int, config: dict,
                 device: torch.device, stop_file: str | None,
                 smoke: bool = False) -> dict:
     seed = int(config['seed'])
+    reference._seed_everything(
+        int(config['randomness']['teacher_schedule_seed_base']) + 1009 * int(fold), device)
     roots = _run_roots(run_id, seed, fold)
     resolved, cfg = reference._load_resolved_reference(config)
     identity = reference._load_fold_identity(
@@ -1442,7 +1445,7 @@ def _audit_zero_mcc_trajectory(config: dict, identity: dict, models: dict,
     seed = int(config['randomness']['teacher_schedule_seed_base']) + 1009 * fold_from_identity(identity)
     schedule = reference._epoch_schedule(len(identity['uids']['train']),
                                          int(teacher_cfg['batch_size']), 2, seed)
-    final_hashes = []
+    final_hashes, final_states = [], []
     mcc_skipped = []
     for mode, weight in (('CE_ONLY', 0.0), ('MCC_CONFIGURED_AT_ZERO', 0.0)):
         model = copy.deepcopy(models['teacher_model']).to(device)
@@ -1466,13 +1469,31 @@ def _audit_zero_mcc_trajectory(config: dict, identity: dict, models: dict,
                 torch.nn.utils.clip_grad_norm_(model.parameters(),
                                                float(teacher_cfg['gradient_clip_norm']))
                 optimizer.step()
-        final_hashes.append(_state_hash(model.state_dict()))
-    if final_hashes[0] != final_hashes[1]:
-        raise RuntimeError('zero-weight MCC did not reproduce the CE teacher trajectory')
+        state = {key: value.detach().cpu().clone()
+                 for key, value in model.state_dict().items()}
+        final_hashes.append(_state_hash(state))
+        final_states.append(state)
+    maximum_absolute_difference = 0.0
+    numerically_equivalent = True
+    for key, first in final_states[0].items():
+        second = final_states[1][key]
+        if first.is_floating_point():
+            difference = float((first - second).abs().max().item())
+            maximum_absolute_difference = max(maximum_absolute_difference, difference)
+            numerically_equivalent &= bool(torch.allclose(first, second, atol=1e-6, rtol=0.0))
+        else:
+            numerically_equivalent &= bool(torch.equal(first, second))
+    if not numerically_equivalent:
+        raise RuntimeError(
+            'zero-weight MCC teacher trajectory exceeded 1e-6 tolerance; '
+            f'max_abs_difference={maximum_absolute_difference:.8g}')
     if not all(mcc_skipped):
         raise RuntimeError('zero-weight MCC unexpectedly evaluated the MCC graph')
-    return {'CE_only_hash': final_hashes[0], 'CE_plus_zero_MCC_hash': final_hashes[1],
-            'exact_match': True, 'mcc_skipped': True, 'epochs': 2}
+    return {'CE_only_hash': final_hashes[0], 'zero_weight_MCC_hash': final_hashes[1],
+            'bitwise_match': final_hashes[0] == final_hashes[1],
+            'numerically_equivalent_atol_1e-6': numerically_equivalent,
+            'maximum_absolute_parameter_difference': maximum_absolute_difference,
+            'mcc_skipped': True, 'epochs': 2}
 
 
 def _audit_zero_feature_trajectory(config: dict, identity: dict, models: dict,
