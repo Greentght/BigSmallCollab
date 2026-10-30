@@ -429,6 +429,21 @@ def _teacher_diagnostic_rows(name: str, model: torch.nn.Module, adapter,
     return rows
 
 
+def _teacher_objective(logits: torch.Tensor, labels: torch.Tensor,
+                       mcc_weight: float, mcc_config: dict) -> tuple[
+                           torch.Tensor, torch.Tensor, torch.Tensor, dict | None]:
+    """Compute CE and add MCC only when its configured weight is nonzero."""
+    ce = F.cross_entropy(logits, labels)
+    weight = float(mcc_weight)
+    if weight == 0.0:
+        return ce, ce, logits.new_zeros(()), None
+    mcc, stats = core.minimum_class_confusion(
+        logits, temperature=float(mcc_config['temperature']),
+        entropy_epsilon=float(mcc_config['entropy_epsilon']),
+        row_epsilon=float(mcc_config['row_denominator_epsilon']))
+    return ce + weight * mcc, ce, mcc, stats
+
+
 def _adapt_teacher(name: str, config: dict, identity: dict, roots: dict,
                    models: dict, data: dict, fingerprint: str,
                    device: torch.device, stop_file: str | None,
@@ -496,20 +511,12 @@ def _adapt_teacher(name: str, config: dict, identity: dict, roots: dict,
             yb = torch.as_tensor(train_y[indices], dtype=torch.long, device=device)
             optimizer.zero_grad(set_to_none=True)
             _, logits = models['teacher_adapter'].forward(model, xb)
-            ce = F.cross_entropy(logits, yb)
-            if code == 'T_MCC':
-                mcc, mcc_stats = core.minimum_class_confusion(
-                    logits, temperature=float(mcc_cfg['temperature']),
-                    entropy_epsilon=float(mcc_cfg['entropy_epsilon']),
-                    row_epsilon=float(mcc_cfg['row_denominator_epsilon']))
-                weighted_mcc = float(mcc_cfg['weight']) * mcc
-                loss = ce + weighted_mcc
-                clamped_rows = int(mcc_stats['clamped_rows'].detach().cpu())
-            else:
-                mcc = logits.sum() * 0.0
-                weighted_mcc = mcc
-                loss = ce
-                clamped_rows = 0
+            active_mcc_weight = (float(mcc_cfg['weight']) if code == 'T_MCC' else 0.0)
+            loss, ce, mcc, mcc_stats = _teacher_objective(
+                logits, yb, active_mcc_weight, mcc_cfg)
+            weighted_mcc = active_mcc_weight * mcc
+            clamped_rows = (int(mcc_stats['clamped_rows'].detach().cpu())
+                            if mcc_stats is not None else 0)
             if not torch.isfinite(loss):
                 raise FloatingPointError(f'{code}: non-finite teacher loss at epoch {epoch_index+1}')
             if epoch_index == 0 and batch_index == 0:
@@ -1436,7 +1443,8 @@ def _audit_zero_mcc_trajectory(config: dict, identity: dict, models: dict,
     schedule = reference._epoch_schedule(len(identity['uids']['train']),
                                          int(teacher_cfg['batch_size']), 2, seed)
     final_hashes = []
-    for explicit_zero in (False, True):
+    mcc_skipped = []
+    for mode, weight in (('CE_ONLY', 0.0), ('MCC_CONFIGURED_AT_ZERO', 0.0)):
         model = copy.deepcopy(models['teacher_model']).to(device)
         model.eval()
         optimizer = torch.optim.Adam(
@@ -1451,22 +1459,20 @@ def _audit_zero_mcc_trajectory(config: dict, identity: dict, models: dict,
                                      dtype=torch.long, device=device)
                 optimizer.zero_grad(set_to_none=True)
                 _, logits = models['teacher_adapter'].forward(model, xb)
-                ce = F.cross_entropy(logits, yb)
-                if explicit_zero:
-                    mcc, _ = core.minimum_class_confusion(
-                        logits, temperature=float(teacher_cfg['mcc']['temperature']))
-                    loss = ce + 0.0 * mcc
-                else:
-                    loss = ce
+                loss, _, _, stats = _teacher_objective(
+                    logits, yb, weight, teacher_cfg['mcc'])
+                mcc_skipped.append(stats is None)
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(model.parameters(),
                                                float(teacher_cfg['gradient_clip_norm']))
                 optimizer.step()
         final_hashes.append(_state_hash(model.state_dict()))
     if final_hashes[0] != final_hashes[1]:
-        raise RuntimeError('adding zero-weight MCC changed the CE teacher trajectory')
+        raise RuntimeError('zero-weight MCC did not reproduce the CE teacher trajectory')
+    if not all(mcc_skipped):
+        raise RuntimeError('zero-weight MCC unexpectedly evaluated the MCC graph')
     return {'CE_only_hash': final_hashes[0], 'CE_plus_zero_MCC_hash': final_hashes[1],
-            'exact_match': True, 'epochs': 2}
+            'exact_match': True, 'mcc_skipped': True, 'epochs': 2}
 
 
 def _audit_zero_feature_trajectory(config: dict, identity: dict, models: dict,
