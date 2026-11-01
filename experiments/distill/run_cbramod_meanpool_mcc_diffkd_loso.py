@@ -701,7 +701,7 @@ def _summarize_seed(config: dict, seed: int, run_id: str, device):
         seed_means.append({'seed': seed, 'model': model, 'n_subjects': 9,
             **{metric: float(np.mean([r[metric] for r in part]))
                for metric in ('accuracy', 'balanced_accuracy', 'kappa', 'cross_entropy')}})
-    report = REPORTS_ROOT / config['comparison']['report_directory'] / f'seed_{seed}'
+    report = REPORTS_ROOT / config['storage']['report_directory'] / f'seed_{seed}'
     _report_csv(report / 'subject_metrics.csv', metrics)
     _report_csv(report / 'trial_predictions.csv', predictions)
     _report_csv(report / 'seed_means.csv', seed_means)
@@ -718,7 +718,7 @@ def _summarize_seed(config: dict, seed: int, run_id: str, device):
 
 
 def _aggregate(config: dict):
-    report_root = REPORTS_ROOT / config['comparison']['report_directory']
+    report_root = REPORTS_ROOT / config['storage']['report_directory']
     subject_rows, prediction_rows, seed_means = [], [], []
     for seed in SEEDS:
         report = report_root / f'seed_{seed}'
