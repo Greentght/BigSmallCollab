@@ -591,7 +591,7 @@ def _train_fold(config_path: Path, config: dict, seed: int, run_id: str,
 def _report_csv(path: Path, rows: list[dict]):
     out = require_report_output(path); out.parent.mkdir(parents=True, exist_ok=True)
     tmp = out.with_suffix(out.suffix + '.tmp')
-    fields = list(rows[0]) if rows else []
+    fields = list(dict.fromkeys(key for row in rows for key in row))
     with tmp.open('w', encoding='utf-8', newline='') as stream:
         writer = csv.DictWriter(stream, fieldnames=fields); writer.writeheader(); writer.writerows(rows)
     os.replace(tmp, out)
