@@ -1,0 +1,108 @@
+experiment_id: CBRAMOD_MEANPOOL_MCC_DIFFKD_LOSO_V1
+dataset: BNCI2014004
+selected_session: session_3
+source_variant: wide_fre_band
+seeds: [666, 667, 668]
+
+# This is a paired follow-up to CBRAMOD_MCC_DIFFKD_LOSO_V1. It reuses the
+# verified native teacher-channel feature/logit artifacts and changes only
+# the feature path: average the three channel vectors before fitting PCA and
+# before aligning the IFNet representation.
+reference_run:
+  run_id_prefix: cbramod_mcc_diffkd_loso_v1_seed
+  protocol_id: sample_utility_adaptive_weight_wideband_v1
+  resolved_config_sha256_by_seed:
+    666: 6dfe184f7f6a5ddd8b75e57e6d67c77ce4e68f1bdf4aa349d558c0240539342f
+    667: 775d37f4ee707b0593270a5c25892135171790c4365b3717b900745bf0b5ffdf
+    668: 1f11b668046af82a4d3bbea0012f05e5fb8258862f383e668e37c8d25e79cde2
+
+protocol:
+  folds: 9
+  train_subjects: 7
+  feedback_subjects: 1
+  target_subjects: 1
+  train_only_for_feature_statistics_and_denoiser: true
+  feedback_is_diagnostic_only: true
+  target_evaluation_after_all_folds_train: true
+
+feature_space:
+  teacher_native_shape: [3, 200]
+  channel_pooling: arithmetic_mean_before_alignment
+  pca_fit: pooled_T0_D_train_only
+  pca_max_dimensions: 32
+  rank_relative_threshold: 1.0e-5
+  whitening_eigenvalue_floor_relative: 1.0e-4
+  student_native_dimension: 512
+  student_projection: fixed_gaussian_thin_qr_d_by_512
+  student_projection_seed_base: 20261101
+  student_auxiliary_normalization: layer_norm_no_affine_epsilon_1e-5
+  feature_loss: mean_squared_error_over_batch_and_dimension
+
+teachers:
+  source_feature_cache_run_id_prefix: cbramod_mcc_diffkd_loso_v1
+  reused: [T0, T_CE, T_MCC]
+  retrain: false
+  student_alignment_targets: [T_CE, T_MCC]
+
+diffusion:
+  conditioning: none
+  steps: 1000
+  beta_start: 1.0e-4
+  beta_end: 0.02
+  hidden_dimensions: 128
+  time_embedding_dimensions: 32
+  training_updates: 5000
+  batch_size_cap: 128
+  optimizer: adamw
+  lr: 3.0e-4
+  betas: [0.9, 0.999]
+  eps: 1.0e-8
+  weight_decay: 1.0e-4
+  gradient_clip_norm: 1.0
+  diagnostic_interval: 500
+  ddim_timesteps: [250, 200, 150, 100, 50, 0]
+  ddim_eta: 0.0
+
+student:
+  architecture: ifnet
+  initialization: same_canonical_untrained_seed_state_as_paired_loso_runs
+  epochs: 100
+  batch_size: 16
+  optimizer: adamw
+  lr: 0.001
+  weight_decay: 0.01
+  scheduler: cosine_annealing_epoch_end
+  scheduler_t_max: 100
+  feature_weight: 0.5
+  feature_start_epoch: 1
+  classification_loss: cross_entropy
+  logits_kd: false
+  gradient_clip_norm: null
+  precision: fp32
+  augmentation: none
+
+conditions: [CE_FEATURE, MCC_FEATURE, CE_DIFFKD, MCC_DIFFKD]
+condition_teacher:
+  CE_FEATURE: T_CE
+  CE_DIFFKD: T_CE
+  MCC_FEATURE: T_MCC
+  MCC_DIFFKD: T_MCC
+
+randomness:
+  prior_seed_base: 202666
+  student_schedule_seed: follows_run_seed
+  student_initialization_seed: follows_run_seed
+  student_diffusion_noise_seed_base: 303666
+  paired_conditions_share_student_dropout_stream: true
+  paired_diffkd_conditions_share_noise_stream: true
+
+comparison:
+  paired_channel_run_id_prefix: cbramod_mcc_diffkd_loso_v1_seed
+  original_condition_names: [CE_FEATURE, MCC_FEATURE, CE_DIFFKD, MCC_DIFFKD]
+  report_accuracy_and_balanced_accuracy_separately: true
+  aggregate: equal_subject_mean_per_seed_then_equal_seed_mean
+  paired_unit: subject_within_seed
+
+storage:
+  external_run_id_prefix: cbramod_meanpool_mcc_diffkd_loso_v1_seed
+  report_directory: distill/cbramod_meanpool_mcc_diffkd_loso_v1
