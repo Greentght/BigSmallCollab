@@ -631,14 +631,29 @@ def _evaluate_fold(config: dict, seed: int, run_id: str, fold: int,
         if not all(p.is_file() for p in (evaluation_path, metrics_path, predictions_path)):
             raise RuntimeError(f'fold {fold + 1}: incomplete saved target evaluation')
         saved = _read_json(evaluation_path)
+        saved_metrics = pd.read_csv(resolve_local_file(metrics_path)).to_dict('records')
+        saved_predictions = pd.read_csv(resolve_local_file(predictions_path)).to_dict('records')
+        expected_models = {'T0', 'T_CE', 'T_MCC', 'IFNet_CE', *OLD_CONDITIONS, *CONDITIONS}
+        expected_uids = [f'{int(uid[0])}:{int(uid[1])}' for uid in identity['uids']['test']]
+        evaluation_hashes_match = (
+            (saved.get('metrics_sha256') is None or saved['metrics_sha256'] == _sha(metrics_path))
+            and (saved.get('predictions_sha256') is None
+                 or saved['predictions_sha256'] == _sha(predictions_path)))
         if (saved.get('status') != 'complete'
                 or saved.get('run_fingerprint') != complete['run_fingerprint']
                 or saved.get('test_uid_sha256') != identity['uid_sha256']['test']
-                or saved.get('metrics_sha256') != _sha(metrics_path)
-                or saved.get('predictions_sha256') != _sha(predictions_path)):
+                or not evaluation_hashes_match
+                or len(saved_metrics) != len(expected_models)
+                or {row['model'] for row in saved_metrics} != expected_models
+                or any(int(row['seed']) != seed or int(row['target_subject']) != fold + 1
+                       for row in saved_metrics)
+                or len(saved_predictions) != len(expected_uids)
+                or [str(row['trial_uid']) for row in saved_predictions] != expected_uids
+                or not np.array_equal(
+                    np.asarray([row['label'] for row in saved_predictions], dtype=np.int64),
+                    identity['labels']['test'])):
             raise RuntimeError(f'fold {fold + 1}: saved target evaluation provenance/hash mismatch')
-        return (pd.read_csv(resolve_local_file(metrics_path)).to_dict('records'),
-                pd.read_csv(resolve_local_file(predictions_path)).to_dict('records'))
+        return saved_metrics, saved_predictions
     data = channel_run._load_data(identity, roots, historical['student_config'], device)
     rows = data['student_rows']['test']
     raw = np.asarray(data['student_input_mmap'][rows], dtype=np.float32)
