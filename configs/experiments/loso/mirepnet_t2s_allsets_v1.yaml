@@ -1,0 +1,67 @@
+experiment_id: MIREPNET_T2S_ALLSETS_LOSO_V1
+datasets: [BNCI2014004, BNCI2014001, BNCI2014001-4, BNCI2015001, AlexMI]
+students: [ifnet, eegnet, adfcnn]
+seeds: [666, 667, 668]
+protocol:
+  name: standard_loso_all_source_subjects
+  feedback_subjects: 0
+  checkpoint_selection: fixed_final_epoch
+  target_evaluation: after_all_training_jobs_complete
+  comparison_to_previous_7_1_1_pilot: separate_protocol_not_strictly_paired
+teacher:
+  architecture: mirepnet
+  source: verified_existing_same_seed_same_fold_checkpoint
+  missing_checkpoint: fail_without_retraining
+  adaptation_epochs: 10
+  optimizer: adam
+  lr: 0.0001
+  weight_decay: 0.000001
+  batch_size: 8
+  gradient_clip_norm: 1.0
+  mode: eval_with_autograd
+  mcc_temperature: 2.0
+  mcc_weight: 1.0
+projection:
+  direction: teacher_native_classifier_input_to_student_native_classifier_input
+  type: fixed_gaussian_qr
+  expansion: orthonormal_columns
+  compression: orthonormal_rows
+  normalization: layer_norm_without_affine
+  epsilon: 0.00001
+student_training:
+  parameter_source: frozen_per_dataset_student_loso_yaml
+  epochs: 100
+  paired_initialization: true
+  paired_uid_schedule: true
+  paired_dropout_rng: true
+  feature_weight: 0.5
+  feature_start_epoch: 1
+  logits_kd: false
+conditions: [none, CE_T2S_FEATURE, MCC_T2S_FEATURE, CE_T2S_DIFFKD, MCC_T2S_DIFFKD]
+diffusion:
+  steps: 1000
+  beta_start: 0.0001
+  beta_end: 0.02
+  hidden_dimensions: 128
+  time_embedding_dimensions: 32
+  training_updates: 5000
+  batch_size_cap: 128
+  lr: 0.0003
+  weight_decay: 0.0001
+  gradient_clip_norm: 1.0
+  diagnostic_interval: 500
+  ddim_timesteps: [250, 200, 150, 100, 50, 0]
+resources:
+  cpu_threads_per_worker: 1
+  dataloader_workers: 0
+  scheduling: existing_shared_queue_unchanged_limits
+report:
+  directory: distill/mirepnet_t2s_allsets_v1
+  metrics: [accuracy, balanced_accuracy, kappa, cross_entropy]
+  aggregation: equal_subject_mean_within_seed_then_equal_seed_mean
+  bootstrap_replicates: 10000
+  bootstrap_seed: 20261101
+storage:
+  run_id: mirepnet_t2s_allsets_loso_v1
+  retain_existing_source_teachers: true
+  retain_adapted_teacher_and_targets_for_reuse: true
