@@ -1,0 +1,127 @@
+experiment_id: CBRAMOD_IFNET_DUAL_ADAPTER_FEATURE_LOSO_V3
+dataset: BNCI2014004
+selected_session: session_3
+source_variant: wide_fre_band
+seeds: [666, 667, 668]
+
+protocol:
+  folds: 9
+  train_subjects: 7
+  feedback_subjects: 1
+  target_subjects: 1
+  train_only_for_adapters_and_student: true
+  feedback_is_diagnostic_only: true
+  evaluate_targets_after_all_training: true
+
+sources:
+  v1_run_id_prefix: cbramod_t2s_full_feature_loso_v1
+  v2_run_id_prefix: cbramod_ifnet_trainable_adapter_v2
+  v2_config: configs/experiments/loso/cbramod_ifnet_trainable_adapter_v2.yaml
+  teacher_condition: T_CE
+  teacher_target_cache: full_teacher_targets.npz
+  teacher_feature_key: T_CE_{partition}_features_full
+  v1_fixed_projection: fixed_teacher_to_IFNet_P.npz
+  v1_fixed_projection_manifest: fixed_teacher_to_IFNet_P.json
+  v2_teacher_adapter_condition: JOINT_A_CE_FEATURE
+  v2_teacher_adapter_checkpoint: adapter_JOINT_A_CE_FEATURE.pt
+  v2_teacher_adapter_manifest: JOINT_A_CE_FEATURE.json
+
+feature:
+  teacher_shape: [3, 4, 200]
+  teacher_flat_dimension: 2400
+  student_dimension: 512
+  shared_dimension: 512
+  teacher_adapter: linear2400_512_gelu_linear512_512_layernorm_no_affine
+  student_adapter: linear512_512_gelu_linear512_512_layernorm_no_affine
+  linear_bias: true
+  layer_norm_affine: false
+  layer_norm_epsilon: 1.0e-5
+  loss: mse_mean
+  feature_weight: 0.5
+  feature_start_epoch: 1
+  prevent_collapse_loss: false
+
+student:
+  architecture: IFNet
+  initialization: canonical_untrained_I_s_same_as_paired_baseline
+  epochs: 100
+  batch_size: 16
+  optimizer: adamw
+  lr: 0.001
+  betas: [0.9, 0.999]
+  eps: 1.0e-8
+  weight_decay: 0.01
+  scheduler: cosine_annealing_epoch_end
+  scheduler_t_max: 100
+  scheduler_eta_min: 0.0
+  gradient_clip_norm: null
+  precision: fp32
+  foreach: false
+  fused: false
+  classification_loss: cross_entropy
+  label_smoothing: 0.0
+  class_weights: false
+  logits_kd: false
+  mcc: false
+  diffusion: false
+  augmentation: none
+
+adapter_optimizers:
+  teacher:
+    optimizer: adamw
+    lr: 0.001
+    betas: [0.9, 0.999]
+    eps: 1.0e-8
+    weight_decay: 0.01
+    scheduler: cosine_annealing_epoch_end
+    scheduler_t_max: 100
+    scheduler_eta_min: 0.0
+    gradient_clip_norm: 1.0
+  student:
+    optimizer: adamw
+    lr: 0.001
+    betas: [0.9, 0.999]
+    eps: 1.0e-8
+    weight_decay: 0.01
+    scheduler: cosine_annealing_epoch_end
+    scheduler_t_max: 100
+    scheduler_eta_min: 0.0
+    gradient_clip_norm: 1.0
+
+conditions:
+  FIXED_P_STUDENT_ADAPTER_FEATURE:
+    teacher_target: v1_fixed_P_then_layer_norm
+    trainable: [IFNet, student_adapter]
+  DUAL_ADAPTER_FEATURE:
+    teacher_target: v2_initialized_teacher_adapter_then_layer_norm
+    trainable: [IFNet, teacher_adapter, student_adapter]
+
+diagnostics:
+  epochs: [0, 1, 10, 50, 100]
+  partitions: [D_train, D_feedback]
+  metrics:
+    - feature_mse
+    - cross_trial_variance
+    - effective_rank
+    - class_geometry
+    - linear_cka
+    - cosine_similarity
+    - adapter_drift
+    - gradient_norms
+  feedback_selection_allowed: false
+  zero_variance_cka: NA
+  near_constant_variance_threshold: 1.0e-4
+
+report:
+  primary_metric: balanced_accuracy
+  also_report: [accuracy, kappa, cross_entropy]
+  aggregation: mean_seeds_within_subject_then_paired_subject_summary
+  paired_unit: target_subject
+  bootstrap_replicates: 10000
+  bootstrap_seed: 20261104
+  tie_threshold_pp: 1.0e-6
+  report_directory: distill/cbramod_ifnet_dual_adapter_v3
+
+storage:
+  external_run_id_prefix: cbramod_ifnet_dual_adapter_v3
+  queue_root: results/loso/distill/queue
