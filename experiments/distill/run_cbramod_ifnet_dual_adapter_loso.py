@@ -927,6 +927,8 @@ def _reuse_source_rows(context: dict, seed: int, fold: int) -> tuple[list[dict],
 def _evaluate_fold(config: dict, seed: int, fold: int, run_id: str,
                    device: torch.device) -> tuple[list[dict], list[dict], list[dict]]:
     context = _source_context(config, seed, fold, run_id, device, include_test=True)
+    v2_config_path = (ROOT / config['sources']['v2_config']).resolve()
+    context['v2_config'] = base_v2._load_config(v2_config_path)
     roots, identity, data, student = (context['roots'], context['identity'],
                                       context['data'], context['student'])
     complete = _read_json(roots['run_result'] / 'fold_complete.json')
@@ -1038,6 +1040,7 @@ def _evaluate_fold(config: dict, seed: int, fold: int, run_id: str,
     _atomic_csv(diagnostics_path, target_diag_rows)
     _atomic_json(eval_path, {
         'status': 'complete', 'run_fingerprint': complete['run_fingerprint'],
+        'evaluation_runner_sha256': _sha(Path(__file__)),
         'seed': seed, 'fold_zero_based': fold, 'target_subject': fold + 1,
         'test_uid_sha256': identity['uid_sha256']['test'], 'n_trials': len(y_test),
         'models': list(MODEL_NAMES), 'metrics_sha256': _sha(metrics_path),
@@ -1260,6 +1263,7 @@ def _write_summary(config: dict, run_id_prefix: str) -> dict:
     diagnostics_df.to_csv(report_dir / 'feature_diagnostics.csv', index=False)
     aggregate = {
         'experiment_id': config['experiment_id'], 'run_id_prefix': run_id_prefix,
+        'evaluation_runner_sha256': _sha(Path(__file__)),
         'dataset': config['dataset'], 'selected_session': config['selected_session'],
         'seeds': list(SEEDS), 'folds_per_seed': 9, 'n_target_subjects': 9,
         'aggregation': 'average seeds within each target subject; then equal-weight subject summary',
