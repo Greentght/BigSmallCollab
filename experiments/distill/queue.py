@@ -591,6 +591,26 @@ def run_worker(args):
                        '--expected-config-sha256', snapshot['config_sha256'],
                        '--expected-resolved-sha256', snapshot['resolved_sha256'],
                        '--expected-implementation-sha256', snapshot['implementation_sha256']]
+        elif snapshot.get('kind') == 'cbramod_ifnet_trainable_adapter_loso_v2':
+            command = [training_python, '-B', '-m',
+                       'experiments.distill.run_cbramod_ifnet_trainable_adapter_loso',
+                       '--config', snapshot['config'],
+                       '--config-sha256', snapshot['config_sha256'],
+                       '--run-id', snapshot['run_id'],
+                       '--run-id-prefix', snapshot['run_id_prefix'],
+                       '--seed', str(snapshot['seed']), '--fold', str(snapshot['fold']),
+                       '--gpu', '0', '--progress', str(folder / 'progress.json'),
+                       '--stop-file', str(folder / 'stop')]
+            if snapshot.get('stage') == 'smoke':
+                command.append('--smoke')
+            elif snapshot.get('stage') == 'evaluate':
+                command = [training_python, '-B', '-m',
+                           'experiments.distill.run_cbramod_ifnet_trainable_adapter_loso',
+                           '--config', snapshot['config'],
+                           '--config-sha256', snapshot['config_sha256'],
+                           '--run-id-prefix', snapshot['run_id_prefix'],
+                           '--gpu', '0', '--progress', str(folder / 'progress.json'),
+                           '--stop-file', str(folder / 'stop'), '--evaluate']
         elif snapshot.get('kind') == 'cbramod_t2s_full_feature_loso_v1':
             bootstrap = (
                 'import torch,sys; torch.set_num_threads(1); '
@@ -614,7 +634,8 @@ def run_worker(args):
                 'cbramod_channel_feature_alignment', 'student_aware_diffusion_prior_v1',
                 'mcc_diffkd_loso_v1', 'mcc_diffkd_cbramod_loso_v1',
                 'cbramod_meanpool_mcc_diffkd_loso_v1',
-                'cbramod_t2s_full_feature_loso_v1', 'mirepnet_t2s_allsets_v1'}:
+                'cbramod_t2s_full_feature_loso_v1', 'mirepnet_t2s_allsets_v1',
+                'cbramod_ifnet_trainable_adapter_loso_v2'}:
             for name in ('OMP_NUM_THREADS', 'MKL_NUM_THREADS',
                          'OPENBLAS_NUM_THREADS', 'NUMEXPR_NUM_THREADS',
                          'BLIS_NUM_THREADS', 'VECLIB_MAXIMUM_THREADS',
@@ -677,7 +698,8 @@ def run_worker(args):
                     'cbramod_channel_feature_alignment', 'student_aware_diffusion_prior_v1',
                     'mcc_diffkd_loso_v1', 'mcc_diffkd_cbramod_loso_v1',
                     'cbramod_meanpool_mcc_diffkd_loso_v1',
-                    'cbramod_t2s_full_feature_loso_v1', 'mirepnet_t2s_allsets_v1'}:
+                    'cbramod_t2s_full_feature_loso_v1', 'mirepnet_t2s_allsets_v1',
+                'cbramod_ifnet_trainable_adapter_loso_v2'}:
                 state['log_registration'] = {
                     'status': 'skipped',
                     'reason': ('CBraMod MCC-DiffKD LOSO is summarized separately, not registered in docs/exp_log.csv'
@@ -686,6 +708,8 @@ def run_worker(args):
                                if snapshot.get('kind') == 'cbramod_meanpool_mcc_diffkd_loso_v1' else
                                'CBraMod full-feature T2S LOSO has a dedicated report, not an exp_log tuning row'
                                if snapshot.get('kind') == 'cbramod_t2s_full_feature_loso_v1' else
+                               'CBraMod trainable-adapter V2 has a dedicated report; it is not an exp_log tuning row'
+                               if snapshot.get('kind') == 'cbramod_ifnet_trainable_adapter_loso_v2' else
                                'MIRepNet T2S has a dedicated paired baseline report'
                                if snapshot.get('kind') == 'mirepnet_t2s_allsets_v1' else
                                'single-seed MCC-DiffKD LOSO is summarized separately, not registered in the three-seed tuning log'
@@ -698,7 +722,8 @@ def run_worker(args):
                 'cbramod_channel_feature_alignment', 'student_aware_diffusion_prior_v1',
                 'mcc_diffkd_loso_v1', 'mcc_diffkd_cbramod_loso_v1',
                 'cbramod_meanpool_mcc_diffkd_loso_v1',
-                'cbramod_t2s_full_feature_loso_v1', 'mirepnet_t2s_allsets_v1'}):
+                'cbramod_t2s_full_feature_loso_v1', 'mirepnet_t2s_allsets_v1',
+                'cbramod_ifnet_trainable_adapter_loso_v2'}):
             try:
                 register_job_log(store, args.job)
             except Exception as exc:
