@@ -69,6 +69,15 @@ def _atomic_json(path: Path, value: dict) -> None:
     cbramod_run._atomic_json(Path(path), value)
 
 
+def _write_report_json(path: Path, value: dict) -> None:
+    target = require_report_output(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temporary = target.with_suffix(target.suffix + '.tmp')
+    temporary.write_text(json.dumps(value, ensure_ascii=False, sort_keys=True,
+                                    indent=2, allow_nan=True) + '\n', encoding='utf-8')
+    os.replace(temporary, target)
+
+
 def _atomic_torch(path: Path, value: dict) -> None:
     cbramod_run._atomic_torch(Path(path), value)
 
@@ -1071,12 +1080,11 @@ def _style_workbook(path: Path, summary: pd.DataFrame,
     wb = Workbook()
     score_map = {(r['metric'], r['model']): float(r['mean_percent'])
                  for r in summary.to_dict('records')}
-    for metric, title in (('accuracy', 'Accuracy'), ('balanced_accuracy', 'Balanced Accuracy')):
+    for metric, title in (('accuracy', 'Accuracy (%)'),
+                          ('balanced_accuracy', 'Balanced Accuracy (%)')):
         ws = wb.active if len(wb.worksheets) == 1 and wb.active.max_row == 1 else wb.create_sheet()
         ws.title = title
-        metric_title = 'Accuracy (%)' if metric == 'accuracy' else 'Balanced Accuracy (%)'
         rows = [
-            ['student', 'method', '004 / session_3'],
             ['CBraMod', 'T_CE teacher reference', score_map[(metric, 'T_CE')]],
             ['IFNet', 'none', score_map[(metric, 'IFNet_CE')]],
             ['IFNet', 'fixed_P_feature', score_map[(metric, 'FIXED_P_FEATURE')]],
@@ -1084,7 +1092,7 @@ def _style_workbook(path: Path, summary: pd.DataFrame,
             ['IFNet', 'fixed_P_student_adapter_feature', score_map[(metric, 'FIXED_P_STUDENT_ADAPTER_FEATURE')]],
             ['IFNet', 'dual_adapter_feature', score_map[(metric, 'DUAL_ADAPTER_FEATURE')]],
         ]
-        ws.append([metric_title, 'n_seed=3; n_subject=9', 'mean (%)'])
+        ws.append(['student', 'method', '004 / session_3'])
         for row in rows: ws.append(row)
         ws.freeze_panes = 'A2'; ws.sheet_view.showGridLines = False
         for c in ws[1]: c.fill = fill_header; c.font = Font(color='FFFFFF', bold=True)
@@ -1161,6 +1169,7 @@ def _style_workbook(path: Path, summary: pd.DataFrame,
 
 def _write_summary(config: dict, run_id_prefix: str) -> dict:
     metrics, predictions, diagnostics = [], [], []
+    evaluation_runner_hashes = set()
     for seed in SEEDS:
         for fold in FOLDS:
             roots = _roots(run_id_prefix + f'_seed{seed}', seed, fold)
@@ -1175,6 +1184,8 @@ def _write_summary(config: dict, run_id_prefix: str) -> dict:
                     or record.get('predictions_sha256') != _sha(ppath)
                     or record.get('diagnostics_sha256') != _sha(dpath)):
                 raise RuntimeError('evaluation artifact hash mismatch during summary')
+            if record.get('evaluation_runner_sha256'):
+                evaluation_runner_hashes.add(record['evaluation_runner_sha256'])
             metrics.extend(pd.read_csv(resolve_local_file(mpath)).to_dict('records'))
             predictions.extend(pd.read_csv(resolve_local_file(ppath)).to_dict('records'))
             diagnostics.extend(pd.read_csv(resolve_local_file(dpath)).to_dict('records'))
@@ -1188,6 +1199,8 @@ def _write_summary(config: dict, run_id_prefix: str) -> dict:
             or len(metric_df) != 27 * len(expected)
             or metric_df.duplicated(['model', 'seed', 'target_subject']).any()):
         raise RuntimeError('V3 evaluation matrix is incomplete, duplicated or has unexpected models')
+    if evaluation_runner_hashes and len(evaluation_runner_hashes) != 1:
+        raise RuntimeError('V3 evaluation folds were produced by different runner versions')
     for name, group in metric_df.groupby('model'):
         if (len(group) != 27 or set(group['seed'].astype(int)) != set(SEEDS)
                 or any(group[group['seed'].astype(int) == s]['target_subject'].nunique() != 9 for s in SEEDS)):
@@ -1263,7 +1276,8 @@ def _write_summary(config: dict, run_id_prefix: str) -> dict:
     diagnostics_df.to_csv(report_dir / 'feature_diagnostics.csv', index=False)
     aggregate = {
         'experiment_id': config['experiment_id'], 'run_id_prefix': run_id_prefix,
-        'evaluation_runner_sha256': _sha(Path(__file__)),
+        'evaluation_runner_sha256': next(iter(evaluation_runner_hashes), None),
+        'summary_runner_sha256': _sha(Path(__file__)),
         'dataset': config['dataset'], 'selected_session': config['selected_session'],
         'seeds': list(SEEDS), 'folds_per_seed': 9, 'n_target_subjects': 9,
         'aggregation': 'average seeds within each target subject; then equal-weight subject summary',
@@ -1277,6 +1291,7 @@ def _write_summary(config: dict, run_id_prefix: str) -> dict:
         'target_protocol': 'no EA; target trial labels used only after all training endpoints were fixed',
     }
     _atomic_json(report_dir / 'aggregate.json', aggregate)
+    _write_report_json(report_dir / 'aggregate.json', aggregate)
     _style_workbook(report_dir / 'summary.xlsx', summary_df, paired_df, diagnostics_df)
     _write_report_markdown(report_dir / 'summary.md', aggregate)
     return aggregate
@@ -1412,6 +1427,7 @@ def main(argv=None) -> int:
     parser.add_argument('--smoke', action='store_true')
     parser.add_argument('--evaluate', action='store_true')
     parser.add_argument('--preflight', action='store_true')
+    parser.add_argument('--summarize', action='store_true')
     parser.add_argument('--enqueue', choices=('smoke', 'train', 'evaluate'))
     parser.add_argument('--watch-training', action='store_true')
     parser.add_argument('--watch-poll-seconds', type=float, default=30.0)
@@ -1425,10 +1441,16 @@ def main(argv=None) -> int:
     if args.preflight:
         report = preflight(config_path, config)
         out = require_report_output(REPORTS_ROOT / config['report']['report_directory'] / 'preflight.json')
-        out.parent.mkdir(parents=True, exist_ok=True); _atomic_json(out, report)
+        out.parent.mkdir(parents=True, exist_ok=True); _write_report_json(out, report)
         print(json.dumps({'status': report['status'], 'verified_folds': report['verified_folds'],
                           'missing': report['missing']}, ensure_ascii=False))
         return 0 if report['status'] == 'ready' else 2
+    if args.summarize:
+        run_prefix = args.run_id_prefix or config['storage']['external_run_id_prefix']
+        result = _write_summary(config, run_prefix)
+        print(json.dumps({'status': 'summarized',
+                          'target_evaluations': result['target_evaluations']}, ensure_ascii=False))
+        return 0
     if args.enqueue:
         jobs = _enqueue(config_path, config, args.enqueue, args.queue_root)
         print(json.dumps({'stage': args.enqueue, 'jobs': jobs}, ensure_ascii=False)); return 0
