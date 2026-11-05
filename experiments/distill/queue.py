@@ -22,7 +22,8 @@ import sys
 import time
 import uuid
 
-from experiments.storage import PROJECT_ROOT, REPORTS_ROOT, require_report_output
+from experiments.storage import (PROJECT_DATA_ROOT, PROJECT_ROOT, REPORTS_ROOT,
+                                 require_report_output)
 
 DEFAULT_ROOT = REPORTS_ROOT / 'loso/distill/queue'
 ACTIVE = {'starting', 'running', 'stopping'}
@@ -215,6 +216,63 @@ def enqueue_args(args):
     from experiments.distill.run_distill import freeze_run
     enqueue_snapshot(freeze_run(args), root=getattr(args, 'queue_root', None) or DEFAULT_ROOT,
                      argv=sys.argv[1:])
+    return 0
+
+
+
+def enqueue_e2_ensemble_distill_args(args):
+    """Queue one fresh C/K/D student bundle for each fixed E2 LOSO fold."""
+    import yaml
+
+    config_path = Path(args.config).expanduser().resolve()
+    if (not config_path.is_file()
+            or config_path.name != 'e2_ifnet_distill_boost_ensemble_v1.yaml'):
+        raise ValueError(f'expected the E2 ensemble-distillation config, got {config_path}')
+    exp = yaml.safe_load(config_path.read_text())
+    if (exp.get('protocol_id') != 'E2_IFNET_DISTILL_BOOST_ENSEMBLE_LOSO_V1'
+            or exp.get('dataset') != 'BNCI2014004'
+            or int(exp.get('student_seed', -1)) != 668
+            or int(exp.get('teacher_bundle_seed', -1)) != 666):
+        raise ValueError('E2 queue requires the locked BNCI2014004 seed-668 pilot config')
+    run_id = args.run_id or exp['run_id']
+    if not run_id.replace('_', '').isalnum():
+        raise ValueError(f'invalid E2 ensemble-distillation run ID: {run_id!r}')
+    digest = hashlib.sha256(config_path.read_bytes()).hexdigest()
+    preflight = (PROJECT_DATA_ROOT / 'results' /
+                 exp['artifacts']['results_namespace'] / run_id / 'preflight.json')
+    preflight_data = read_json(preflight)
+    if (not preflight_data or preflight_data.get('status') != 'passed'
+            or preflight_data.get('config_sha256') != digest):
+        raise RuntimeError('the matching train-only preflight must pass before queue submission')
+    folds = [int(x) for x in args.folds]
+    configured = [int(x) for x in exp['folds']]
+    if (not folds or len(set(folds)) != len(folds)
+            or any(fold not in configured for fold in folds)):
+        raise ValueError(f'folds must be a unique configured subset of {configured}')
+    for fold in folds:
+        snapshot = {
+            'kind': 'e2_ifnet_distill_boost_ensemble_v1',
+            'config': str(config_path), 'config_sha256': digest,
+            'run_id': run_id, 'fold': fold, 'folds': folds,
+            'seed': int(exp['student_seed']), 'stage': 'train',
+            'args': {
+                'dataset': exp['dataset'], 'teacher': 'E2_ensemble',
+                'student': 'ifnet', 'protocol': 'loso', 'keys': [fold],
+                'folds': [fold], 'seeds': [int(exp['student_seed'])],
+                'methods': ['NEW_CE', 'B0_KD', 'E2_KD'],
+                'epochs': int(exp['training']['epochs']),
+                'batch_size': int(exp['training']['batch_size']),
+                'lr': float(exp['training']['lr']),
+                'weight_decay': float(exp['training']['weight_decay']),
+                'lam_kd': float(exp['distillation']['lambda_kd']),
+                'temperature': float(exp['distillation']['temperature']),
+            },
+        }
+        enqueue_snapshot(snapshot, root=args.root, argv=sys.argv[1:],
+                         label=f'E2 ensemble->IFNet distillation '
+                               f'BNCI2014004 S{fold+1:02d} seed=668 run={run_id}')
+    print(f'[e2-ensemble-distill] run_id={run_id} folds={folds}; '
+          f'queue_root={validated_root(args.root)}', flush=True)
     return 0
 
 
@@ -527,7 +585,15 @@ def run_worker(args):
         spec = read_json(folder / 'spec.json')
         snapshot = spec.get('snapshot', {})
         training_python = spec.get('python', sys.executable)
-        if snapshot.get('kind') == 'cbramod_channel_feature_alignment':
+        if snapshot.get('kind') == 'e2_ifnet_distill_boost_ensemble_v1':
+            command = [training_python, '-B', '-m',
+                       'experiments.distill.run_e2_ifnet_distill_boost_ensemble_loso',
+                       '--config', snapshot['config'],
+                       '--expected-config-sha256', snapshot['config_sha256'],
+                       '--run-id', snapshot['run_id'], '--fold', str(snapshot['fold']),
+                       '--gpu', '0', '--progress', str(folder / 'progress.json'),
+                       '--stop-file', str(folder / 'stop')]
+        elif snapshot.get('kind') == 'cbramod_channel_feature_alignment':
             command = [training_python, '-B', '-m',
                        'experiments.distill.run_cbramod_channel_feature',
                        '--snapshot', str(folder / 'spec.json'),
@@ -652,7 +718,8 @@ def run_worker(args):
                 'cbramod_meanpool_mcc_diffkd_loso_v1',
                 'cbramod_t2s_full_feature_loso_v1', 'mirepnet_t2s_allsets_v1',
                 'cbramod_ifnet_trainable_adapter_loso_v2',
-                'cbramod_ifnet_dual_adapter_loso_v3'}:
+                'cbramod_ifnet_dual_adapter_loso_v3',
+                'e2_ifnet_distill_boost_ensemble_v1'}:
             for name in ('OMP_NUM_THREADS', 'MKL_NUM_THREADS',
                          'OPENBLAS_NUM_THREADS', 'NUMEXPR_NUM_THREADS',
                          'BLIS_NUM_THREADS', 'VECLIB_MAXIMUM_THREADS',
@@ -717,7 +784,8 @@ def run_worker(args):
                     'cbramod_meanpool_mcc_diffkd_loso_v1',
                     'cbramod_t2s_full_feature_loso_v1', 'mirepnet_t2s_allsets_v1',
                 'cbramod_ifnet_trainable_adapter_loso_v2',
-                'cbramod_ifnet_dual_adapter_loso_v3'}:
+                'cbramod_ifnet_dual_adapter_loso_v3',
+                'e2_ifnet_distill_boost_ensemble_v1'}:
                 state['log_registration'] = {
                     'status': 'skipped',
                     'reason': ('CBraMod MCC-DiffKD LOSO is summarized separately, not registered in docs/exp_log.csv'
@@ -730,6 +798,8 @@ def run_worker(args):
                                if snapshot.get('kind') == 'cbramod_ifnet_trainable_adapter_loso_v2' else
                                'CBraMod dual-adapter V3 has a dedicated report; it is not an exp_log tuning row'
                                if snapshot.get('kind') == 'cbramod_ifnet_dual_adapter_loso_v3' else
+                               'E2 ensemble-to-IFNet pilot has a dedicated report; it is not an exp_log tuning row'
+                               if snapshot.get('kind') == 'e2_ifnet_distill_boost_ensemble_v1' else
                                'MIRepNet T2S has a dedicated paired baseline report'
                                if snapshot.get('kind') == 'mirepnet_t2s_allsets_v1' else
                                'single-seed MCC-DiffKD LOSO is summarized separately, not registered in the three-seed tuning log'
@@ -749,6 +819,35 @@ def run_worker(args):
                 register_job_log(store, args.job)
             except Exception as exc:
                 print(f'[experiment-log] registration failed; training completed: {exc}', flush=True)
+        if status == 'completed' and snapshot.get('kind') == 'e2_ifnet_distill_boost_ensemble_v1':
+            try:
+                with store.lock():
+                    siblings = []
+                    for sibling in store.states():
+                        sibling_spec = read_json(store.job_dir(sibling['id']) / 'spec.json', {})
+                        sibling_snapshot = sibling_spec.get('snapshot', {})
+                        if (sibling_snapshot.get('kind') == 'e2_ifnet_distill_boost_ensemble_v1'
+                                and sibling_snapshot.get('run_id') == snapshot['run_id']):
+                            siblings.append((sibling, sibling_snapshot))
+                    expected = sorted(int(x) for x in snapshot.get('folds', []))
+                    completed = sorted(int(item.get('fold', -1)) for state_value, item in siblings
+                                       if state_value.get('status') == 'completed')
+                    all_done = (len(siblings) == len(expected) and completed == expected
+                                and all(state_value.get('status') == 'completed'
+                                        for state_value, _ in siblings))
+                if all_done:
+                    with (folder / 'post_evaluation.log').open('a', encoding='utf-8') as stream:
+                        subprocess.run(
+                            [training_python, '-B', '-m',
+                             'experiments.distill.run_e2_ifnet_distill_boost_ensemble_loso',
+                             '--config', snapshot['config'],
+                             '--expected-config-sha256', snapshot['config_sha256'],
+                             '--run-id', snapshot['run_id'], '--evaluate'],
+                            cwd=PROJECT_ROOT, check=True, env=child_environment,
+                            stdout=stream, stderr=subprocess.STDOUT, timeout=3600)
+            except Exception as exc:
+                print(f'[e2-ensemble-evaluation] folds completed; post-training evaluation failed: {exc}',
+                      flush=True)
         return 0 if status in {'completed', 'paused'} else 1
 
 
@@ -850,6 +949,14 @@ def parse_args(argv=None):
     run.add_argument('--max-utilization', type=int, default=10)
     run.add_argument('--min-free-mb', type=int, default=2048)
     run.add_argument('--once', action='store_true', help=argparse.SUPPRESS)
+    e2_distill = subparsers.add_parser(
+        'enqueue-e2-ensemble-distill',
+        help='queue fresh C/K/D IFNet students for E2 ensemble distillation')
+    e2_distill.add_argument('--config', default=str(
+        PROJECT_ROOT / 'configs/experiments/loso/e2_ifnet_distill_boost_ensemble_v1.yaml'))
+    e2_distill.add_argument('--folds', nargs='+', type=int, default=list(range(9)))
+    e2_distill.add_argument('--run-id', default=None)
+    e2_distill.add_argument('--root', '--queue-root', default=str(DEFAULT_ROOT))
     status = subparsers.add_parser('status')
     status.add_argument('--root', '--queue-root', default=str(DEFAULT_ROOT))
     status.add_argument('--json', action='store_true')
@@ -888,6 +995,8 @@ def main(argv=None):
             return run_manager(args)
         if args.command == '_worker':
             return run_worker(args)
+        if args.command == 'enqueue-e2-ensemble-distill':
+            return enqueue_e2_ensemble_distill_args(args)
         if args.command == 'register' and args.watch:
             if args.jobs:
                 raise ValueError('register --watch scans the entire queue; omit job IDs')
