@@ -1,0 +1,84 @@
+protocol_id: E2_IFNET_DISTILL_BOOST_ENSEMBLE_LOSO_V1
+run_id: e2_ifnet_distill_boost_ensemble_v1_20261105_seed668_bundle666
+dataset: BNCI2014004
+session: session_3
+source_variant: wide_fre_band
+student_seed: 668
+teacher_bundle_seed: 666
+folds: [0, 1, 2, 3, 4, 5, 6, 7, 8]
+
+reuse:
+  # Student cache contains only D_train and D_feedback, never target inputs.
+  student_cache_root: /data1/llx/BigSmallcollab/cache/sample_utility_adaptive_weight_wideband_v1/BNCI2014004/seed_668
+  # Saved per-trial probabilities from the fixed historical B0/B1/B2 package.
+  adaboost_root: /data1/llx/BigSmallcollab/weights/adaboost_loso/adaboost_bnci2014004_seed666_v1/folds
+  student_input_root: /data1/llx/BigSmallcollab/cache/artifact-loso/model_inputs/BNCI2014004/ifnet
+  resolved_student_config: /data1/llx/BigSmallcollab/results/distill/sample_utility_adaptive_weight_wideband_v1/seed_668/resolved.yaml
+  historical_run_config: /home/lixinli/BigSmallCollab/results/loso/adaboost/adaboost_bnci2014004_seed666_v1/run_config.json
+  historical_reuse_manifest: /home/lixinli/BigSmallCollab/results/loso/adaboost/adaboost_bnci2014004_seed666_v1/reuse_manifest.json
+
+expected_hashes:
+  global_X.npy: 0d37a5dc64c8a45265281b533d39a8e5f2ebc0efb213d33d4df385b4c2a26502
+  global_y.npy: a49f07ab2f632193279e736c881889a581499bb63e53721bde4d4bfbf58beae0
+  global_subjects.npy: b914a9b2d99a07522874afdf0a1ba05273591eb102a59ceabea611fa9f9bcf7e
+  global_trials.csv: 60553eb6ca73e9df05f2987b80a5611b9f29b99465142dac8e81c27686ef6c7c
+
+expected_reference_accuracy_percent:
+  E2: 75.58
+  E4: 74.95
+
+training:
+  epochs: 100
+  batch_size: 16
+  optimizer: adamw
+  lr: 0.001
+  weight_decay: 0.01
+  betas: [0.9, 0.999]
+  eps: 1.0e-8
+  amsgrad: false
+  foreach: false
+  fused: false
+  scheduler: cosine_per_epoch
+  eta_min: 0.0
+  precision: fp32
+  gradient_accumulation: 1
+  gradient_clip: null
+  num_workers: 0
+  checkpoint_every_batches: 50
+  diagnostic_epochs: [1, 10, 50, 100]
+
+distillation:
+  conditions: [NEW_CE, B0_KD, E2_KD]
+  temperature: 1.0
+  lambda_kd: 0.5
+  soft_target: float64_member_probability_mean_then_float32
+  loss_reduction: sum_classes_mean_actual_batch
+  start_epoch: 1
+  ce_weight: 1.0
+
+ensemble:
+  final_vote: equal_mean_probability
+  members: [NEW_STUDENT, B1, B2]
+  historical_reference: E2
+  do_not_reuse_adaboost_alpha0: true
+
+evaluation:
+  primary_metric: accuracy
+  secondary_metrics: [balanced_accuracy, kappa, cross_entropy, class_recall]
+  bootstrap_draws: 10000
+  bootstrap_seed: 20261105
+  confidence_level: 0.95
+  tie_prediction: class_0
+
+execution:
+  cpu_threads: 1
+  data_loader_workers: 0
+  max_fold_workers: 9
+  require_idle_gpu: true
+  external_gpu_sharing: false
+
+artifacts:
+  cache_namespace: e2_ifnet_distill_boost_ensemble_v1
+  weights_namespace: e2_ifnet_distill_boost_ensemble_v1
+  results_namespace: e2_ifnet_distill_boost_ensemble_v1
+  report_namespace: loso/e2_ifnet_distill_boost_ensemble_v1
