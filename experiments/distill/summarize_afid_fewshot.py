@@ -35,7 +35,8 @@ def read_record(path, report_path, expected):
     if record.get('method') != expected['method'] or record.get('identity_sha256') != digest(identity):
         raise ValueError(f'{path}: invalid method or identity hash')
     train, test = record['support_trial_uids'], record['test_trial_uids']
-    if (len(train) != 2 * expected['shot'] or len(set(train)) != len(train)
+    expected_train = 43 if expected.get('protocol') == 'calibration_30pct' else 2 * expected['shot']
+    if (len(train) != expected_train or len(set(train)) != len(train)
             or len(test) != 101 or len(set(test)) != len(test) or set(train) & set(test)):
         raise ValueError(f'{path}: invalid support or test UIDs')
     if digest(train) != identity['support_uid_sha256'] or digest(test) != identity['test_uid_sha256']:
@@ -79,17 +80,19 @@ def atomic_csv(path, fields, rows):
             os.unlink(tmp)
 
 
-def collect(run_id):
+def collect(run_id, protocol='kshot'):
     root = RESULTS_ROOT / 'fewshot' / 'afid' / run_id
     reports = REPORTS_ROOT / 'fewshot' / 'afid' / run_id
     cells, splits, identities, protocols = {}, {}, {}, {}
+    shots = (None,) if protocol == 'calibration_30pct' else SHOTS
     source_identity = None
     for teacher in TEACHERS:
         for student in STUDENTS:
-            for shot in SHOTS:
+            for shot in shots:
                 for subject in SUBJECTS:
                     for seed in SEEDS:
-                        rel = Path(teacher) / student / f'shot{shot}' / f'subject{subject + 1:02d}' / f'seed{seed}'
+                        setting = 'calibration30' if protocol == 'calibration_30pct' else f'shot{shot}'
+                        rel = Path(teacher) / student / setting / f'subject{subject + 1:02d}' / f'seed{seed}'
                         for method in METHODS:
                             path = root / rel / method / 'completed.json'
                             if not path.is_file():
@@ -100,19 +103,21 @@ def collect(run_id):
                             expected = dict(dataset='BNCI2014001', teacher=teacher,
                                             student=student, shot=shot, subject=subject,
                                             seed=seed, method=method)
+                            if protocol == 'calibration_30pct':
+                                expected['protocol'] = protocol
                             record, labels = read_record(path, reports / rel / f'{method}_predictions.csv', expected)
                             identity = record['identity']
                             if source_identity is None:
                                 source_identity = identity['source_manifest_sha256']
                             elif source_identity != identity['source_manifest_sha256']:
                                 raise ValueError(f'{path}: source manifest differs within this run')
-                            protocol = {key: value for key, value in identity.items()
+                            group_identity = {key: value for key, value in identity.items()
                                         if key not in ('subject', 'seed', 'support_uid_sha256',
                                                        'test_uid_sha256', 'ea_sha256')}
                             protocol_key = (teacher, student, shot)
-                            if protocol_key in protocols and protocols[protocol_key] != protocol:
+                            if protocol_key in protocols and protocols[protocol_key] != group_identity:
                                 raise ValueError(f'{path}: configuration or code differs within this group')
-                            protocols[protocol_key] = protocol
+                            protocols[protocol_key] = group_identity
                             cell = key[:-1]
                             if cell in identities and identities[cell] != identity:
                                 raise ValueError(f'{path}: methods do not share the same identity')
@@ -124,22 +129,24 @@ def collect(run_id):
                                 raise ValueError(f'{path}: models do not share the same trial split')
                             splits[split_key] = split
                             cells[key] = record
-    for subject in SUBJECTS:
-        for seed in SEEDS:
-            available = [(shot, splits[(shot, subject, seed)]) for shot in sorted(SHOTS)
-                         if (shot, subject, seed) in splits]
-            for (_, smaller), (_, larger) in zip(available, available[1:]):
-                if (smaller[0] != larger[0] or not set(smaller[1]).issubset(larger[1])
-                        or smaller[2:] != larger[2:]):
-                    raise ValueError(f'subject {subject + 1}, seed {seed}: K-shot splits are not nested')
+    if protocol == 'kshot':
+        for subject in SUBJECTS:
+            for seed in SEEDS:
+                available = [(shot, splits[(shot, subject, seed)]) for shot in sorted(SHOTS)
+                             if (shot, subject, seed) in splits]
+                for (_, smaller), (_, larger) in zip(available, available[1:]):
+                    if (smaller[0] != larger[0] or not set(smaller[1]).issubset(larger[1])
+                            or smaller[2:] != larger[2:]):
+                        raise ValueError(f'subject {subject + 1}, seed {seed}: K-shot splits are not nested')
     return cells
 
 
-def summarize(cells, bootstrap_seed=2026, bootstrap_samples=10000):
+def summarize(cells, bootstrap_seed=2026, bootstrap_samples=10000, protocol='kshot'):
     groups, comparisons = [], []
+    shots = (None,) if protocol == 'calibration_30pct' else SHOTS
     for teacher in TEACHERS:
         for student in STUDENTS:
-            for shot in SHOTS:
+            for shot in shots:
                 values = {}
                 cell_counts = {}
                 for method in METHODS:
@@ -152,7 +159,8 @@ def summarize(cells, bootstrap_seed=2026, bootstrap_samples=10000):
                     averages = [np.mean([table[(subject, seed)]['accuracy_pct'] for subject in SUBJECTS])
                                 for seed in SEEDS] if complete else []
                     groups.append(dict(dataset='BNCI2014001', teacher=teacher, student=student,
-                                       shot=shot, method=method, completed_cells=len(table),
+                                       protocol=protocol, shot=shot, n_train=43 if shot is None else 2 * shot,
+                                       method=method, completed_cells=len(table),
                                        expected_cells=27, complete=complete,
                                        seed_666=averages[0] if complete else '',
                                        seed_667=averages[1] if complete else '',
@@ -163,7 +171,8 @@ def summarize(cells, bootstrap_seed=2026, bootstrap_samples=10000):
                                               for subject in SUBJECTS]) for seed in SEEDS]
                                     if teacher_table is not None else [])
                 groups.append(dict(dataset='BNCI2014001', teacher=teacher, student=student,
-                                   shot=shot, method='teacher',
+                                   protocol=protocol, shot=shot, n_train=43 if shot is None else 2 * shot,
+                                   method='teacher',
                                    completed_cells=cell_counts['afid'],
                                    expected_cells=27, complete=bool(teacher_averages),
                                    seed_666=teacher_averages[0] if teacher_averages else '',
@@ -185,7 +194,8 @@ def summarize(cells, bootstrap_seed=2026, bootstrap_samples=10000):
                     samples = rng.choice(diffs, size=(bootstrap_samples, len(SUBJECTS)), replace=True).mean(axis=1)
                     lower, upper = np.percentile(samples, [2.5, 97.5])
                     comparisons.append(dict(dataset='BNCI2014001', teacher=teacher, student=student,
-                                            shot=shot, method='afid', reference=reference,
+                                            protocol=protocol, shot=shot, n_train=43 if shot is None else 2 * shot,
+                                            method='afid', reference=reference,
                                             mean_delta_pp=float(diffs.mean()), ci95_lower_pp=float(lower),
                                             ci95_upper_pp=float(upper), n_subjects=len(SUBJECTS),
                                             bootstrap_samples=bootstrap_samples, bootstrap_seed=comparison_seed))
@@ -195,13 +205,14 @@ def summarize(cells, bootstrap_seed=2026, bootstrap_samples=10000):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--run-id', required=True)
+    parser.add_argument('--protocol', choices=('kshot', 'calibration_30pct'), default='kshot')
     args = parser.parse_args()
     if Path(args.run_id).name != args.run_id or args.run_id in ('', '.', '..'):
         raise ValueError('run ID must be a single directory name')
-    groups, comparisons = summarize(collect(args.run_id))
+    groups, comparisons = summarize(collect(args.run_id, protocol=args.protocol), protocol=args.protocol)
     output = REPORTS_ROOT / 'fewshot' / 'afid' / args.run_id
     atomic_csv(output / 'group_summary.csv', list(groups[0]), groups)
-    fields = ['dataset', 'teacher', 'student', 'shot', 'method', 'reference', 'mean_delta_pp',
+    fields = ['dataset', 'teacher', 'student', 'protocol', 'shot', 'n_train', 'method', 'reference', 'mean_delta_pp',
               'ci95_lower_pp', 'ci95_upper_pp', 'n_subjects', 'bootstrap_samples', 'bootstrap_seed']
     atomic_csv(output / 'paired_comparisons.csv', fields, comparisons)
     print(f'Complete groups: {sum(row["complete"] for row in groups)}/{len(groups)}')
