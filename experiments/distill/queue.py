@@ -623,6 +623,12 @@ def run_worker(args):
                        '--folds', *[str(fold) for fold in snapshot['folds']]]
             if snapshot.get('stage') == 'smoke':
                 command.append('--smoke')
+        elif snapshot.get('kind') == 'afid_fewshot':
+            command = [training_python, '-B', '-m',
+                       'experiments.distill.afid_queue', 'worker',
+                       '--snapshot', str(folder / 'spec.json'),
+                       '--progress', str(folder / 'progress.json'),
+                       '--stop-file', str(folder / 'stop')]
         else:
             command = [training_python, '-B', '-m',
                        'experiments.distill.run_distill', '--snapshot', str(folder / 'spec.json'),
@@ -631,7 +637,7 @@ def run_worker(args):
                        '--gpu', '0', '--stop-file', str(folder / 'stop'), '--resume']
         child_environment = os.environ.copy()
         if snapshot.get('kind') in {
-                'cbramod_channel_feature_alignment', 'student_aware_diffusion_prior_v1',
+                'afid_fewshot', 'cbramod_channel_feature_alignment', 'student_aware_diffusion_prior_v1',
                 'mcc_diffkd_loso_v1', 'mcc_diffkd_cbramod_loso_v1',
                 'cbramod_meanpool_mcc_diffkd_loso_v1',
                 'cbramod_t2s_full_feature_loso_v1', 'mirepnet_t2s_allsets_v1',
@@ -694,6 +700,10 @@ def run_worker(args):
             state = store.load(args.job)
             state.update(status=status, message=message, returncode=returncode,
                          child=None, worker=None, launcher=None)
+            if status == 'completed' and snapshot.get('kind') == 'afid_fewshot':
+                state['log_registration'] = {
+                    'status': 'skipped',
+                    'reason': 'AFID few-shot has a dedicated report'}
             if status == 'completed' and snapshot.get('kind') in {
                     'cbramod_channel_feature_alignment', 'student_aware_diffusion_prior_v1',
                     'mcc_diffkd_loso_v1', 'mcc_diffkd_cbramod_loso_v1',
@@ -718,8 +728,14 @@ def run_worker(args):
                                if snapshot.get('kind') == 'student_aware_diffusion_prior_v1' else
                                'CBraMod channel-feature results are not tuning-log entries')}
             store.save(state)
+        if status == 'completed' and snapshot.get('kind') == 'afid_fewshot':
+            try:
+                from experiments.distill.afid_queue import enqueue_next_stage
+                enqueue_next_stage(store.root, snapshot)
+            except Exception as exc:
+                print(f'[afid] automatic stage transition failed: {exc}', flush=True)
         if (status == 'completed' and snapshot.get('kind') not in {
-                'cbramod_channel_feature_alignment', 'student_aware_diffusion_prior_v1',
+                'afid_fewshot', 'cbramod_channel_feature_alignment', 'student_aware_diffusion_prior_v1',
                 'mcc_diffkd_loso_v1', 'mcc_diffkd_cbramod_loso_v1',
                 'cbramod_meanpool_mcc_diffkd_loso_v1',
                 'cbramod_t2s_full_feature_loso_v1', 'mirepnet_t2s_allsets_v1',
