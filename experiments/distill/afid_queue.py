@@ -16,6 +16,8 @@ TEACHERS = ('mirepnet', 'cbramod')
 STUDENTS = ('ifnet', 'eegnet', 'adfcnn')
 METHODS = ('none', 'kd', 'dml', 'afid_self_gate', 'afid')
 SEEDS = (666, 667, 668)
+CALIBRATION = 'calibration_30pct'
+KSHOT = 'kshot'
 CODE_FILES = (
     'experiments/distill/run_afid_fewshot.py', 'collab/afid_fewshot.py',
     'experiments/distill/afid_queue.py', 'experiments/distill/summarize_afid_fewshot.py',
@@ -41,33 +43,46 @@ def hashes():
     return {name: hashlib.sha256(path.read_bytes()).hexdigest() for name, path in files}
 
 
-def cells(stage):
+def cells(stage, protocol=CALIBRATION):
+    if protocol == CALIBRATION:
+        if stage == 'smoke':
+            return [(teacher, 'ifnet', 0, 666, None) for teacher in TEACHERS]
+        if stage == 'full30':
+            return [(teacher, student, subject, seed, None)
+                    for teacher in TEACHERS for student in STUDENTS
+                    for seed in SEEDS for subject in range(9)]
+        raise ValueError(f'unknown 30/70 stage: {stage}')
+    if protocol != KSHOT:
+        raise ValueError(f'unknown AFID protocol: {protocol}')
     if stage == 'smoke':
         return [(teacher, 'ifnet', 0, 666, 10) for teacher in TEACHERS]
+    if stage not in ('shot10', 'other_shots'):
+        raise ValueError(f'unknown K-shot stage: {stage}')
     shots = (10,) if stage == 'shot10' else (5, 20)
     return [(teacher, student, subject, seed, shot)
             for shot in shots for teacher in TEACHERS for student in STUDENTS
             for seed in SEEDS for subject in range(9)]
 
 
-def enqueue_stage(root, campaign, stage, code_hashes):
-    if stage not in ('smoke', 'shot10', 'other_shots'):
-        raise ValueError(f'unknown stage: {stage}')
+def enqueue_stage(root, campaign, stage, code_hashes, protocol=CALIBRATION):
     if hashes() != code_hashes:
         raise ValueError('AFID code changed since campaign submission')
-    for teacher, student, subject, seed, shot in cells(stage):
+    for teacher, student, subject, seed, shot in cells(stage, protocol):
         snapshot = dict(kind='afid_fewshot', campaign=campaign, stage=stage,
+                        protocol=protocol,
                         teacher=teacher, student=student, subject=subject,
                         seed=seed, shot=shot, code_hashes=code_hashes,
                         args=dict(teacher=teacher, student=student, subject=subject,
                                   seed=seed, shot=shot))
+        setting = '30/70' if protocol == CALIBRATION else f'K{shot}'
         enqueue_snapshot(snapshot, root=root,
-                         label=f'AFID {stage} {teacher}/{student} S{subject+1:02d} seed{seed} K{shot}')
+                         label=f'AFID {stage} {teacher}/{student} S{subject+1:02d} seed{seed} {setting}')
 
 
 def enqueue_next_stage(root, completed):
     stage = completed['stage']
-    if stage not in ('smoke', 'shot10', 'other_shots'):
+    protocol = completed.get('protocol', KSHOT)
+    if stage not in ('smoke', 'full30', 'shot10', 'other_shots'):
         return
     store = QueueStore(root)
     marker = Path(root) / f"afid_{completed['campaign']}_{stage}.json"
@@ -82,10 +97,11 @@ def enqueue_next_stage(root, completed):
                 if (snap.get('kind') == 'afid_fewshot'
                         and snap.get('campaign') == completed['campaign']
                         and snap.get('stage') == stage
+                        and snap.get('protocol', KSHOT) == protocol
                         and snap.get('code_hashes') == completed['code_hashes']):
                     key = (snap['teacher'], snap['student'], snap['subject'], snap['seed'], snap['shot'])
                     matching[key] = state['status']
-            if set(matching) != set(cells(stage)) or any(v != 'completed' for v in matching.values()):
+            if set(matching) != set(cells(stage, protocol)) or any(v != 'completed' for v in matching.values()):
                 return
         if hashes() != completed['code_hashes']:
             raise ValueError('AFID code or input identity changed before stage transition')
@@ -94,16 +110,21 @@ def enqueue_next_stage(root, completed):
             for name in ('OMP_NUM_THREADS', 'MKL_NUM_THREADS', 'OPENBLAS_NUM_THREADS',
                          'NUMEXPR_NUM_THREADS', 'BLIS_NUM_THREADS', 'VECLIB_MAXIMUM_THREADS'):
                 env[name] = '1'
-            subprocess.run([sys.executable, '-B', '-m', 'experiments.distill.summarize_afid_fewshot',
-                            '--run-id', completed['campaign']], cwd=PROJECT_ROOT, env=env, check=True)
-        if stage != 'other_shots':
-            enqueue_stage(root, completed['campaign'],
-                          'shot10' if stage == 'smoke' else 'other_shots', completed['code_hashes'])
+            command = [sys.executable, '-B', '-m', 'experiments.distill.summarize_afid_fewshot',
+                       '--run-id', completed['campaign']]
+            if protocol == CALIBRATION:
+                command.extend(['--protocol', CALIBRATION])
+            subprocess.run(command, cwd=PROJECT_ROOT, env=env, check=True)
+        next_stage = ('full30' if protocol == CALIBRATION else 'shot10') if stage == 'smoke' else (
+            'other_shots' if stage == 'shot10' else None)
+        if next_stage is not None:
+            enqueue_stage(root, completed['campaign'], next_stage, completed['code_hashes'], protocol)
         atomic_json(marker, {'campaign': completed['campaign'], 'stage': stage, 'status': 'completed'})
 
 
 def worker(snapshot_path, progress, stop_file):
     snapshot = json.loads(Path(snapshot_path).read_text(encoding='utf-8'))['snapshot']
+    protocol = snapshot.get('protocol', KSHOT)
     if hashes() != snapshot['code_hashes']:
         raise ValueError('AFID code changed after queue submission')
     if Path(stop_file).exists():
@@ -113,7 +134,15 @@ def worker(snapshot_path, progress, stop_file):
     command = [sys.executable, '-B', '-m', 'experiments.distill.run_afid_fewshot',
                '--run-id', run_id, '--teacher', snapshot['teacher'],
                '--student', snapshot['student'], '--subject', str(snapshot['subject']),
-               '--seed', str(snapshot['seed']), '--shots', str(snapshot['shot']), '--gpu', '0']
+               '--seed', str(snapshot['seed']), '--gpu', '0']
+    if protocol == CALIBRATION:
+        command.extend(['--protocol', CALIBRATION])
+        setting_dir = 'calibration30'
+    elif protocol == KSHOT:
+        command.extend(['--shots', str(snapshot['shot'])])
+        setting_dir = f"shot{snapshot['shot']}"
+    else:
+        raise ValueError(f'unknown AFID protocol: {protocol}')
     if snapshot['stage'] == 'smoke':
         command += ['--epochs', '6', '--teacher-epochs', '1', '--smoke']
     atomic_json(progress, {'status': 'running', 'completed': 0, 'total': len(METHODS)})
@@ -121,12 +150,15 @@ def worker(snapshot_path, progress, stop_file):
     if result.returncode:
         return result.returncode
     root = (RESULTS_ROOT / 'fewshot/afid' / run_id / snapshot['teacher'] / snapshot['student'] /
-            f"shot{snapshot['shot']}" / f"subject{snapshot['subject'] + 1:02d}" /
+            setting_dir / f"subject{snapshot['subject'] + 1:02d}" /
             f"seed{snapshot['seed']}")
     for method in METHODS:
         item = read_json(root / method / 'completed.json')
         if item is None or item.get('method') != method or int(item.get('n_test', 0)) != 101:
             raise RuntimeError(f'incomplete or invalid result {root / method}')
+        if protocol == CALIBRATION and (item.get('identity', {}).get('protocol') != CALIBRATION
+                                        or len(item.get('support_trial_uids', [])) != 43):
+            raise RuntimeError(f'invalid 30/70 calibration result {root / method}')
         if not Path(item['predictions_path']).is_file():
             raise RuntimeError(f'missing prediction file for {method}')
     atomic_json(progress, {'status': 'completed', 'completed': len(METHODS), 'total': len(METHODS)})
@@ -138,10 +170,11 @@ def main():
     sub = parser.add_subparsers(dest='command', required=True)
     submit = sub.add_parser('submit')
     submit.add_argument('--campaign', required=True)
+    submit.add_argument('--protocol', choices=(CALIBRATION, KSHOT), default=CALIBRATION)
     submit.add_argument('--root', default=str(DEFAULT_ROOT))
     advance = sub.add_parser('advance', help='retry a completed stage transition')
     advance.add_argument('--campaign', required=True)
-    advance.add_argument('--stage', choices=('smoke', 'shot10', 'other_shots'), required=True)
+    advance.add_argument('--stage', choices=('smoke', 'full30', 'shot10', 'other_shots'), required=True)
     advance.add_argument('--root', default=str(DEFAULT_ROOT))
     run = sub.add_parser('worker')
     run.add_argument('--snapshot', required=True)
@@ -151,7 +184,7 @@ def main():
     if args.command == 'submit':
         if not args.campaign or Path(args.campaign).name != args.campaign:
             parser.error('campaign must be a single path component')
-        enqueue_stage(Path(args.root), args.campaign, 'smoke', hashes())
+        enqueue_stage(Path(args.root), args.campaign, 'smoke', hashes(), args.protocol)
         return 0
     if args.command == 'advance':
         store = QueueStore(Path(args.root))

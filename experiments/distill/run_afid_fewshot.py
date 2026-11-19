@@ -136,7 +136,12 @@ def run(args):
     device = torch.device('cpu' if args.gpu is None else f'cuda:{args.gpu}')
     source = loso_source.load_dataset(DATASET, model=None)
     raw = fewshot._split_subject(source, DATASET, args.subject, args.seed, .3, .7)
-    indices = select_support(raw, args.shots, args.seed)
+    if args.protocol == 'calibration_30pct':
+        indices = np.arange(len(raw['y_cal']), dtype=np.int64)
+        if len(indices) != 43 or len(raw['y_test']) != 101:
+            raise ValueError('BNCI2014001 30/70 split must contain 43 training and 101 test trials')
+    else:
+        indices = select_support(raw, args.shots, args.seed)
     train_uids = raw['trial_uid_cal'][indices].tolist()
     test_uids = raw['trial_uid_test'].tolist()
     if len(set(train_uids)) != len(train_uids) or set(train_uids) & set(test_uids):
@@ -167,11 +172,16 @@ def run(args):
                     ea_sha256=ea_hash, temperature=2.0, lambda_kd=.5,
                     batch_size=min(16, len(y)), teacher_config=copy.deepcopy(tc),
                     student_config=copy.deepcopy(sc))
+    if args.protocol == 'calibration_30pct':
+        identity['protocol'] = args.protocol
+        identity['calibration_fraction'] = 0.30
+        identity['test_fraction'] = 0.70
     cell_id = digest(identity)
+    setting = 'calibration30' if args.protocol == 'calibration_30pct' else f'shot{args.shots}'
     root = require_external_output(RESULTS_ROOT / 'fewshot/afid' / args.run_id /
-                                   args.teacher / args.student / f'shot{args.shots}' /
+                                   args.teacher / args.student / setting /
                                    f'subject{args.subject + 1:02d}' / f'seed{args.seed}')
-    report_root = REPORTS_ROOT / 'fewshot/afid' / args.run_id / args.teacher / args.student / f'shot{args.shots}' / f'subject{args.subject + 1:02d}' / f'seed{args.seed}'
+    report_root = REPORTS_ROOT / 'fewshot/afid' / args.run_id / args.teacher / args.student / setting / f'subject{args.subject + 1:02d}' / f'seed{args.seed}'
     pending = []
     for method in args.methods:
         record = root / method / 'completed.json'
@@ -308,7 +318,8 @@ def main():
     parser.add_argument('--subject', type=int, choices=range(9), required=True,
                         help='zero-based subject ID')
     parser.add_argument('--seed', type=int, choices=(666, 667, 668), required=True)
-    parser.add_argument('--shots', type=int, choices=(5, 10, 20), required=True)
+    parser.add_argument('--protocol', choices=('kshot', 'calibration_30pct'), default='kshot')
+    parser.add_argument('--shots', type=int, choices=(5, 10, 20))
     parser.add_argument('--methods', nargs='+', choices=METHODS, default=list(METHODS))
     parser.add_argument('--gpu', type=int)
     parser.add_argument('--epochs', type=int, default=100)
@@ -316,6 +327,10 @@ def main():
     parser.add_argument('--smoke', action='store_true')
     parser.add_argument('--run-id', required=True)
     args = parser.parse_args()
+    if args.protocol == 'kshot' and args.shots is None:
+        parser.error('--shots is required for the kshot protocol')
+    if args.protocol == 'calibration_30pct' and args.shots is not None:
+        parser.error('--shots is unavailable for the calibration_30pct protocol')
     if args.epochs < 1 or (args.teacher_epochs is not None and args.teacher_epochs < 1):
         parser.error('epoch counts must be positive')
     if not args.run_id or Path(args.run_id).name != args.run_id:
