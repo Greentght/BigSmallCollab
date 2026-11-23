@@ -2,6 +2,11 @@
 
 ## Data and model storage
 
+- For all future experiments, use broadband source data. For BNCI2014001,
+  BNCI2014004 and BNCI2015001, use `/data1/llx/<dataset-name>/wide_fre_band/`;
+  BNCI2014001-4 shares the BNCI2014001 source. If another dataset has no verified
+  broadband source, establish one before running the experiment and record its
+  source and preprocessing. Preserve existing data and historical results.
 - User requirement: never save datasets, raw EEG downloads, preprocessing caches,
   teacher targets, model weights, or training checkpoints inside this checkout.
 - Shared datasets belong in `/data1/llx/<dataset-name>/` and must be reusable
