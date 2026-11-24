@@ -38,9 +38,9 @@ def write_reports(root, cfg):
         if (identity['pair'], identity['condition'], identity['seed'], identity['subject']) != (pair, condition, seed, subject):
             raise RuntimeError(f'Result identity mismatch: {path}')
         rows.append([pair, condition, seed, subject, result['big_accuracy'], result['small_accuracy'], str(path)])
-    folder = require_report_output(ROOT / 'results/dcm_fewshot_0014_v1')
-    folder.mkdir(parents=True, exist_ok=True)
+    folder = ROOT / 'results/dcm_fewshot_0014_v1'
     target = require_report_output(folder / 'subject_accuracy.csv')
+    folder.mkdir(parents=True, exist_ok=True)
     temporary = target.with_suffix('.tmp')
     with temporary.open('w', newline='') as stream:
         writer = csv.writer(stream)
