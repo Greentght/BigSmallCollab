@@ -30,6 +30,20 @@ def gpu_counts():
     return counts
 
 
+def job_is_running(folder):
+    """Avoid dispatching a unit already held by a surviving worker."""
+    lock_path = folder / 'run.lock'
+    if not lock_path.exists():
+        return False
+    with lock_path.open('a') as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return True
+        fcntl.flock(lock, fcntl.LOCK_UN)
+    return False
+
+
 def write_report(root, cfg):
     rows = []
     for pair, condition, seed, fold in itertools.product(cfg['pairs'], cfg['conditions'], cfg['seeds'], cfg['folds']):
@@ -113,7 +127,11 @@ def main():
                     break
                 if count >= 3 or gpu in workers:
                     continue
-                job = pending.pop(0)
+                available = next((index for index, candidate in enumerate(pending)
+                                  if not job_is_running(candidate[-1])), None)
+                if available is None:
+                    break
+                job = pending.pop(available)
                 fold, seed, condition, pair, folder = job
                 folder.mkdir(parents=True, exist_ok=True)
                 log = (folder / 'worker.log').open('a')
