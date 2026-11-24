@@ -18,6 +18,7 @@ head don't apply to a fresh fine-tune head).
 """
 import numpy as np
 import torch
+from torch import nn
 from scipy.signal import resample as scipy_resample
 
 import config
@@ -40,6 +41,8 @@ class LaBraMAdapter(ModelAdapter):
             'BNCI2014001': cl.BNCI2014001_chn_names,
             'BNCI2014001-4': cl.BNCI2014001_chn_names,
             'BNCI2014004': cl.BNCI2014004_chn_names,
+            'BNCI2015001': cl.BNCI2015001_chn_names,
+            'AlexMI': cl.AlexMI_chn_names,
         }
         return table[self.cfg['dataset_name']]
 
@@ -65,7 +68,8 @@ class LaBraMAdapter(ModelAdapter):
         model = labram_base_patch200_200(
             num_classes=num_classes, drop_path_rate=0.1, use_mean_pooling=True,
             init_values=0.1, qkv_bias=True, use_abs_pos_emb=True,
-            use_rel_pos_bias=False)
+            # Benchmark sets this flag, although its blocks use window_size=None.
+            use_rel_pos_bias=True)
 
         pretrain = self.cfg.get('pretrain') or config.weight_path('labram')
         ckpt = torch.load(pretrain, map_location='cpu')
@@ -79,10 +83,23 @@ class LaBraMAdapter(ModelAdapter):
         missing, unexpected = model.load_state_dict(sd, strict=False)
         print(f'[labram] loaded {len(sd)} tensors; '
               f'{len(missing)} missing, {len(unexpected)} unexpected')
+        readout = self.cfg.get('readout', 'pooling')
+        if readout == 'flatten':
+            patches = int(self.cfg.get('patch_num', 4))
+            features = (1 + len(self.input_chans[1:]) * patches) * model.embed_dim
+            model.benchmark_flatten_readout = True
+            model.head = nn.Sequential(nn.Flatten(start_dim=1),
+                                       nn.Dropout(float(self.cfg.get('dropout_rate', 0.5))),
+                                       nn.Linear(features, num_classes))
+        elif readout != 'pooling':
+            raise ValueError(f'unsupported LaBraM readout: {readout}')
         return model.to(self.device)
 
     def forward(self, model, x):
-        feat = model.forward_features(x, input_chans=self.input_chans)
+        feat = model.forward_features(x, input_chans=self.input_chans,
+                                      return_all_tokens=self.cfg.get('readout', 'pooling') == 'flatten')
+        if self.cfg.get('readout', 'pooling') == 'flatten':
+            feat = feat.flatten(1)
         logits = model.head(feat)
         return feat, logits
 
