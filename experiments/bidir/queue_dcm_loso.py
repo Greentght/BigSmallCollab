@@ -1,4 +1,4 @@
-"""Run the DCM matrix while allowing at most one queue worker per GPU."""
+"""Run DCM units subject to GPU process and CPU worker limits."""
 import csv
 import fcntl
 import hashlib
@@ -18,16 +18,28 @@ ROOT = Path(__file__).resolve().parents[2]
 CONFIG = ROOT / 'configs/experiments/loso/dcm.yaml'
 
 
-def gpu_counts():
+def gpu_processes():
     gpu_output = subprocess.check_output(
         ['nvidia-smi', '--query-gpu=index,uuid', '--format=csv,noheader'], text=True)
     app_output = subprocess.check_output(
         ['nvidia-smi', '--query-compute-apps=gpu_uuid,pid', '--format=csv,noheader'], text=True)
-    counts = {}
+    processes = {}
     for line in gpu_output.splitlines():
         index, uuid = [value.strip() for value in line.split(',')]
-        counts[int(index)] = sum(row.split(',')[0].strip() == uuid for row in app_output.splitlines())
-    return counts
+        processes[int(index)] = {int(parts[1].strip()) for row in app_output.splitlines()
+                                 if (parts := row.split(','))[0].strip() == uuid}
+    return processes
+
+
+def dcm_processes():
+    """Include surviving workers that have not yet registered with CUDA."""
+    output = subprocess.check_output(['ps', '-eo', 'pid,args'], text=True)
+    processes = {}
+    for line in output.splitlines():
+        parts = line.split()
+        if 'experiments.bidir.run_dcm_loso' in parts and '--gpu' in parts:
+            processes[int(parts[0])] = int(parts[parts.index('--gpu') + 1])
+    return processes
 
 
 def job_is_running(folder):
@@ -92,6 +104,9 @@ def main():
         for fold, seed, condition, pair in jobs:
             folder = root / 'runs' / pair / condition / f'fold_{fold}' / f'seed_{seed}'
             pending.append((fold, seed, condition, pair, folder))
+        # Resume outstanding work first; completed units are still revalidated
+        # by the normal runner before the final report is written.
+        pending.sort(key=lambda job: (job[-1] / 'evaluation.json').exists())
         workers = {}
         failure = None
         tracked = [CONFIG, ROOT / 'experiments/bidir/run_dcm_loso.py', ROOT / 'collab/dcm.py',
@@ -108,11 +123,11 @@ def main():
             return {str(path): hashlib.sha256(path.read_bytes()).hexdigest() for path in tracked}
         original = fingerprint()
         while pending or workers:
-            for gpu, (process, job, log) in list(workers.items()):
+            for pid, (gpu, process, job, log) in list(workers.items()):
                 code = process.poll()
                 if code is not None:
                     log.close()
-                    del workers[gpu]
+                    del workers[pid]
                     if code:
                         failure = f'Worker failed with exit {code}: {job}; see {job[-1] / "worker.log"}'
                         print(failure, flush=True)
@@ -122,25 +137,28 @@ def main():
                 failure = 'Experiment source or configuration changed while queue was running'
             if failure:
                 pending.clear()
-            for gpu, count in (gpu_counts().items() if not failure else []):
-                if not pending:
-                    break
-                if count >= 3 or gpu in workers:
-                    continue
-                available = next((index for index, candidate in enumerate(pending)
-                                  if not job_is_running(candidate[-1])), None)
-                if available is None:
-                    break
-                job = pending.pop(available)
-                fold, seed, condition, pair, folder = job
-                folder.mkdir(parents=True, exist_ok=True)
-                log = (folder / 'worker.log').open('a')
-                command = [sys.executable, '-u', '-B', '-m', 'experiments.bidir.run_dcm_loso',
-                           '--pair', pair, '--condition', condition, '--fold', str(fold),
-                           '--seed', str(seed), '--gpu', str(gpu)]
-                process = subprocess.Popen(command, cwd=ROOT, stdout=log, stderr=subprocess.STDOUT)
-                workers[gpu] = (process, job, log)
-                print(f'started {job[:4]} on GPU {gpu}, pid={process.pid}', flush=True)
+            devices = gpu_processes() if not failure else {}
+            running = dcm_processes() if not failure else {}
+            for gpu, registered in devices.items():
+                reserved = sum(assigned == gpu and pid not in registered for pid, assigned in running.items())
+                slots = max(0, 3 - len(registered) - reserved)
+                while pending and slots and len(running) < 6:
+                    available = next((index for index, candidate in enumerate(pending)
+                                      if not job_is_running(candidate[-1])), None)
+                    if available is None:
+                        break
+                    job = pending.pop(available)
+                    fold, seed, condition, pair, folder = job
+                    folder.mkdir(parents=True, exist_ok=True)
+                    log = (folder / 'worker.log').open('a')
+                    command = [sys.executable, '-u', '-B', '-m', 'experiments.bidir.run_dcm_loso',
+                               '--pair', pair, '--condition', condition, '--fold', str(fold),
+                               '--seed', str(seed), '--gpu', str(gpu)]
+                    process = subprocess.Popen(command, cwd=ROOT, stdout=log, stderr=subprocess.STDOUT)
+                    workers[process.pid] = (gpu, process, job, log)
+                    running[process.pid] = gpu
+                    slots -= 1
+                    print(f'started {job[:4]} on GPU {gpu}, pid={process.pid}', flush=True)
             if pending or workers:
                 time.sleep(30)
         if failure:
