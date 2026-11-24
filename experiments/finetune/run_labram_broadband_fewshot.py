@@ -2,7 +2,7 @@
 
 Each process trains one subject/seed cell. The split matches the framework's
 subject-wise 30% calibration / 70% test protocol. The optimization settings
-adapt the historical native LaBraM recipe to this fixed-final-epoch protocol.
+match EEG-FM-Benchmark defaults while retaining fixed-final-epoch evaluation.
 """
 from __future__ import annotations
 
@@ -41,7 +41,6 @@ from experiments.distill.run_fewshot_structure_kd import _split_subject
 from experiments.finetune.labram_alexmi_broadband import load_alexmi_broadband
 from experiments.storage import REPORTS_ROOT, RESULTS_ROOT, require_external_output, require_report_output
 from models.labram.adapter import LaBraMAdapter
-from models.labram.optim_factory import LayerDecayValueAssigner, get_parameter_groups
 
 DATASETS = ('BNCI2014001', 'BNCI2014001-4', 'BNCI2014004', 'BNCI2015001', 'AlexMI')
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -106,30 +105,21 @@ def write_predictions(path, trial_uids, labels, predictions):
 
 
 def build_optimizer(model, learning_rate, weight_decay, layer_decay):
-    layers = model.get_num_layers()
-    assigner = LayerDecayValueAssigner(
-        [layer_decay ** (layers + 1 - index) for index in range(layers + 2)])
-    skip = model.no_weight_decay() if hasattr(model, 'no_weight_decay') else set()
-    groups = get_parameter_groups(model, weight_decay, skip,
-                                  assigner.get_layer_id, assigner.get_scale)
-    for group in groups:
-        group['lr'] = learning_rate * group.get('lr_scale', 1.0)
-    return torch.optim.AdamW(groups, lr=learning_rate, eps=1e-8)
+    if layer_decay != 1.0:
+        raise ValueError('benchmark default requires layer_decay=1.0')
+    # Benchmark's filter_bias_and_bn=False applies weight decay to all params.
+    return torch.optim.AdamW(model.parameters(), lr=learning_rate,
+                             weight_decay=weight_decay, eps=1e-8)
 
 
-def scheduler_for(optimizer, epochs, warmup, learning_rate, min_lr):
+def scheduler_for(epochs, warmup, learning_rate, min_lr, steps_per_epoch):
     warmup = min(warmup, epochs)
-    min_factor = min_lr / learning_rate
-
-    def factor(epoch_index):
-        step = epoch_index + 1
-        if warmup and step <= warmup:
-            return max(step / warmup, min_factor)
-        progress = (step - warmup) / max(1, epochs - warmup)
-        cosine = .5 * (1 + math.cos(math.pi * min(progress, 1.0)))
-        return min_factor + (1 - min_factor) * cosine
-
-    return torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=factor)
+    warmup_steps = warmup * steps_per_epoch
+    warmup_values = np.linspace(0., learning_rate, warmup_steps)
+    remaining = epochs * steps_per_epoch - warmup_steps
+    cosine = [min_lr + .5 * (learning_rate - min_lr) *
+              (1 + math.cos(math.pi * i / remaining)) for i in range(remaining)]
+    return np.concatenate((warmup_values, cosine))
 
 
 def preprocess(adapter, raw, dataset):
@@ -185,9 +175,13 @@ def run(args):
     training = {'epochs': epochs, 'optimizer': 'AdamW', 'lr': float(model_cfg['lr']),
                 'batch_size': int(model_cfg['batch_size']),
                 'weight_decay': float(model_cfg['weight_decay']), 'optimizer_eps': 1e-8,
-                'layer_decay': .9, 'label_smoothing': .1, 'drop_path': .1,
-                'warmup_epochs': min(5, epochs), 'min_lr': 1e-6,
-                'scheduler': 'warmup_cosine_epoch', 'gradient_clip_norm': 3.,
+                'layer_decay': float(model_cfg['layer_decay']),
+                'label_smoothing': float(model_cfg['label_smoothing']), 'drop_path': .1,
+                'readout': model_cfg['readout'], 'dropout_rate': float(model_cfg['dropout_rate']),
+                'warmup_epochs': min(int(model_cfg['warmup_epochs']), epochs),
+                'min_lr': float(model_cfg['min_lr']),
+                'scheduler': 'benchmark_warmup_cosine_updated_after_epoch',
+                'gradient_clip_norm': None,
                 'evaluation': 'fixed_final_epoch', 'dataloader_workers': 0,
                 'torch_intraop_threads': 1, 'torch_interop_threads': 1}
     preprocessing = {'source_variant': source.identity.get('source_variant'),
@@ -229,7 +223,8 @@ def run(args):
             return
         adapter_cfg = dict(model_cfg, dataset_name=args.dataset,
                            in_channels=int(raw['x_cal_raw'].shape[1]),
-                           samples=1536 if args.dataset == 'AlexMI' else 1000)
+                           samples=1536 if args.dataset == 'AlexMI' else 1000,
+                           patch_num=3 if args.dataset == 'AlexMI' else 4)
         adapter = BroadbandLaBraMAdapter(device=str(device), **adapter_cfg)
         x_train = preprocess(adapter, raw['x_cal_raw'], args.dataset)
         x_test = preprocess(adapter, raw['x_test_raw'], args.dataset)
@@ -241,11 +236,13 @@ def run(args):
         if inventory['loaded_count'] == 0:
             raise ValueError('no pretrained tensors were loaded')
         optimizer = build_optimizer(model, training['lr'], training['weight_decay'], training['layer_decay'])
-        scheduler = scheduler_for(optimizer, epochs, training['warmup_epochs'], training['lr'], training['min_lr'])
         loss_fn = torch.nn.CrossEntropyLoss(label_smoothing=training['label_smoothing'])
         generator = torch.Generator().manual_seed(args.seed)
         loader = DataLoader(TensorDataset(x_train, y_train), batch_size=training['batch_size'],
                             shuffle=True, num_workers=0, generator=generator)
+        schedule = scheduler_for(epochs, training['warmup_epochs'], training['lr'],
+                                 training['min_lr'], len(loader))
+        global_step = 0
         for epoch in range(epochs):
             model.train()
             for xb, yb in loader:
@@ -253,9 +250,11 @@ def run(args):
                 optimizer.zero_grad(set_to_none=True)
                 loss = loss_fn(adapter.forward(model, xb)[1], yb)
                 loss.backward()
-                torch.nn.utils.clip_grad_norm_(model.parameters(), training['gradient_clip_norm'])
                 optimizer.step()
-            scheduler.step()
+                global_step += 1
+            # Benchmark initializes AdamW at base LR, then updates after each epoch.
+            for group in optimizer.param_groups:
+                group['lr'] = float(schedule[min(global_step, len(schedule) - 1)])
             print(f'[train] {args.dataset} S{args.subject + 1:02d} seed={args.seed} '
                   f'epoch={epoch + 1}/{epochs} loss={float(loss):.6f}', flush=True)
         model.eval()

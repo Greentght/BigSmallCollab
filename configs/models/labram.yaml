@@ -1,80 +1,26 @@
-# LaBraM foundation model; 250->200Hz, (ch,4,200) patches. Env: labram.
+# LaBraM Base with EEG-FM-Benchmark default fine-tuning settings.
+# The framework keeps its broadband sources and dataset-specific split protocol.
 env: labram
 size: big
 
-# Model-specific finetune hyperparameters.
-# Merge order: defaults < dataset < protocol. Data splits/seeds stay in configs/datasets/.
 finetune:
   defaults:
-    epochs: 50
-    lr: 0.0005
-    batch_size: 32
-    weight_decay: 0.05
+    epochs: 20
+    lr: 0.001
+    batch_size: 16
+    weight_decay: 0.01
     scale: 100
-  BNCI2014001:
-    fewshot:
-      epochs: 50
-      lr: 0.0005
-      batch_size: 32
-      weight_decay: 0.05
-      scale: 100
-    loso:
-      epochs: 50
-      lr: 0.0005
-      batch_size: 32
-      weight_decay: 0.05
-      scale: 100
-  BNCI2014001-4:
-    fewshot:
-      epochs: 50
-      lr: 0.0005
-      batch_size: 32
-      weight_decay: 0.05
-      scale: 100
-    loso:
-      epochs: 50
-      lr: 0.0005
-      batch_size: 32
-      weight_decay: 0.05
-      scale: 100
-  BNCI2014004:
-    fewshot:
-      epochs: 50
-      lr: 0.0005
-      batch_size: 32
-      weight_decay: 0.05
-      scale: 100
-    loso:
-      epochs: 50
-      lr: 0.0005
-      batch_size: 32
-      weight_decay: 0.05
-      scale: 100
-  BNCI2015001:
-    fewshot:
-      epochs: 50
-      lr: 0.0005
-      batch_size: 32
-      weight_decay: 0.05
-      scale: 100
-    loso:
-      epochs: 50
-      lr: 0.0005
-      batch_size: 32
-      weight_decay: 0.05
-      scale: 100
-  AlexMI:
-    fewshot:
-      epochs: 50
-      lr: 0.0005
-      batch_size: 32
-      weight_decay: 0.05
-      scale: 100
-    loso:
-      epochs: 50
-      lr: 0.0005
-      batch_size: 32
-      weight_decay: 0.05
-      scale: 100
+    readout: flatten
+    dropout_rate: 0.5
+    label_smoothing: 0.0
+    layer_decay: 1.0
+    warmup_epochs: 5
+    min_lr: 0.000001
+    use_grad_clipping: false
+  BNCI2014001: {fewshot: {}, loso: {}}
+  BNCI2014001-4: {fewshot: {}, loso: {}}
+  BNCI2014004: {fewshot: {}, loso: {}}
+  BNCI2015001: {fewshot: {}, loso: {}}
+  AlexMI: {fewshot: {}, loso: {}}
 
 # pretrain: defaults to /data1/llx/pre_weight/labram-base.pth
