@@ -1,0 +1,26 @@
+experiment_id: dcm_0014_v1
+dataset: BNCI2014001-4
+seeds: [666, 667, 668]
+folds: [0, 1, 2, 3, 4, 5, 6, 7, 8]
+conditions: [none, dml_kl, dml_ds, dcm]
+temperature: 2.0
+alpha: 0.5
+lambda: 0.25
+pairs:
+  cbramod_ifnet:
+    batch_size: 16
+    epochs: 100
+    big_lr: 0.001
+    big_weight_decay: 0.1
+    small_lr: 0.001
+    small_weight_decay: 0.01
+  neurogpt_eegnet:
+    batch_size: 32
+    steps: 10000
+    warmup_steps: 100
+    big_lr: 0.0001
+    big_weight_decay: 0.1
+    small_lr: 0.001
+    small_weight_decay: 0.0001
+checkpoint_interval: 250
+output_root: /data1/llx/BigSmallcollab/results/bidir/dcm_0014_v1
