@@ -1,0 +1,29 @@
+experiment_id: dcm_fewshot_all_v1
+datasets:
+  BNCI2014004: 9
+  BNCI2014001: 9
+  BNCI2015001: 12
+  AlexMI: 8
+seeds: [666, 667, 668]
+conditions: [none, dml_ds, dcm]
+calibration_fraction: 0.3
+test_fraction: 0.7
+temperature: 2.0
+alpha: 0.5
+lambda: 0.25
+pairs:
+  cbramod_ifnet:
+    epochs: 20
+    batch_size: 16
+    big_lr: 0.0003
+    big_weight_decay: 0.1
+    small_lr: 0.001
+    small_weight_decay: 0.01
+  neurogpt_eegnet:
+    epochs: 100
+    batch_size: 32
+    big_lr: 0.0001
+    big_weight_decay: 0.1
+    small_lr: 0.001
+    small_weight_decay: 0.0001
+output_root: /data1/llx/BigSmallcollab/results/bidir/dcm_fewshot_all_v1
