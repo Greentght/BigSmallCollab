@@ -585,7 +585,22 @@ def run_worker(args):
         spec = read_json(folder / 'spec.json')
         snapshot = spec.get('snapshot', {})
         training_python = spec.get('python', sys.executable)
-        if snapshot.get('kind') == 'e2_ifnet_distill_boost_ensemble_v1':
+        if snapshot.get('kind') == 'hfd_loso_004':
+            training_python = resolve_training_python(spec.get('python'))
+            module = ('experiments.bidir.verify_hfd_preflight'
+                      if snapshot.get('stage') == 'smoke' else
+                      'experiments.bidir.run_hfd_loso')
+            command = [training_python, '-B', '-m', module,
+                       '--config', snapshot['config'],
+                       '--expected-config-sha256', snapshot['config_sha256'],
+                       '--expected-implementation-sha256', snapshot['implementation_sha256'],
+                       '--pair', snapshot['pair'], '--condition', snapshot['condition'],
+                       '--fold', str(snapshot['fold']), '--seed', str(snapshot['seed']),
+                       '--gpu', '0', '--progress', str(folder / 'progress.json'),
+                       '--stop-file', str(folder / 'stop')]
+            if snapshot.get('stage') == 'smoke':
+                command.extend(['--expected-verifier-sha256', snapshot['verifier_sha256']])
+        elif snapshot.get('kind') == 'e2_ifnet_distill_boost_ensemble_v1':
             command = [training_python, '-B', '-m',
                        'experiments.distill.run_e2_ifnet_distill_boost_ensemble_loso',
                        '--config', snapshot['config'],
@@ -719,6 +734,7 @@ def run_worker(args):
                        '--gpu', '0', '--stop-file', str(folder / 'stop'), '--resume']
         child_environment = os.environ.copy()
         if snapshot.get('kind') in {
+                'hfd_loso_004',
                 'afid_fewshot', 'cbramod_channel_feature_alignment', 'student_aware_diffusion_prior_v1',
                 'mcc_diffkd_loso_v1', 'mcc_diffkd_cbramod_loso_v1',
                 'cbramod_meanpool_mcc_diffkd_loso_v1',
@@ -784,6 +800,9 @@ def run_worker(args):
             state = store.load(args.job)
             state.update(status=status, message=message, returncode=returncode,
                          child=None, worker=None, launcher=None)
+            if status == 'completed' and snapshot.get('kind') == 'hfd_loso_004':
+                state['log_registration'] = {'status': 'skipped',
+                                             'reason': 'HFD LOSO has a dedicated paired report'}
             if status == 'completed' and snapshot.get('kind') == 'afid_fewshot':
                 state['log_registration'] = {
                     'status': 'skipped',
@@ -825,6 +844,7 @@ def run_worker(args):
             except Exception as exc:
                 print(f'[afid] automatic stage transition failed: {exc}', flush=True)
         if (status == 'completed' and snapshot.get('kind') not in {
+                'hfd_loso_004',
                 'afid_fewshot', 'cbramod_channel_feature_alignment', 'student_aware_diffusion_prior_v1',
                 'mcc_diffkd_loso_v1', 'mcc_diffkd_cbramod_loso_v1',
                 'cbramod_meanpool_mcc_diffkd_loso_v1',
