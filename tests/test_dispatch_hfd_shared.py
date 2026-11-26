@@ -71,3 +71,35 @@ def test_tick_respects_shared_queue_pause():
         state, done = dispatcher.tick(Store(), Path('/controller'), 3, 2048)
     assert not done and state['scheduling'] == 'paused_by_shared_queue'
     query.assert_not_called()
+
+
+def test_fewshot_dispatch_rejects_loso_job_identity():
+    class Store:
+        def lock(self):
+            return nullcontext()
+
+        def states(self):
+            return [{'id': 'hfd', 'status': 'pending'}]
+
+        def control(self):
+            return {'paused': False}
+
+        def job_dir(self, job):
+            return Path('/unused') / job
+
+    frozen = {'config_sha256': 'c', 'verifier_sha256': 'v',
+              'implementation_sha256': {'mirepnet_ifnet': 'i'}}
+    controller = {'stage': 'preflight', 'frozen': frozen,
+                  'preflight_jobs': {'mirepnet_ifnet': 'hfd'}}
+    spec = {'snapshot': {'kind': 'hfd_loso_004', 'pair': 'mirepnet_ifnet',
+                         'config_sha256': 'c', 'verifier_sha256': 'v',
+                         'implementation_sha256': 'i'}}
+    with patch.object(dispatcher, 'read_json', side_effect=[controller, spec]), \
+            patch.object(dispatcher, 'dispatch_hfd') as launch:
+        try:
+            dispatcher.tick(Store(), Path('/controller'), 3, 2048, 'hfd_fewshot_004')
+        except ValueError:
+            pass
+        else:
+            raise AssertionError('few-shot dispatcher must reject a LOSO job')
+    launch.assert_not_called()
