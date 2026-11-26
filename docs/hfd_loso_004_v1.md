@@ -47,8 +47,16 @@ epoch for two epochs, with DML and HFD active immediately. It verifies
 directional gradients, separate model predictions, and exact agreement between
 interrupted/resumed and uninterrupted training on the validation subject.
 Only after both preflights pass does it submit the 216 formal paired runs.
-The supervisor preserves the existing queue's GPU limits; it does not displace
-other jobs. It can be restarted with the same command and frozen configuration.
+It can be restarted with the same command and frozen configuration.
+
+For the user-approved shared-GPU policy, also run
+`python -B -m experiments.bidir.dispatch_hfd_shared`. This HFD-only dispatcher
+uses the existing queue locks and workers, but does not change the general
+queue manager's settings. It schedules an HFD job when a GPU has fewer than
+three compute processes and at least 2,048 MiB free. Queue workers starting on
+that GPU count as reserved processes until their CUDA processes appear. It
+honors the shared queue pause and leaves unrelated jobs alone. Its current
+counts and decisions are in `results/hfd_loso_004_v1/shared_dispatcher.json`.
 
 Queue and supervisor status are in `results/hfd_loso_004_v1/queue_controller.json`
 and the shared `results/loso/distill/queue/`. Model training state and internal
