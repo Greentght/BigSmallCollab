@@ -98,7 +98,7 @@ def dispatch_hfd(store, state, gpu, gpu_uuid):
         raise
 
 
-def tick(store, controller_path, process_limit, min_free_mb):
+def tick(store, controller_path, process_limit, min_free_mb, expected_kind='hfd_loso_004'):
     controller = read_json(controller_path)
     if not controller:
         return {'stage': 'waiting_for_controller'}, False
@@ -127,7 +127,7 @@ def tick(store, controller_path, process_limit, min_free_mb):
             spec = read_json(store.job_dir(state['id']) / 'spec.json', {})
             snapshot = spec.get('snapshot', {})
             pair = snapshot.get('pair')
-            if (snapshot.get('kind') != 'hfd_loso_004' or
+            if (snapshot.get('kind') != expected_kind or
                     snapshot.get('config_sha256') != frozen['config_sha256'] or
                     snapshot.get('implementation_sha256') != frozen['implementation_sha256'].get(pair) or
                     snapshot.get('verifier_sha256') != frozen['verifier_sha256']):
@@ -157,13 +157,16 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--root', type=Path, default=DEFAULT_ROOT)
     parser.add_argument('--controller', type=Path, default=CONTROLLER)
+    parser.add_argument('--status', type=Path, default=STATUS)
+    parser.add_argument('--kind', choices=('hfd_loso_004', 'hfd_fewshot_004'),
+                        default='hfd_loso_004')
     parser.add_argument('--process-limit', type=int, default=3)
     parser.add_argument('--min-free-mb', type=int, default=2048)
     parser.add_argument('--poll-seconds', type=float, default=10)
     args = parser.parse_args()
     if args.process_limit < 1 or args.min_free_mb < 0 or args.poll_seconds < 1:
         parser.error('invalid GPU process, memory or polling limit')
-    status = require_report_output(STATUS)
+    status = require_report_output(args.status)
     status.parent.mkdir(parents=True, exist_ok=True)
     store = QueueStore(validated_root(args.root))
     stopping = False
@@ -177,7 +180,7 @@ def main():
     with file_lock(status.parent / 'shared_dispatcher.lock', blocking=False):
         while not stopping:
             try:
-                state, done = tick(store, args.controller, args.process_limit, args.min_free_mb)
+                state, done = tick(store, args.controller, args.process_limit, args.min_free_mb, args.kind)
             except RuntimeError as exc:
                 # nvidia-smi failures must never be interpreted as idle GPUs.
                 state, done = {'stage': 'waiting', 'scheduling': str(exc)}, False

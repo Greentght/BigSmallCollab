@@ -1,0 +1,76 @@
+experiment_id: hfd_fewshot_004_v1
+dataset: BNCI2014004
+selected_session: session_3
+subjects: [0, 1, 2, 3, 4, 5, 6, 7, 8]
+seeds: [666, 667, 668]
+conditions: [ce, ce_hfd, dml_kl, dml_kl_hfd]
+calibration_fraction: 0.3
+test_fraction: 0.7
+checkpoint_selection: final_epoch
+epochs: 100
+batch_size: 16
+checkpoint_interval: 5
+warmup_epochs: 10
+ramp_epochs: 5
+temperature: 2.0
+hfd_weight: 0.1
+dml_weight: 0.5
+pairs:
+  mirepnet_ifnet:
+    big:
+      model: mirepnet
+      pretrained: /data1/llx/pre_weight/mirepnet.pth
+      optimizer: adam
+      lr: 0.0001
+      weight_decay: 0.000001
+      min_lr: 0.000001
+      label_smoothing: 0.0
+      in_channels: 45
+      samples: 1000
+      sample_rate: 250
+      skip_preprocess: true
+      emb_size: 256
+      depth: 6
+    small:
+      model: ifnet
+      optimizer: adamw
+      lr: 0.001
+      weight_decay: 0.01
+      min_lr: 0.0
+      label_smoothing: 0.0
+      in_channels: 3
+      samples: 1000
+      sample_rate: 250
+      use_filter_bank: true
+  cbramod_eegnet:
+    big:
+      model: cbramod
+      pretrained: /data1/llx/pre_weight/cbramod.pth
+      optimizer: adamw
+      lr: 0.0001
+      weight_decay: 0.05
+      min_lr: 0.0
+      label_smoothing: 0.1
+      in_channels: 3
+      samples: 1000
+      sample_rate: 250
+      skip_preprocess: true
+      target_fs: 200
+      dropout: 0.1
+      scale: 1.0
+      norm_method: null
+      apply_EA: false
+      warmup_epochs: 0
+      feature_head: flatten
+    small:
+      model: eegnet
+      optimizer: adamw
+      lr: 0.001
+      weight_decay: 0.0001
+      min_lr: 0.0
+      label_smoothing: 0.0
+      in_channels: 3
+      samples: 1000
+      sample_rate: 250
+output_root: /data1/llx/BigSmallcollab/results/bidir/hfd_fewshot_004_v1
+report_root: results/hfd_fewshot_004_v1

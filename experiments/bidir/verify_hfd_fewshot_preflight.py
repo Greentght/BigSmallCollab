@@ -1,0 +1,88 @@
+"""Verify GPU HFD few-shot gradients, inference, and interrupted resume."""
+
+import argparse
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+import numpy as np
+import yaml
+
+from data.loso_source import sha256_file
+from experiments.bidir.run_hfd_loso import atomic_json
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--config', required=True, type=Path)
+    parser.add_argument('--expected-config-sha256', required=True)
+    parser.add_argument('--expected-implementation-sha256', required=True)
+    parser.add_argument('--expected-verifier-sha256', required=True)
+    parser.add_argument('--pair', required=True)
+    parser.add_argument('--condition', required=True)
+    parser.add_argument('--subject', required=True, type=int)
+    parser.add_argument('--seed', required=True, type=int)
+    parser.add_argument('--gpu', type=int, default=0)
+    parser.add_argument('--progress', required=True, type=Path)
+    parser.add_argument('--stop-file', required=True, type=Path)
+    args = parser.parse_args()
+    if sha256_file(Path(__file__)) != args.expected_verifier_sha256:
+        raise ValueError('Queued few-shot preflight verifier changed')
+    if sha256_file(args.config) != args.expected_config_sha256:
+        raise ValueError('Queued few-shot preflight configuration changed')
+    cfg = yaml.safe_load(args.config.read_text())
+    if args.condition != 'dml_kl_hfd':
+        raise ValueError('Preflight must exercise both DML and HFD')
+    tag = 'gpu_' + args.expected_config_sha256[:8] + '_' + args.expected_implementation_sha256[:8]
+    common = [sys.executable, '-B', '-m', 'experiments.bidir.run_hfd_fewshot',
+              '--config', str(args.config), '--expected-config-sha256', args.expected_config_sha256,
+              '--expected-implementation-sha256', args.expected_implementation_sha256,
+              '--pair', args.pair, '--condition', args.condition, '--subject', str(args.subject),
+              '--seed', str(args.seed), '--gpu', str(args.gpu), '--smoke',
+              '--stop-file', str(args.stop_file)]
+    for phase, smoke_id, extra in (
+            ('interrupt', tag + '_resume', ['--stop-after', '1']),
+            ('resume', tag + '_resume', []),
+            ('continuous', tag + '_continuous', [])):
+        atomic_json(args.progress, {'status': 'running', 'phase': phase, 'pair': args.pair})
+        print(f'GPU HFD few-shot preflight {args.pair}: {phase}', flush=True)
+        completed = subprocess.run(common + ['--smoke-id', smoke_id] + extra, check=False)
+        if completed.returncode == 75:
+            atomic_json(args.progress, {'status': 'paused', 'phase': phase, 'pair': args.pair})
+            return 75
+        if completed.returncode:
+            raise RuntimeError(f'{phase} exited {completed.returncode}')
+    folders = [Path(cfg['output_root']) / 'smoke' / (tag + suffix) / args.pair /
+               args.condition / f'subject_{args.subject}' / f'seed_{args.seed}'
+               for suffix in ('_resume', '_continuous')]
+    records = [json.loads((path / 'evaluation.json').read_text()) for path in folders]
+    histories = [json.loads((path / 'training.json').read_text()) for path in folders]
+    if any(record.get('evaluation_split') != 'calibration' for record in records):
+        raise ValueError('Preflight must evaluate the calibration samples only')
+    if any(len(hist['history']) != 2 or any(epoch['mean_losses'][3] <= 0
+           for epoch in hist['history']) for hist in histories):
+        raise ValueError('Preflight did not exercise HFD on both epochs')
+    if records[0]['identity'] != records[1]['identity']:
+        raise ValueError('Resumed and continuous preflight identities differ')
+    for role in ('big', 'small'):
+        if records[0][role] != records[1][role]:
+            raise ValueError(f'{role} resumed and continuous result differs')
+    with np.load(folders[0] / 'predictions.npz', allow_pickle=False) as a, \
+         np.load(folders[1] / 'predictions.npz', allow_pickle=False) as b:
+        if set(a.files) != set(b.files) or any(not np.array_equal(a[key], b[key]) for key in a.files):
+            raise ValueError('Resumed and continuous predictions differ')
+    atomic_json(args.progress, {
+        'status': 'completed', 'pair': args.pair, 'condition': args.condition,
+        'subject': args.subject, 'seed': args.seed, 'calibration_only': True,
+        'hfd_gradient_isolation_checked': True, 'resume_exactly_matches': True,
+        'config_sha256': args.expected_config_sha256,
+        'implementation_sha256': args.expected_implementation_sha256,
+        'verifier_sha256': args.expected_verifier_sha256,
+        'results': [str(path / 'evaluation.json') for path in folders]})
+    print(f'GPU HFD few-shot preflight passed for {args.pair}', flush=True)
+    return 0
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())
