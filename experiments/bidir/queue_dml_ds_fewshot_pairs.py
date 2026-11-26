@@ -161,7 +161,10 @@ def main():
                     running[process.pid] = gpu
                     slots -= 1
                     print(f'started {job[:5]} on GPU {gpu}, pid={process.pid}', flush=True)
-            if pending or workers: time.sleep(30)
+            if pending or workers:
+                # Completed few-shot units often take less than 30 seconds.
+                # Reap them promptly while keeping idle GPU checks bounded.
+                time.sleep(3 if workers else 10)
         if failure: raise RuntimeError(failure)
         write_reports(root, cfg)
         print('All cells complete and reports written', flush=True)
