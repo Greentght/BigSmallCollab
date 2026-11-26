@@ -1,0 +1,26 @@
+experiment_id: dml_ds_fewshot_pairs_v1
+datasets:
+  BNCI2014004: 9
+  BNCI2014001: 9
+  BNCI2014001-4: 9
+  BNCI2015001: 12
+  AlexMI: 8
+seeds: [666, 667, 668]
+conditions: [none, dml_ds]
+calibration_fraction: 0.3
+test_fraction: 0.7
+temperature: 2.0
+alpha: 0.5
+lambda: 0.25
+teachers: [mirepnet, cbramod, neurogpt]
+students: [ifnet, eegnet, adfcnn]
+reuse_pairs: [cbramod_ifnet, neurogpt_eegnet]
+teacher_training:
+  mirepnet: {epochs: 20, batch_size: 8, lr: 0.001, weight_decay: 0.000001, optimizer: adam}
+  cbramod: {epochs: 20, batch_size: 16, lr: 0.0003, weight_decay: 0.1, optimizer: adamw}
+  neurogpt: {epochs: 100, batch_size: 32, lr: 0.0001, weight_decay: 0.1, optimizer: adamw}
+student_training:
+  ifnet: {lr: 0.001, weight_decay: 0.01, optimizer: adamw}
+  eegnet: {lr: 0.001, weight_decay: 0.0001, optimizer: adamw}
+  adfcnn: {lr: 0.001, weight_decay: 0.0001, optimizer: adamw}
+output_root: /data1/llx/BigSmallcollab/results/bidir/dml_ds_fewshot_pairs_v1
