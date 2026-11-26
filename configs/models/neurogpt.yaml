@@ -1,0 +1,21 @@
+# NeuroGPT author checkpoint, encoder-only downstream classification.
+# Canonical weights: /data1/llx/pre_weight/neurogpt/pytorch_model.bin
+env: mirepnet
+size: big
+pretraining: official_neurogpt_encoder
+encoder:
+  channels: 22
+  chunk_samples: 500
+  chunks_per_trial: 2
+  temporal_filters: 40
+  temporal_kernel: 25
+  pool_kernel: 75
+  pool_stride: 15
+  transformer_layers: 6
+  attention_heads: 10
+  attention_dropout: 0.5
+  convolution_dropout: 0.5
+downstream_head:
+  hidden_dims: [256, 32]
+  dropout: 0.5
+  output: raw_logits

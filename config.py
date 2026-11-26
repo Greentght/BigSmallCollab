@@ -34,6 +34,7 @@ _WEIGHTS = {
     'cbramod': ('cbramod.pth', 'CBRAMOD_WEIGHT'),
     'labram': ('labram-base.pth', 'LABRAM_WEIGHT'),
     'codebrain': ('codebrain.pth', 'CODEBRAIN_WEIGHT'),
+    'neurogpt': ('neurogpt/pytorch_model.bin', 'NEUROGPT_WEIGHT'),
 }
 _FINETUNE_KEY = 'finetune'
 _LEGACY_FINETUNE_KEYS = (
@@ -182,11 +183,7 @@ def weight_path(name):
     if key not in _WEIGHTS:
         raise KeyError(f'unknown model {name!r}; known: {list(_WEIGHTS)}')
     fname, env = _WEIGHTS[key]
-    default_path = (
-        str(WEIGHTS_ROOT / fname)
-        if key == 'codebrain'
-        else os.path.join(WEIGHTS_DIR, fname)
-    )
+    default_path = str(WEIGHTS_ROOT / fname) if key == 'codebrain' else os.path.join(WEIGHTS_DIR, fname)
     path = str(external_path(os.environ.get(env, default_path)))
     if not os.path.exists(path):
         raise FileNotFoundError(

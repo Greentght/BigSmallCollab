@@ -1,0 +1,19 @@
+experiment_id: dml_ds_cross_hfd_fewshot_all_v1
+baseline_config: configs/experiments/fewshot_dml_ds_pairs.yaml
+condition: dml_ds_cross_hfd
+datasets:
+  BNCI2014004: 9
+  BNCI2014001: 9
+  BNCI2014001-4: 9
+  BNCI2015001: 12
+  AlexMI: 8
+teachers: [mirepnet, cbramod, neurogpt]
+students: [ifnet, eegnet, adfcnn]
+seeds: [666, 667, 668]
+hfd_weight: 0.1
+hfd_warmup_epochs: 5
+hfd_ramp_epochs: 5
+checkpoint_interval: 5
+existing_004_cbramod_eegnet: /data1/llx/BigSmallcollab/results/bidir/dml_ds_cross_hfd_fewshot_004_v1
+output_root: /data1/llx/BigSmallcollab/results/bidir/dml_ds_cross_hfd_fewshot_all_v1
+report_root: results/dml_ds_cross_hfd_fewshot_all_v1

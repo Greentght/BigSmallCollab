@@ -11,9 +11,10 @@ own conda env) can still construct that adapter without importing the others
 """
 import importlib
 
-KNOWN = ('ifnet', 'eegnet', 'adfcnn', 'mirepnet', 'cbramod', 'labram', 'codebrain')
+KNOWN = ('ifnet', 'eegnet', 'adfcnn', 'mirepnet', 'cbramod', 'labram', 'codebrain',
+         'neurogpt')
 
-BIG_MODELS = ('mirepnet', 'cbramod', 'labram', 'codebrain')
+BIG_MODELS = ('mirepnet', 'cbramod', 'labram', 'codebrain', 'neurogpt')
 SMALL_MODELS = ('ifnet', 'eegnet', 'adfcnn')
 
 

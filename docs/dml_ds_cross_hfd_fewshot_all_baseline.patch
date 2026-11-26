@@ -1,0 +1,92 @@
+diff --git a/configs/models/mirepnet.yaml b/configs/models/mirepnet.yaml
+index be19e67..f7b59cd 100644
+--- a/configs/models/mirepnet.yaml
++++ b/configs/models/mirepnet.yaml
+@@ -51,10 +51,10 @@ finetune:
+       batch_size: 8
+       weight_decay: 0.000001
+     loso:
+-      epochs: 20
+-      lr: 0.001
++      epochs: 10
++      lr: 0.0001
+       batch_size: 8
+-      weight_decay: 1.0e-06
++      weight_decay: 1.0e-05
+       optimizer: adam
+       momentum: 0.9
+       lr_schedule: epoch_cosine
+@@ -82,7 +82,7 @@ finetune:
+       weight_decay: 0.000001
+     loso:
+       epochs: 10
+-      lr: 0.001
++      lr: 0.0001
+       batch_size: 8
+       weight_decay: 1.0e-06
+       optimizer: adam
+@@ -90,7 +90,7 @@ finetune:
+       lr_schedule: epoch_cosine
+       schedule_update: epoch_end
+       warmup_epochs: 0
+-      min_lr: 0.0
++      min_lr: 1.0e-06
+       label_smoothing: 0.0
+       class_weights: false
+       duration_seconds: 4.0
+diff --git a/data/split.py b/data/split.py
+index 065fc54..daec124 100644
+--- a/data/split.py
++++ b/data/split.py
+@@ -1,18 +1,7 @@
+-"""Canonical, model-agnostic data source.
++"""Shared split helpers for historical within-subject and current LOSO runs.
+ 
+-Every model in the framework must see the *same samples in the same order* for a
+-given ``(dataset, subject, seed, split)`` — otherwise per-sample ensemble / KD
+-alignment across cached artifacts silently breaks. This module is the single
+-authority for that contract.
+-
+-It uses the framework-vendored ``EEGDataset`` as the single source of raw
+-``(N, C_native, 1000)`` @ 250 Hz samples. By default, each dataset keeps its
+-own canonical source session name: BNCI2014001 and BNCI2014001-4 use
+-``sessionT``; BNCI2014004 uses ``session3``. The EA whitening + channel
+-padding live in ``data.preproc`` and are applied later by each adapter.
+-
+-Output is raw numpy ``X (N, C_native, 1000) float32`` + ``y (N,) int64``; each
+-adapter applies its own preprocessing on top.
++Few-shot and explicit historical snapshot loads use the legacy EEGDataset
++loader; default LOSO splits use the current source-aligned wide reader.
+ """
+ from collections import namedtuple
+ from types import SimpleNamespace
+@@ -153,6 +142,29 @@ def loso_split(dataset_name, test_subject, num_subjects=None, data_mode=None,
+ 
+     No randomness: the fold is fully determined by ``test_subject``.
+     """
++    if data_mode is None:
++        # Current LOSO runs use the canonical wide source and any verified
++        # model-specific input cache. ``subject_split`` above stays on the
++        # legacy loader for few-shot protocols. Passing data_mode explicitly is
++        # the compatibility escape hatch for historical LOSO snapshots.
++        from data.loso_source import load_dataset
++
++        selected = load_dataset(dataset_name)
++        if num_subjects is None:
++            num_subjects = config.load_dataset_config(dataset_name)['num_subjects']
++        if int(test_subject) < 0 or int(test_subject) >= int(num_subjects):
++            raise ValueError(f'test_subject must be in [0, {int(num_subjects)})')
++        test_mask = selected.subjects == int(test_subject)
++        train_mask = ~test_mask
++        out = (selected.x[train_mask], selected.y[train_mask],
++               selected.subjects[train_mask], selected.x[test_mask],
++               selected.y[test_mask])
++        if return_uid:
++            out += (selected.sample_uid[train_mask], selected.sample_uid[test_mask])
++        return out
++
++    # Explicit historical mode keeps using EEGDataset. This path is used by
++    # old experiment snapshots that must not silently pick up current wide data.
+     _ensure_imports()
+     if num_subjects is None:
+         num_subjects = config.load_dataset_config(dataset_name)['num_subjects']

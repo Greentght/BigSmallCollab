@@ -234,14 +234,21 @@ def _canonical_window(x: np.ndarray, fs_hz: int) -> np.ndarray:
     return x.astype(np.float32)
 
 
-def _legacy_alexmi(model: str | None = None) -> LOSOData:
+def _legacy_alexmi(model: str | None = None,
+                   subjects: list[int] | tuple[int, ...] | None = None) -> LOSOData:
     import config as project_config
     from types import SimpleNamespace
     from data.eeg_dataset import EEGDataset
 
     dcfg = project_config.load_dataset_config('AlexMI')
+    n_subjects = int(dcfg['num_subjects'])
+    selected_subjects = (list(range(n_subjects)) if subjects is None
+                         else sorted({int(subject) for subject in subjects}))
+    if not selected_subjects or any(subject < 0 or subject >= n_subjects
+                                    for subject in selected_subjects):
+        raise ValueError(f'AlexMI subject selection must be non-empty and in [0,{n_subjects})')
     xs, ys, subject_ids, uids, local_uids = [], [], [], [], []
-    for subject in range(int(dcfg['num_subjects'])):
+    for subject in selected_subjects:
         block = EEGDataset(args=SimpleNamespace(dataset_name='AlexMI', sub=[subject]))
         x = np.asarray(block.X, dtype=np.float32)
         y = np.asarray(block.y, dtype=np.int64)
@@ -266,11 +273,15 @@ def _legacy_alexmi(model: str | None = None) -> LOSOData:
         input_manifest_path=None, input_manifest_sha256=None, input_manifest=None,
         identity={'dataset': 'AlexMI', 'model': model,
                   'source': 'legacy EEGDataset',
+                  'selected_subjects_zero_based': selected_subjects,
                   'input_policy_sha256': policy_sha},
     )
     from data import loso_alexmi
 
-    source_identity = loso_alexmi.source_identity(data_obj)
+    # The global file/recipe identity does not require loading the held-out
+    # subject's signal or validating its labels during source-only training.
+    source_identity = loso_alexmi.source_identity(
+        data_obj if subjects is None else None)
     identity = dict(data_obj.identity)
     # AlexMI has no synthetic source manifest. Its identity is derived from
     # the preserved source files and the fixed legacy loader recipe.
@@ -514,6 +525,76 @@ def load_dataset(dataset: str, model: str | None = None,
     )
     _DATA_CACHE[cache_key] = data_obj
     return data_obj
+
+
+def load_dataset_subjects(dataset: str, subjects: list[int] | tuple[int, ...]) -> LOSOData:
+    """Load only the requested zero-based subject signals from current LOSO data.
+
+    This source-only reader is for training/diagnostic phases that must not
+    materialize a held-out subject's EEG before final evaluation. Dataset
+    labels and trial metadata are validated against the source manifest, while
+    canonical windowing is applied only to the requested subject rows.
+    """
+    dataset = str(dataset)
+    n_subjects = int(config.load_dataset_config(dataset)['num_subjects'])
+    requested = sorted({int(subject) for subject in subjects})
+    if not requested or any(subject < 0 or subject >= n_subjects
+                            for subject in requested):
+        raise ValueError(
+            f'{dataset}: requested subjects must be non-empty zero-based IDs in [0,{n_subjects})')
+    if dataset == 'AlexMI':
+        return _legacy_alexmi(None, requested)
+
+    loso_cfg = config.load_loso_dataset_config(dataset)
+    source_dir = Path(loso_cfg['source_directory'])
+    source_index = _load_source_index(dataset, loso_cfg, source_dir)
+    all_subjects = np.asarray(source_index['subjects'], dtype=np.int64)
+    selected_mask = np.isin(all_subjects, np.asarray(requested, dtype=np.int64))
+    indices = np.flatnonzero(selected_mask)
+    selected_subjects = set(all_subjects[indices].tolist())
+    if selected_subjects != set(requested):
+        missing = sorted(set(requested) - selected_subjects)
+        raise ValueError(f'{dataset}: requested subjects have no trials: {missing}')
+
+    source_path = Path(resolve_local_file(source_dir / 'X.npy'))
+    source_x = np.load(source_path, mmap_mode='r', allow_pickle=False)
+    source_rows = np.asarray(source_index['source_rows'], dtype=np.int64)[indices]
+    fs_hz = int(loso_cfg['native_sampling_rate_hz'])
+    pieces = []
+    for start in range(0, len(source_rows), 128):
+        stop = min(start + 128, len(source_rows))
+        pieces.append(_canonical_window(source_x[source_rows[start:stop]], fs_hz))
+    x = np.concatenate(pieces, axis=0)
+    y = np.asarray(source_index['y'], dtype=np.int64)[indices]
+    subset_subjects = all_subjects[indices]
+    trial_uid = np.asarray(source_index['trial_uid'], dtype=str)[indices]
+    sample_uid = np.asarray(source_index['sample_uid'], dtype=np.int64)[indices]
+    if len(set(trial_uid.tolist())) != len(trial_uid):
+        raise ValueError(f'{dataset}: duplicate trial UIDs in requested-subject data')
+    policy = _input_policy_identity(dataset, None)
+    policy_sha = hashlib.sha256(policy.encode()).hexdigest()
+    identity = {
+        'dataset': dataset,
+        'model': None,
+        'source_path': str(source_dir),
+        'source_manifest_sha256': source_index['manifest_sha256'],
+        'source_variant': source_index['manifest'].get('source_variant'),
+        'selected_session': source_index['session'],
+        'selected_subjects_zero_based': requested,
+        'selected_trial_uid_sha256': _array_hash(trial_uid),
+        'input_policy_sha256': policy_sha,
+    }
+    return LOSOData(
+        x=x, y=y, subjects=subset_subjects, trial_uid=trial_uid,
+        sample_uid=sample_uid,
+        class_mapping=source_index['class_mapping'],
+        source_path=source_dir,
+        source_manifest_path=source_index['manifest_path'],
+        source_manifest_sha256=source_index['manifest_sha256'],
+        source_manifest=source_index['manifest'],
+        input_manifest_path=None, input_manifest_sha256=None,
+        input_manifest=None, identity=identity,
+    )
 
 
 def load_teacher_targets(dataset: str, teacher: str, seed: int, fold: int,

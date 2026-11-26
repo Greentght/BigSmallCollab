@@ -1,0 +1,80 @@
+experiment: neurogpt_encoder_loso_wideband_v1
+run_id: neurogpt_encoder_loso_wideband_v1
+protocol: loso
+model: neurogpt
+datasets:
+  - BNCI2014004
+  - BNCI2014001
+  - BNCI2014001-4
+  - BNCI2015001
+  - AlexMI
+seeds: [666, 667, 668]
+fold_index_base: 0
+fold_definition: hold_out_one_subject_train_on_all_other_subjects
+baseline:
+  train_on_target_dataset: true
+  validation_data: none
+  checkpoint_selection: fixed_final_optimizer_step
+  target_data_use: final_evaluation_only
+source_data:
+  bnci_priority: wide_fre_band
+  alexmi_source: existing_project_protocol
+  canonical_window_samples: 1000
+  canonical_sample_rate_hz: 250
+  session_by_dataset:
+    BNCI2014004: session_3
+    BNCI2014001: session_T
+    BNCI2014001-4: session_T
+    BNCI2015001: session_A
+    AlexMI: current_project_protocol
+  per_trial_channel_normalization: z_score_over_time
+  fit_across_trials: false
+  filter_note: source files are already broadband-filtered; do not claim recovery of frequencies outside source passband
+channel_adaptation:
+  target_channels: 22
+  fixed_official_matrix:
+    path: /data1/llx/pre_weight/neurogpt/tMatrix_value.npy
+    sha256: a29357ce87f4dcaf757628b67f12728ac442d28a82da1807f171454de78e40a2
+    tasks:
+      - BNCI2014001
+      - BNCI2014001-4
+    source_channel_order: data/channels.py BNCI2014001_chn_names
+  trainable_projection_for_other_channel_counts: Conv1d_C_to_22_max_norm_1
+training:
+  downstream_variant: encoder_only
+  trainable: encoder_and_classifier
+  chunks_per_trial: 2
+  chunk_samples: 500
+  max_steps: 10000
+  batch_size: 32
+  optimizer: AdamW
+  learning_rate: 0.0001
+  weight_decay: 0.1
+  betas: [0.9, 0.999]
+  epsilon: 1.0e-8
+  schedule: linear_decay
+  warmup_ratio: 0.01
+  warmup_steps: 100
+  gradient_clip_norm: 1.0
+  precision: fp32
+  amp: false
+  dataloader_workers: 0
+  cpu_threads_per_worker: 1
+  checkpoint_interval_steps: 500
+  resume: true
+  selection: final_step
+official_reference:
+  repository: https://github.com/wenhui0206/NeuroGPT
+  source_commit: 230571d45ca4369b82f33ab42fc00863c2f95598
+  weight_repository: https://huggingface.co/wenhuic/Neuro-GPT
+  weight_revision: aa7250123955d0ea2ff64ff5cdf0221f209f0a15
+  weight_file: pretrained_model/pytorch_model.bin
+  weight_bytes: 318189905
+  weight_sha256: 2ea7d931a812baf107cdfb41bf0f7b5568043ae2758e30b4b1b0e9fae3ff3f1a
+  license: GPL-3.0
+planned_budget:
+  subjects_across_tasks: 47
+  seeds: 3
+  total_training_cells: 141
+  total_optimizer_steps: 1410000
+  initial_pilot: BNCI2014001-4_all_9_folds_seeds_666_667_668
