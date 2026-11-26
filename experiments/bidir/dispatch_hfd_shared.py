@@ -158,7 +158,7 @@ def main():
     parser.add_argument('--root', type=Path, default=DEFAULT_ROOT)
     parser.add_argument('--controller', type=Path, default=CONTROLLER)
     parser.add_argument('--status', type=Path, default=STATUS)
-    parser.add_argument('--kind', choices=('hfd_loso_004', 'hfd_fewshot_004'),
+    parser.add_argument('--kind', choices=('hfd_loso_004', 'hfd_fewshot_004', 'dml_ds_hfd_004'),
                         default='hfd_loso_004')
     parser.add_argument('--process-limit', type=int, default=3)
     parser.add_argument('--min-free-mb', type=int, default=2048)
