@@ -103,6 +103,7 @@ def main():
     args = parser.parse_args()
     cfg = yaml.safe_load(args.config.read_text())
     base = yaml.safe_load((ROOT / cfg['baseline_config']).read_text())
+    methods = tuple(m for m in METHODS if m in ('none', 'dml_ds') or m in cfg['methods'])
     report = require_report_output(REPORTS_ROOT / cfg['report_name'] / 'summary.json').parent
     report.mkdir(parents=True, exist_ok=True)
     impl = fingerprint()
@@ -110,7 +111,7 @@ def main():
     for d, count in cfg['datasets'].items():
         for subject in range(count):
             for seed in cfg['seeds']:
-                for method in METHODS:
+                for method in methods:
                     if method in ('none', 'dml_ds'):
                         folder = baseline_dir(d, cfg['pair'], subject, seed, base)
                         if method == 'none': folder = folder.parent.parent.parent / 'none' / folder.parent.name / folder.name
@@ -142,7 +143,7 @@ def main():
     progress, scores, contrasts = [], {}, []
     for d, count in cfg['datasets'].items():
         expected = count * len(cfg['seeds'])
-        for method in METHODS:
+        for method in methods:
             group = [r for r in rows if r['dataset'] == d and r['method'] == method and r['role'] == 'small']
             complete = len(group) == expected
             progress.append({'dataset': d, 'method': method, 'completed': len(group),
@@ -191,7 +192,7 @@ def main():
             ws = wb.create_sheet(label + title)
             ws.append(['student', 'method'] + [d.replace('BNCI2014', '') for d in cfg['datasets']])
             table = [('CBraMod', 'none', 'big'), ('EEGNet', 'none', 'small')] + [
-                ('EEGNet' if role == 'small' else 'CBraMod', method, role) for method in METHODS[1:]]
+                ('EEGNet' if role == 'small' else 'CBraMod', method, role) for method in methods[1:]]
             for model, method, r in table:
                 ws.append([model, NAMES[method]] + [scores.get((d, method, r, metric)) for d in cfg['datasets']])
                 for col, d in enumerate(cfg['datasets'], 3):
@@ -250,7 +251,8 @@ def main():
         ('AT', '三个预定深度层对，通道平方能量平均→空间L2归一化→MSE，各层相加。'),
         ('适配', '两方向各自detach对方特征；图像方形池化推广到EEG矩形；SemCKD短batch的Gram列补0，保留全部CE样本。'),
         ('特征坐标', 'CBraMod为[特征维,电极,原生1秒patch]；EEGNet为[卷积通道,电极或混合轴,时间]。按两轴较小长度平均池化。'),
-        ('参数', 'SemCKD及等权权重0.1，AT权重1.0；这是本轮EEG固定参数。前5轮不加特征损失，第6–10轮线性升权。'),
+        ('参数', '本配置权重：' + '；'.join(f"{m}={v['weight']}" for m, v in cfg['methods'].items()) +
+         '。前5轮不加特征损失，第6–10轮线性升权。50和400仅沿用官方系数，其余为EEG在线双向配方。'),
         ('解释限制', '层对应表为最终训练轮、校准样本加权平均的学习权重；仅说明训练关联，不等同于因果解释或最优选层证明。'),
         ('统计', '分组完整才显示均值；种子先在被试内平均差值，再按被试计算t分布95%配对区间。'),
         ('推理', '双方各自原分类头独立推理，完整4秒；最终第20轮一次测试，测试集不选层、选参数或选checkpoint。'),
@@ -264,7 +266,7 @@ def main():
         ws.row_dimensions[row[0].row].height = 42
     temporary = report / f'.comparison.{os.getpid()}.tmp.xlsx'
     wb.save(temporary)
-    os.replace(temporary, report / 'SemCKD_AT_DMLDS_对照.xlsx')
+    os.replace(temporary, require_report_output(report / cfg.get('workbook_name', 'SemCKD_AT_DMLDS_对照.xlsx')))
     completed = sum(p['completed'] for p in progress if p['method'] in cfg['methods'])
     atomic_json(report / 'summary.json', {'experiment_id': cfg['experiment_id'], 'new_completed': completed,
         'new_expected': sum(cfg['datasets'].values()) * len(cfg['seeds']) * len(cfg['methods']),
