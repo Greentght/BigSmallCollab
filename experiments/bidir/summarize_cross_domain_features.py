@@ -164,10 +164,26 @@ def main():
                             index[d, 'dml_ds', s, z, role][metric] for s in range(count) for z in cfg['seeds']]))),
                         'score': scores[d, method, role, metric], 'delta_pp': mean,
                         'ci95_low_pp': mean - half, 'ci95_high_pp': mean + half, 'subjects': count})
+    selection_contrasts = []
+    for d, count in cfg['datasets'].items():
+        for role in ('big', 'small'):
+            for metric in ('accuracy', 'balanced_accuracy'):
+                learned = scores.get((d, 'semckd', role, metric))
+                uniform = scores.get((d, 'semckd_uniform', role, metric))
+                if learned is None or uniform is None: continue
+                differences = [np.mean([index[d, 'semckd', s, z, role][metric] -
+                                       index[d, 'semckd_uniform', s, z, role][metric] for z in cfg['seeds']])
+                               for s in range(count)]
+                mean = float(np.mean(differences))
+                half = float(t.ppf(.975, count - 1) * np.std(differences, ddof=1) / np.sqrt(count))
+                selection_contrasts.append({'dataset': d, 'model': 'CBraMod' if role == 'big' else 'EEGNet',
+                    'metric': metric, 'SemCKD': learned, 'uniform': uniform, 'delta_pp': mean,
+                    'ci95_low_pp': mean - half, 'ci95_high_pp': mean + half, 'subjects': count})
     write_csv(report / 'subject_seed_results.csv', rows)
     write_csv(report / 'group_status.csv', progress)
     write_csv(report / 'paired_differences.csv', contrasts)
     write_csv(report / 'layer_associations.csv', associations)
+    write_csv(report / 'association_contrasts.csv', selection_contrasts)
     wb = Workbook()
     wb.remove(wb.active)
     for role, label in (('small', '小模型'), ('big', '大模型')):
@@ -206,6 +222,15 @@ def main():
         ws.append([r[k] for k in ('dataset', 'model', 'method', 'metric', 'DMLDS', 'score', 'delta_pp', 'ci95_low_pp', 'ci95_high_pp')])
         for cell in ws[ws.max_row][4:]: cell.number_format = '0.00'
         for cell in ws[ws.max_row][6:]:
+            cell.number_format = '+0.00;-0.00;0.00'
+            cell.font = Font(color='008000' if cell.value > 0 else 'C00000' if cell.value < 0 else '000000')
+    style(ws)
+    ws = wb.create_sheet('学层与等权比较')
+    ws.append(['数据集', '模型', '指标', 'SemCKD (%)', '等权 (%)', '差值 (百分点)', '95%CI 下限', '95%CI 上限'])
+    for r in selection_contrasts:
+        ws.append([r[k] for k in ('dataset', 'model', 'metric', 'SemCKD', 'uniform', 'delta_pp', 'ci95_low_pp', 'ci95_high_pp')])
+        for cell in ws[ws.max_row][3:]: cell.number_format = '0.00'
+        for cell in ws[ws.max_row][5:]:
             cell.number_format = '+0.00;-0.00;0.00'
             cell.font = Font(color='008000' if cell.value > 0 else 'C00000' if cell.value < 0 else '000000')
     style(ws)
