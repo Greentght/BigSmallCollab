@@ -32,6 +32,19 @@ were reduced to four bins, and the CBraMod electrode axis was averaged for
 comparison to the EEGNet layers that had already mixed electrodes. This is an
 explicit EEG adaptation and can discard spatial/temporal detail.
 
+There are two concrete implementation details to scrutinize. With batch 16,
+the EEGNet-receiving SemCKD regressors and query/key modules have 13,743,432
+trainable parameters. Native EEGNet, excluding its separate DS heads, has
+2,146 parameters for three electrodes and 2,450 for 22 electrodes. This is a
+large training-only adaptation relative to the receiving model; it does not
+by itself establish the cause of the negative result.
+
+AT pools the feature maps **before** squaring them. Thus it uses energy of
+temporally averaged activations, not temporally averaged activation energy:
+`square(mean(F)) != mean(square(F))`. Signed oscillating EEG activations can
+cancel in that pooling step. This is a specific adaptation choice that needs
+to be evaluated before making claims about the original AT mechanism.
+
 Other adaptations were online bidirectional detached targets in place of a
 fixed teacher, 20-epoch/batch-16 few-shot training, and zero-padding missing
 Gram columns for short SemCKD minibatches instead of dropping CE examples.
