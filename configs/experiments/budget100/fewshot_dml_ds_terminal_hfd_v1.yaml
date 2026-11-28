@@ -1,0 +1,23 @@
+experiment_id: dml_ds_terminal_hfd_fewshot_v1_100epoch
+baseline_config: configs/experiments/budget100/fewshot_dml_ds_pairs.yaml
+pair: cbramod_eegnet
+datasets:
+  BNCI2014004: 9
+  BNCI2014001: 9
+seeds:
+- 666
+- 667
+- 668
+methods:
+  terminal_hfd_w01:
+    weight: 0.1
+  terminal_hfd_w1:
+    weight: 1.0
+warmup_epochs: 5
+ramp_epochs: 5
+checkpoint_interval: 5
+output_root: /data1/llx/BigSmallcollab/results/bidir/joint_fewshot_100epoch_v1/dml_ds_terminal_hfd_fewshot_v1
+report_name: joint_fewshot_100epoch_v1/dml_ds_terminal_hfd_fewshot_v1
+workbook_name: DMLDS_末层HFD_详细对照.xlsx
+source_experiment_id: dml_ds_terminal_hfd_fewshot_v1
+joint_epochs: 100
