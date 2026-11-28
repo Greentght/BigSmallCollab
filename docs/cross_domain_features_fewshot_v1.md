@@ -128,3 +128,30 @@ Sources:
 - [Authors' SemCKD implementation](https://github.com/DefangChen/SemCKD)
 - [Paying More Attention to Attention](https://arxiv.org/abs/1612.03928)
 - [Authors' Attention Transfer implementation](https://github.com/szagoruyko/attention-transfer)
+
+## Supplement: published SemCKD loss strengths
+
+The complete initial 162-unit pilot found identical EEGNet predictions under
+SemCKD weight 0.1, its uniform control, and DML-DS. Calibration diagnostics show
+that the weighted feature/base gradient-norm ratio on EEGNet's first temporal
+convolution has median 0.000857 over the first batches of epochs 10–20.
+This does not establish failure of SemCKD at a meaningful strength.
+
+Two additional prespecified strengths, 50 and 400, come from the authors'
+ImageNet and CIFAR commands respectively. Both receive the same uniform-control
+ablation. Their four conditions add 216 paired units. No other training,
+feature, split, ramp, inference or evaluation setting changes. All three
+SemCKD strengths are retained and reported; the test set does not select one.
+These are published coefficients inside our online EEG adaptation, not claims
+to reproduce the complete original fixed-teacher training recipes.
+
+```bash
+/home/lixinli/anaconda3/envs/mirepnet/bin/python -u -B -m experiments.bidir.queue_semckd_strengths_fewshot --workers 6
+```
+
+The two queues run sequentially, each with six fixed-GPU workers. Both use the
+same per-group calibration-only gradient and exact-resume checks. The final
+combined report is `results/semckd_strengths_fewshot_v1/SemCKD_AT_全部权重对照.xlsx`.
+The combined workbook distinguishes BA and Accuracy and shows a separate
+positive/negative colored delta beside each dataset's score. It includes all
+378 new paired training units and the matched historical references.
