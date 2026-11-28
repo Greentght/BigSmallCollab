@@ -1,0 +1,34 @@
+experiment_id: fewshot_dml_ds_tuning_v1
+datasets: {BNCI2014004: 9, BNCI2014001: 9, BNCI2014001-4: 9, BNCI2015001: 12, AlexMI: 8}
+teachers: [mirepnet, cbramod, neurogpt]
+students: [ifnet, eegnet, adfcnn]
+seeds: [666, 667, 668]
+calibration_fraction: 0.3
+test_fraction: 0.7
+inner_validation_fraction: 0.2
+inner_seed_offset: 700001
+micro_batch: 4
+alpha: 0.5
+teacher_training:
+  mirepnet: {epochs: 20, batch_size: 8, optimizer: adam, lr: 0.001, weight_decay: 0.000001}
+  cbramod: {epochs: 20, batch_size: 16, optimizer: adamw, lr: 0.0003, weight_decay: 0.1}
+  neurogpt: {epochs: 100, batch_size: 32, optimizer: adamw, lr: 0.0001, weight_decay: 0.1}
+student_weight_decay: {ifnet: 0.01, eegnet: 0.0001, adfcnn: 0.0001}
+student_weight_decay_alternative: {ifnet: 0.001, eegnet: 0.001, adfcnn: 0.001}
+stage_a:
+  A0: {lr: 0.001, wd: base, batch_divisor: 1}
+  A1: {lr: 0.0003, wd: base, batch_divisor: 1}
+  A2: {lr: 0.003, wd: base, batch_divisor: 1}
+  A3: {lr: 0.001, wd: alternative, batch_divisor: 1}
+  A4: {lr: 0.001, wd: base, batch_divisor: 2}
+stage_b:
+  B0: {lambda: 0.25, temperature: 2.0}
+  B1: {lambda: 0.10, temperature: 2.0}
+  B2: {lambda: 0.50, temperature: 2.0}
+  B3: {lambda: 0.25, temperature: 1.0}
+  B4: {lambda: 0.25, temperature: 4.0}
+max_workers: 6
+gpu_process_limit: 3
+checkpoint_interval_epochs: 5
+output_root: /data1/llx/BigSmallcollab/results/bidir/fewshot_dml_ds_tuning_v1
+report_subdirectory: fewshot_dml_ds_tuning_v1

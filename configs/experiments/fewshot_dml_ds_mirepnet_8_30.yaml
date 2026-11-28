@@ -1,0 +1,17 @@
+experiment_id: dml_ds_mirepnet_fewshot_8_30_v1
+datasets: {BNCI2014004: 9, BNCI2014001: 9, BNCI2014001-4: 9, BNCI2015001: 12, AlexMI: 8}
+seeds: [666, 667, 668]
+students: [ifnet, eegnet, adfcnn]
+calibration_fraction: 0.3
+test_fraction: 0.7
+epochs: 20
+batch_size: 8
+temperature: 2.0
+alpha: 0.5
+lambda: 0.25
+teacher_training: {optimizer: adam, lr: 0.001, weight_decay: 0.000001}
+student_training:
+  ifnet: {optimizer: adamw, lr: 0.001, weight_decay: 0.01}
+  eegnet: {optimizer: adamw, lr: 0.001, weight_decay: 0.0001}
+  adfcnn: {optimizer: adamw, lr: 0.001, weight_decay: 0.0001}
+output_root: /data1/llx/BigSmallcollab/results/bidir/dml_ds_mirepnet_fewshot_8_30_v1

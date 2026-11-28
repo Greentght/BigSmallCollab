@@ -1,0 +1,24 @@
+experiment_id: dml_ds_cross_domain_features_fewshot_v1_100epoch
+baseline_config: configs/experiments/budget100/fewshot_dml_ds_pairs.yaml
+pair: cbramod_eegnet
+datasets:
+  BNCI2014004: 9
+  BNCI2014001: 9
+seeds:
+- 666
+- 667
+- 668
+methods:
+  semckd:
+    weight: 0.1
+  semckd_uniform:
+    weight: 0.1
+  at:
+    weight: 1.0
+warmup_epochs: 5
+ramp_epochs: 5
+checkpoint_interval: 5
+output_root: /data1/llx/BigSmallcollab/results/bidir/joint_fewshot_100epoch_v1/dml_ds_cross_domain_features_fewshot_v1
+report_name: joint_fewshot_100epoch_v1/dml_ds_cross_domain_features_fewshot_v1
+source_experiment_id: dml_ds_cross_domain_features_fewshot_v1
+joint_epochs: 100

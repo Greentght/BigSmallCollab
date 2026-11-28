@@ -1,0 +1,28 @@
+experiment_id: dml_ds_cross_hfd_fewshot_004_v1_100epoch
+dataset: BNCI2014004
+pair: cbramod_eegnet
+subjects:
+- 0
+- 1
+- 2
+- 3
+- 4
+- 5
+- 6
+- 7
+- 8
+seeds:
+- 666
+- 667
+- 668
+baseline_config: configs/experiments/budget100/fewshot_dml_ds_pairs.yaml
+baseline_root: /data1/llx/BigSmallcollab/results/bidir/joint_fewshot_100epoch_v1/dml_ds_fewshot_pairs_v1/runs/BNCI2014004/cbramod_eegnet/dml_ds
+condition: dml_ds_cross_hfd
+hfd_weight: 0.1
+hfd_warmup_epochs: 5
+hfd_ramp_epochs: 5
+checkpoint_interval: 5
+output_root: /data1/llx/BigSmallcollab/results/bidir/joint_fewshot_100epoch_v1/dml_ds_cross_hfd_fewshot_004_v1
+report_root: /home/lixinli/BigSmallCollab/results/joint_fewshot_100epoch_v1/dml_ds_cross_hfd_fewshot_004_v1
+source_experiment_id: dml_ds_cross_hfd_fewshot_004_v1
+joint_epochs: 100

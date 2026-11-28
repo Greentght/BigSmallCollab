@@ -1,0 +1,44 @@
+experiment_id: dcm_fewshot_0014_v1_100epoch
+dataset: BNCI2014001-4
+subjects:
+- 0
+- 1
+- 2
+- 3
+- 4
+- 5
+- 6
+- 7
+- 8
+seeds:
+- 666
+- 667
+- 668
+conditions:
+- none
+- dml_kl
+- dml_ds
+- dcm
+calibration_fraction: 0.3
+test_fraction: 0.7
+temperature: 2.0
+alpha: 0.5
+lambda: 0.25
+pairs:
+  cbramod_ifnet:
+    epochs: 100
+    batch_size: 16
+    big_lr: 0.0003
+    big_weight_decay: 0.1
+    small_lr: 0.001
+    small_weight_decay: 0.01
+  neurogpt_eegnet:
+    epochs: 100
+    batch_size: 32
+    big_lr: 0.0001
+    big_weight_decay: 0.1
+    small_lr: 0.001
+    small_weight_decay: 0.0001
+output_root: /data1/llx/BigSmallcollab/results/bidir/joint_fewshot_100epoch_v1/dcm_fewshot_0014_v1
+source_experiment_id: dcm_fewshot_0014_v1
+joint_epochs: 100
